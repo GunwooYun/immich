@@ -66,6 +66,7 @@
     mdiDotsHorizontal,
     mdiDotsVertical,
     mdiDownload,
+    mdiGoogleDrive,
     mdiImageOutline,
     mdiImagePlusOutline,
     mdiLink,
@@ -312,6 +313,31 @@
     await invalidate('album:data');
   };
 
+  // Manual "sync this album to Google Drive" trigger — the fallback button shown to the album
+  // owner (see the `{#if isOwned}` guard around the icon button below) for catching up assets
+  // that weren't already auto-uploaded, e.g. an album that existed before Drive was connected,
+  // or an earlier automatic upload that failed.
+  //
+  // Only album owners can even see this button: the backend endpoint uploads into the *owner's*
+  // Google Drive account, so letting a non-owner (e.g. someone with edit access to a shared
+  // album) trigger it would mean writing into someone else's Drive without their explicit
+  // action — the server enforces this too (GoogleDriveService#syncAlbum), this client-side check
+  // is just to avoid showing a button that would immediately fail with a permission error.
+  const handleGoogleDriveSync = async () => {
+    try {
+      const response = await fetch(`/api/google-drive/albums/${album.id}/sync`, { method: 'POST' });
+      if (!response.ok) {
+        // fetch() only rejects on network failures, not on HTTP error statuses (4xx/5xx) — so we
+        // have to check response.ok ourselves and turn a failed request into a thrown error,
+        // otherwise a 403/500 from the server would silently show a "sync started" success toast.
+        throw new Error(`Sync request failed with status ${response.status}`);
+      }
+      toastManager.primary('Google Drive sync started');
+    } catch (error) {
+      handleError(error, 'Unable to start Google Drive sync');
+    }
+  };
+
   const { Cast } = $derived(getGlobalActions($t));
   const { Share } = $derived(getAlbumActions($t, album));
   const { AddAssets, Upload } = $derived(getAlbumAssetsActions($t, album, timelineMultiSelectManager.assets));
@@ -545,6 +571,16 @@
                 onclick={() => handleDownloadAlbum(album)}
                 icon={mdiDownload}
               />
+              {#if isOwned}
+                <IconButton
+                  shape="round"
+                  variant="ghost"
+                  color="secondary"
+                  aria-label="Sync to Google Drive"
+                  onclick={handleGoogleDriveSync}
+                  icon={mdiGoogleDrive}
+                />
+              {/if}
             {/if}
 
             {#if isOwned || containsEditors}

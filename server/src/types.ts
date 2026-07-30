@@ -472,7 +472,11 @@ export type JobItem =
   | { name: JobName.IntegrityDeleteReports; data: IIntegrityDeleteReportsJob }
 
   // Editor
-  | { name: JobName.AssetEditThumbnailGeneration; data: IEntityJob };
+  | { name: JobName.AssetEditThumbnailGeneration; data: IEntityJob }
+
+  // Google Drive
+  | { name: JobName.GoogleDriveUploadQueueAll; data: IBaseJob }
+  | { name: JobName.GoogleDriveUpload; data: { userId: string; assetId: string } };
 
 export type VectorExtension = (typeof VECTOR_EXTENSIONS)[number];
 

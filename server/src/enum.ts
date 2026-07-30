@@ -809,6 +809,7 @@ export enum QueueName {
   Workflow = 'workflow',
   IntegrityCheck = 'integrityCheck',
   Editor = 'editor',
+  GoogleDriveUpload = 'googleDriveUpload',
 }
 
 export const QueueNameSchema = z.enum(QueueName).describe('Queue name').meta({ id: 'QueueName' });
@@ -896,6 +897,9 @@ export enum JobName {
   TagCleanup = 'TagCleanup',
 
   VersionCheck = 'VersionCheck',
+
+  GoogleDriveUploadQueueAll = 'GoogleDriveUploadQueueAll',
+  GoogleDriveUpload = 'GoogleDriveUpload',
 
   // OCR
   OcrQueueAll = 'OcrQueueAll',

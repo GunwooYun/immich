@@ -14,7 +14,7 @@ import {
 import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { MapMarkerResponseDto } from 'src/dtos/map.dto';
-import { AlbumUserRole, Permission } from 'src/enum';
+import { AlbumUserRole, JobName, Permission } from 'src/enum';
 import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository';
 import { BaseService } from 'src/services/base.service';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
@@ -178,6 +178,13 @@ export class AlbumService extends BaseService {
       { parentId: id, assetIds: dto.ids },
     );
 
+    // Google Drive integration: whenever assets are successfully added to an album, queue a
+    // background job to mirror each one to the album *owner's* Google Drive (not the acting
+    // user's — see queueGoogleDriveUploads/getAlbumOwnerId below for why). This runs after
+    // addAssets() has already committed the album_asset rows, so we only ever queue uploads for
+    // assets that actually made it into the album.
+    await this.queueGoogleDriveUploads(this.getAlbumOwnerId(album), results.filter((r) => r.success).map((r) => r.id));
+
     const { id: firstNewAssetId } = results.find(({ success }) => success) || {};
     if (firstNewAssetId) {
       await this.albumRepository.update(
@@ -224,6 +231,14 @@ export class AlbumService extends BaseService {
 
     const albumAssetValues: { albumId: string; assetId: string }[] = [];
     const events: { id: string; recipients: string[] }[] = [];
+    // Google Drive integration: this endpoint can add assets to *multiple* albums (possibly
+    // owned by different people) in one call, so we can't just queue upload jobs as we go the
+    // way addAssets() above does — different albums here can have different owners, and we want
+    // to batch all the upload jobs for a given owner into a single queueAll() call at the end
+    // (see the loop right after addAssetIdsToAlbums below) rather than one queue() call per
+    // asset. This map accumulates "which assets need uploading, grouped by whose Drive they go
+    // to" as we walk through each album.
+    const pendingUploadsByOwner = new Map<string, Set<string>>();
     for (const albumId of allowedAlbumIds) {
       const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...allowedAssetIds]);
       const notPresentAssetIds = [...allowedAssetIds].filter((id) => !existingAssetIds.has(id));
@@ -237,6 +252,17 @@ export class AlbumService extends BaseService {
       for (const assetId of notPresentAssetIds) {
         albumAssetValues.push({ albumId, assetId });
       }
+
+      // Record these assets against the *album's owner* (not necessarily the person making this
+      // request — someone with edit access to a shared album can add assets too). We only decide
+      // whether to actually queue an upload job later, after checking the dedup ledger.
+      const ownerId = this.getAlbumOwnerId(album);
+      const pending = pendingUploadsByOwner.get(ownerId) ?? new Set<string>();
+      for (const assetId of notPresentAssetIds) {
+        pending.add(assetId);
+      }
+      pendingUploadsByOwner.set(ownerId, pending);
+
       await this.albumRepository.update(
         albumId,
         {
@@ -250,7 +276,17 @@ export class AlbumService extends BaseService {
       events.push({ id: albumId, recipients: allUsersExceptUs });
     }
 
+    // Persist the actual album_asset rows for every album we touched, in one bulk write.
     await this.albumRepository.addAssetIdsToAlbums(albumAssetValues);
+
+    // Only *after* the album_asset rows are safely committed do we queue the Google Drive upload
+    // jobs (one queueAll() call per distinct owner, batching all of that owner's pending assets
+    // together). Queuing before the insert would risk uploading assets that never actually made
+    // it into the album if the insert below failed.
+    for (const [ownerId, assetIds] of pendingUploadsByOwner) {
+      await this.queueGoogleDriveUploads(ownerId, [...assetIds]);
+    }
+
     for (const event of events) {
       for (const recipientId of event.recipients) {
         await this.eventRepository.emit('AlbumUpdate', { id: event.id, recipientId });
@@ -258,6 +294,53 @@ export class AlbumService extends BaseService {
     }
 
     return results;
+  }
+
+  /**
+   * Small helper used by the Google Drive integration above: figures out who "owns" an album,
+   * given its list of albumUsers. Album ownership in Immich isn't a plain column on the album
+   * table — it's expressed as a row in `album_user` with role = 'owner' — so we have to search
+   * for it rather than just reading `album.ownerId`. Throws if somehow no owner is found, which
+   * should never happen in practice (every album always has exactly one owner), but we'd rather
+   * fail loudly here than silently queue a Google Drive upload job with an invalid/undefined
+   * userId.
+   */
+  private getAlbumOwnerId(album: { albumUsers: { role: AlbumUserRole; user: { id: string } }[] }): string {
+    const owner = album.albumUsers.find((albumUser) => albumUser.role === AlbumUserRole.Owner);
+    if (!owner) {
+      throw new BadRequestException('Album has no owner');
+    }
+    return owner.user.id;
+  }
+
+  /**
+   * Shared helper for both addAssets() and addAssetsToAlbums() above: given a set of assets that
+   * just got added to some album(s) owned by `ownerId`, queue a background GoogleDriveUpload job
+   * for each one that hasn't already been uploaded before.
+   *
+   * The dedup check against the ledger (via googleDriveRepository.getUploadedAssetIds) happens
+   * here, *before* anything is queued — this keeps the job queue itself lean by never enqueuing
+   * jobs we already know are no-ops, rather than relying solely on the job handler
+   * (GoogleDriveService#uploadAsset) to discover that at execution time.
+   *
+   * Uses jobRepository.queueAll() (a single bulk insert) instead of calling queue() in a loop, so
+   * adding hundreds/thousands of photos to an album doesn't turn into that many individual round
+   * trips to the job queue's backing store.
+   */
+  private async queueGoogleDriveUploads(ownerId: string, assetIds: string[]): Promise<void> {
+    if (assetIds.length === 0) {
+      return;
+    }
+
+    const alreadyUploaded = await this.googleDriveRepository.getUploadedAssetIds(ownerId, assetIds);
+    const pending = assetIds.filter((assetId) => !alreadyUploaded.has(assetId));
+    if (pending.length === 0) {
+      return;
+    }
+
+    await this.jobRepository.queueAll(
+      pending.map((assetId) => ({ name: JobName.GoogleDriveUpload, data: { userId: ownerId, assetId } })),
+    );
   }
 
   async removeAssets(auth: AuthDto, id: string, dto: BulkIdsDto): Promise<BulkIdResponseDto[]> {

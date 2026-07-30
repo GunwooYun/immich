@@ -20,6 +20,7 @@
     mdiDownload,
     mdiFeatureSearchOutline,
     mdiFormTextboxPassword,
+    mdiGoogleDrive,
     mdiKeyOutline,
     mdiLockSmart,
     mdiServerOutline,
@@ -30,6 +31,7 @@
   import AppSettings from './AppSettings.svelte';
   import ChangePasswordSettings from './ChangePasswordSettings.svelte';
   import DeviceList from './DeviceList.svelte';
+  import GoogleDriveSettings from './GoogleDriveSettings.svelte';
   import OauthSettings from './OauthSettings.svelte';
   import PartnerSettings from './PartnerSettings.svelte';
   import UserApiKeyList from './UserApiKeyList.svelte';
@@ -137,6 +139,15 @@
   subtitle={$t('manage_sharing_with_partners')}
 >
   <PartnerSettings />
+</SettingAccordion>
+
+<SettingAccordion
+  icon={mdiGoogleDrive}
+  key="google-drive-sync"
+  title="Google Drive Sync"
+  subtitle="Connect and configure Google Drive backups"
+>
+  <GoogleDriveSettings />
 </SettingAccordion>
 
 <SettingAccordion

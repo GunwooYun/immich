@@ -49,6 +49,7 @@ import { AssetOcrTable } from 'src/schema/tables/asset-ocr.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
 import { FaceSearchTable } from 'src/schema/tables/face-search.table';
 import { GeodataPlacesTable } from 'src/schema/tables/geodata-places.table';
+import { GoogleDriveUploadTable } from 'src/schema/tables/google-drive-upload.table';
 import { IntegrityReportTable } from 'src/schema/tables/integrity-report.table';
 import { LibraryTable } from 'src/schema/tables/library.table';
 import { MemoryAssetAuditTable } from 'src/schema/tables/memory-asset-audit.table';
@@ -116,6 +117,7 @@ export class ImmichDatabase {
     AssetExifTable,
     FaceSearchTable,
     GeodataPlacesTable,
+    GoogleDriveUploadTable,
     IntegrityReportTable,
     LibraryTable,
     MemoryTable,
@@ -220,6 +222,8 @@ export interface DB {
   face_search: FaceSearchTable;
 
   geodata_places: GeodataPlacesTable;
+
+  google_drive_upload: GoogleDriveUploadTable;
 
   integrity_report: IntegrityReportTable;
 

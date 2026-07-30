@@ -30,6 +30,7 @@ import { CryptoRepository } from 'src/repositories/crypto.repository';
 import { DatabaseRepository } from 'src/repositories/database.repository';
 import { EmailRepository } from 'src/repositories/email.repository';
 import { EventRepository } from 'src/repositories/event.repository';
+import { GoogleDriveRepository } from 'src/repositories/google-drive.repository';
 import { IntegrityRepository } from 'src/repositories/integrity.repository';
 import { JobRepository } from 'src/repositories/job.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
@@ -416,6 +417,7 @@ const newRealRepository = <T>(key: ClassConstructor<T>, db: Kysely<DB>): T => {
     case AssetRepository:
     case AssetEditRepository:
     case AssetJobRepository:
+    case GoogleDriveRepository:
     case IntegrityRepository:
     case MemoryRepository:
     case NotificationRepository:
@@ -485,6 +487,7 @@ const newMockRepository = <T>(key: ClassConstructor<T>) => {
     case ConfigRepository:
     case CryptoRepository:
     case MemoryRepository:
+    case GoogleDriveRepository:
     case IntegrityRepository:
     case NotificationRepository:
     case OcrRepository:

@@ -144,6 +144,8 @@ export type UserAdmin = User & {
   quotaUsageInBytes: number;
   status: UserStatus;
   metadata: UserMetadataItem[];
+  googleDriveRefreshToken: string | null;
+  googleDriveFolderId: string | null;
 };
 
 export type StorageAsset = {
@@ -357,6 +359,8 @@ export const columns = {
     'storageLabel',
     'quotaSizeInBytes',
     'quotaUsageInBytes',
+    'googleDriveRefreshToken',
+    'googleDriveFolderId',
   ],
   tag: ['tag.id', 'tag.value', 'tag.createdAt', 'tag.updatedAt', 'tag.color', 'tag.parentId'],
   apiKey: ['id', 'name', 'userId', 'createdAt', 'updatedAt', 'permissions'],

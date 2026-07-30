@@ -250,6 +250,10 @@ export class QueueService extends BaseService {
         return this.jobRepository.queue({ name: JobName.OcrQueueAll, data: { force } });
       }
 
+      case QueueName.GoogleDriveUpload: {
+        return this.jobRepository.queue({ name: JobName.GoogleDriveUploadQueueAll, data: { force } });
+      }
+
       default: {
         throw new BadRequestException(`Invalid job name: ${name}`);
       }

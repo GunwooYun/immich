@@ -35,6 +35,8 @@ export class UserFactory {
       status: UserStatus.Active,
       profileChangedAt: newDate(),
       updateId: newUuidV7(),
+      googleDriveRefreshToken: null,
+      googleDriveFolderId: null,
       ...dto,
     });
   }

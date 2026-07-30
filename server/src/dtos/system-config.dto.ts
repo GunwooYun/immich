@@ -145,6 +145,7 @@ const SystemConfigJobSchema = z
     workflow: JobSettingsSchema,
     editor: JobSettingsSchema,
     integrityCheck: JobSettingsSchema,
+    googleDriveUpload: JobSettingsSchema,
   })
   .meta({ id: 'SystemConfigJobDto' });
 

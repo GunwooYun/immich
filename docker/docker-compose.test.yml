@@ -1,0 +1,159 @@
+name: immich-test
+
+services:
+  immich-app-base:
+    profiles: ['_base']
+    tmpfs:
+      - /tmp
+    volumes:
+      - ..:/usr/src/app
+      - build_cache_test:/buildcache
+      - server_node_modules_test:/usr/src/app/server/node_modules
+      - web_node_modules_test:/usr/src/app/web/node_modules
+      - github_node_modules_test:/usr/src/app/.github/node_modules
+      - cli_node_modules_test:/usr/src/app/packages/cli/node_modules
+      - docs_node_modules_test:/usr/src/app/docs/node_modules
+      - e2e_node_modules_test:/usr/src/app/e2e/node_modules
+      - sdk_node_modules_test:/usr/src/app/packages/sdk/node_modules
+      - app_node_modules_test:/usr/src/app/node_modules
+      - sveltekit_test:/usr/src/app/web/.svelte-kit
+      - coverage_test:/usr/src/app/web/coverage
+
+  immich-init:
+    extends:
+      service: immich-app-base
+    profiles: !reset []
+    container_name: immich_test_init
+    image: immich-server-test:latest
+    build:
+      context: ../
+      dockerfile: server/Dockerfile.dev
+      target: dev
+    command:
+      - |
+        mise install || true
+        touch /tmp/init-complete
+        exec tail -f /dev/null
+    volumes:
+      - build_cache_test:/buildcache
+    restart: 'no'
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/tmp/init-complete']
+      interval: 2s
+      timeout: 3s
+      retries: 300
+      start_period: 300s
+
+  immich-server:
+    extends:
+      service: immich-app-base
+    profiles: !reset []
+    container_name: immich_test_server
+    command: ['immich-dev']
+    image: immich-server-test:latest
+    build:
+      context: ../
+      dockerfile: server/Dockerfile.dev
+      target: dev
+    restart: unless-stopped
+    volumes:
+      - ./test_data/photos:/data
+      - /etc/localtime:/etc/localtime:ro
+      - ../packages/plugin-core:/build/plugins/immich-plugin-core
+    env_file:
+      - test.env
+    ports:
+      - 2284:2283
+      - 9232:9230
+      - 9233:9231
+    depends_on:
+      immich-init:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      database:
+        condition: service_started
+    healthcheck:
+      disable: false
+
+  immich-web:
+    extends:
+      service: immich-app-base
+    profiles: !reset []
+    container_name: immich_test_web
+    image: immich-web-test:latest
+    build:
+      context: ../
+      dockerfile: server/Dockerfile.dev
+      target: dev
+    command: ['immich-web']
+    env_file:
+      - test.env
+    ports:
+      - 3001:3000
+      - 24679:24678
+    restart: unless-stopped
+    depends_on:
+      immich-init:
+        condition: service_healthy
+      immich-server:
+        condition: service_started
+
+  immich-machine-learning:
+    container_name: immich_test_machine_learning
+    image: immich-machine-learning-test:latest
+    build:
+      context: ../machine-learning
+      dockerfile: Dockerfile
+      args:
+        - DEVICE=cpu
+    ports:
+      - 3004:3003
+    volumes:
+      - ../machine-learning/immich_ml:/usr/src/immich_ml
+      - model_cache_test:/cache
+    env_file:
+      - test.env
+    depends_on:
+      - database
+    restart: unless-stopped
+    healthcheck:
+      disable: false
+
+  redis:
+    container_name: immich_test_redis
+    image: docker.io/valkey/valkey:9@sha256:4963247afc4cd33c7d3b2d2816b9f7f8eeebab148d29056c2ca4d7cbc966f2d9
+    healthcheck:
+      test: redis-cli ping || exit 1
+
+  database:
+    container_name: immich_test_postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    env_file:
+      - test.env
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - ./test_data/postgres:/var/lib/postgresql/data
+    ports:
+      - 5433:5432
+    shm_size: 128mb
+    healthcheck:
+      disable: false
+
+volumes:
+  model_cache_test:
+  build_cache_test:
+  server_node_modules_test:
+  web_node_modules_test:
+  github_node_modules_test:
+  cli_node_modules_test:
+  docs_node_modules_test:
+  e2e_node_modules_test:
+  sdk_node_modules_test:
+  app_node_modules_test:
+  sveltekit_test:
+  coverage_test:
