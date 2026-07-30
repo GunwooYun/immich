@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
-import { AlbumUserRole, JobName, JobStatus, Permission, QueueName } from 'src/enum';
+import { AlbumUserRole, JobName, JobStatus, Permission, QueueName, SystemMetadataKey } from 'src/enum';
 import { BaseService } from 'src/services/base.service';
 import { mimeTypes } from 'src/utils/mime-types';
 import { google, drive_v3 } from 'googleapis';
@@ -29,21 +29,45 @@ type GoogleDriveStateClaims = {
  */
 @Injectable()
 export class GoogleDriveService extends BaseService {
-  // Secret key used to sign/verify the OAuth `state` parameter (see getAuthUrl/handleCallback below).
-  //
-  // NOTE (known limitation, tracked as a follow-up): this is generated fresh every time the
-  // service class is instantiated, which in practice means "once per server process". That's
-  // fine for a single-instance deployment, but it breaks in two real scenarios:
-  //   - Horizontally scaled deployments (multiple immich-server replicas behind a load
-  //     balancer): if the "get auth url" request lands on replica A but Google's redirect
-  //     lands on replica B, replica B has a *different* secret and will reject a perfectly
-  //     valid state as "invalid or expired".
-  //   - A server restart between the user clicking "Connect" and Google redirecting back:
-  //     the old secret is gone, so the callback fails.
-  // The proper fix is to persist this secret somewhere shared (e.g. system metadata table)
-  // instead of keeping it purely in process memory. Left as-is here to keep this change
-  // focused; see dev-docs/google-drive-album-sync-plan.md for the write-up.
-  private stateSecret = this.cryptoRepository.randomBytesAsText(32);
+  /**
+   * Returns the shared secret used to sign/verify the OAuth `state` parameter (see
+   * getAuthUrl/handleCallback below), generating and persisting one the very first time this
+   * feature is ever used on this Immich instance.
+   *
+   * This used to be a plain in-memory field (`private stateSecret = randomBytesAsText(32)`),
+   * generated fresh every time the service class was instantiated — which in practice meant
+   * "once per server process". That was fine for a single-instance deployment, but broke in two
+   * very real scenarios:
+   *   - Horizontally scaled deployments (multiple immich-server replicas behind a load
+   *     balancer, e.g. `docker compose ... --scale immich-server=3`, which this project's own
+   *     mise.toml dev/prod tasks support): if the "get auth url" request lands on replica A but
+   *     Google's redirect lands on replica B, replica B has a *different* secret in memory and
+   *     will reject a perfectly valid state as "invalid or expired".
+   *   - A server restart between the user clicking "Connect" and Google redirecting back: the
+   *     old in-memory secret is gone, so the callback fails.
+   *
+   * Storing it in the `system_metadata` table (the same mechanism Immich already uses for other
+   * server-wide, rarely-changing settings — see SystemMetadataKey) instead of process memory
+   * fixes both cases: every server process reads the same value from the database, and it
+   * survives restarts.
+   *
+   * Known, accepted minor race: if this feature is used for the very first time by two
+   * concurrent requests before any secret has been persisted yet, both could generate their own
+   * random secret and race to write it via `set()` (which unconditionally overwrites). Worst
+   * case, one of those two initial requests gets a spurious "invalid or expired" error and has
+   * to retry — there's no security impact (an attacker can't influence which secret wins), and
+   * this can only happen once, ever, per Immich instance, right after the feature is first used.
+   */
+  private async getStateSecret(): Promise<string> {
+    const existing = await this.systemMetadataRepository.get(SystemMetadataKey.GoogleDriveState);
+    if (existing?.secret) {
+      return existing.secret;
+    }
+
+    const secret = this.cryptoRepository.randomBytesAsText(32);
+    await this.systemMetadataRepository.set(SystemMetadataKey.GoogleDriveState, { secret });
+    return secret;
+  }
 
   /**
    * Builds a Google OAuth2 client using the app's client id/secret/redirect URL.
@@ -96,7 +120,8 @@ export class GoogleDriveService extends BaseService {
     // Sign a token containing the userId, valid for 10 minutes — plenty of time for a human to
     // click through Google's consent screen, but short enough that a leaked/replayed state
     // (e.g. from a browser history entry) becomes useless quickly.
-    const state = this.cryptoRepository.signJwt({ userId } satisfies GoogleDriveStateClaims, this.stateSecret, {
+    const stateSecret = await this.getStateSecret();
+    const state = this.cryptoRepository.signJwt({ userId } satisfies GoogleDriveStateClaims, stateSecret, {
       expiresIn: '10m',
     });
 
@@ -125,7 +150,8 @@ export class GoogleDriveService extends BaseService {
     try {
       // jwt.verify (called internally here) checks both the signature *and* the expiry claim,
       // so an expired-but-otherwise-valid state token is rejected automatically.
-      claims = this.cryptoRepository.verifyJwt<GoogleDriveStateClaims>(state, this.stateSecret);
+      const stateSecret = await this.getStateSecret();
+      claims = this.cryptoRepository.verifyJwt<GoogleDriveStateClaims>(state, stateSecret);
     } catch (error) {
       this.logger.warn(`Rejected Google Drive OAuth callback with invalid state: ${error}`);
       throw new BadRequestException('Invalid or expired Google Drive authorization request');
@@ -145,24 +171,38 @@ export class GoogleDriveService extends BaseService {
    * signed `state` proving which user initiated the request.
    */
   private async linkAccount(userId: string, code: string): Promise<void> {
+    let refreshToken: string;
     try {
       const oauth2Client = this.getOAuth2Client();
       const { tokens } = await oauth2Client.getToken(code);
 
-      if (tokens.refresh_token) {
-        await this.userRepository.update(userId, {
-          googleDriveRefreshToken: tokens.refresh_token,
-        });
+      // Google is only guaranteed to hand back a refresh_token on the *first* time a user grants
+      // consent to an app; on subsequent authorizations it may omit it if it decides the app
+      // already has one on file. We always pass `prompt: 'consent'` in getAuthUrl() specifically
+      // to make Google re-show the consent screen (and, in practice, re-issue a fresh
+      // refresh_token) every single time — but Google's behavior here isn't something we
+      // control, so we still have to handle the "no refresh_token came back" case explicitly
+      // rather than assuming it always will.
+      //
+      // This used to be silently ignored (the method would return successfully with nothing
+      // saved), which meant the OAuth callback controller would redirect the user to
+      // "?google-drive=connected" even though nothing was actually linked — every upload
+      // attempt afterwards would then silently skip that user forever, with no error anywhere
+      // pointing back to the real cause. Throwing here instead makes the callback controller
+      // redirect to "?google-drive=error" so the user actually finds out the connection didn't
+      // take, and can retry.
+      if (!tokens.refresh_token) {
+        throw new Error('Google did not return a refresh token for this authorization');
       }
-      // NOTE: if Google didn't hand back a refresh_token (this can legitimately happen if the
-      // user has already granted consent before and Google decides not to re-issue one), we
-      // currently just silently do nothing here — the user is *not* actually linked, but the
-      // caller has no way to know that. See the TODO in handleCallback's caller-facing docs;
-      // this is one of the two P0 issues being fixed alongside this comment pass.
+      refreshToken = tokens.refresh_token;
     } catch (error) {
       this.logger.error(`Failed to link Google account: ${error}`);
       throw new BadRequestException('Failed to link Google account');
     }
+
+    await this.userRepository.update(userId, {
+      googleDriveRefreshToken: refreshToken,
+    });
   }
 
   /**

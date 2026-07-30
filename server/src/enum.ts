@@ -344,6 +344,11 @@ export enum SystemMetadataKey {
   VersionCheckState = 'version-check-state',
   License = 'license',
   IntegrityChecksumCheckpoint = 'integrity-checksum-checkpoint',
+  // Shared secret used to sign/verify the Google Drive OAuth "state" parameter (CSRF
+  // protection for the Drive-linking callback). Persisted here — instead of just kept in one
+  // server process's memory — so that the signature stays valid across server restarts and
+  // across multiple horizontally-scaled server replicas. See GoogleDriveService for usage.
+  GoogleDriveState = 'google-drive-state',
 }
 
 export enum UserMetadataKey {
