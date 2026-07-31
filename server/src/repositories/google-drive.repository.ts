@@ -5,14 +5,17 @@ import { DummyValue, GenerateSql } from 'src/decorators';
 import { DB } from 'src/schema';
 
 /**
- * Thin data-access layer over the `google_drive_upload` table.
+ * Thin data-access layer over the two tables this feature owns.
  *
- * This table is our "upload ledger": one row per (userId, assetId) pair that has successfully
- * been uploaded to that user's Google Drive, plus the Drive-assigned file id. It exists purely
- * to answer one question cheaply: "has this asset already been uploaded for this user?" — so
- * that GoogleDriveService never uploads (and therefore duplicates) the same photo twice, whether
- * that's because it was added to two albums, removed and re-added to the same album, or a
- * background job retried after a transient failure.
+ * `user_google_drive` holds per-user connection state (OAuth refresh token + chosen destination
+ * folder). One row per connected user; no row means "this user hasn't linked Google Drive".
+ *
+ * `google_drive_upload` is our "upload ledger": one row per (userId, assetId) pair that has
+ * successfully been uploaded to that user's Google Drive, plus the Drive-assigned file id. It
+ * exists purely to answer one question cheaply: "has this asset already been uploaded for this
+ * user?" — so that GoogleDriveService never uploads (and therefore duplicates) the same photo
+ * twice, whether that's because it was added to two albums, removed and re-added to the same
+ * album, or a background job retried after a transient failure.
  *
  * Following the same convention as the rest of Immich's repositories: this class only knows how
  * to read/write rows via Kysely (the query builder), it doesn't contain any business rules about
@@ -22,6 +25,68 @@ import { DB } from 'src/schema';
 @Injectable()
 export class GoogleDriveRepository {
   constructor(@InjectKysely() private db: Kysely<DB>) {}
+
+  /**
+   * Returns a user's Google Drive connection, or undefined if they haven't linked one.
+   *
+   * This is deliberately the *only* way the refresh token is read. It used to live on the `user`
+   * table, which meant every ordinary user lookup dragged the token along with it; keeping it
+   * behind an explicit call like this one keeps the blast radius small.
+   */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getCredentials(userId: string) {
+    return this.db
+      .selectFrom('user_google_drive')
+      .select(['userId', 'refreshToken', 'folderId', 'connectedAt'])
+      .where('userId', '=', userId)
+      .executeTakeFirst();
+  }
+
+  /**
+   * Stores (or replaces) a user's refresh token when they complete the OAuth link flow.
+   *
+   * Upserts rather than inserts so that re-linking an already-connected account just swaps in the
+   * new token instead of failing on the primary key. Note it deliberately does *not* touch
+   * `folderId`: re-authorizing shouldn't silently reset a destination folder the user already
+   * picked.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
+  upsertCredentials(userId: string, refreshToken: string) {
+    return this.db
+      .insertInto('user_google_drive')
+      .values({ userId, refreshToken })
+      .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken }))
+      .execute();
+  }
+
+  /**
+   * Sets the destination folder for an already-connected user. Returns the number of rows matched
+   * so the caller can tell "saved" apart from "this user isn't connected, there was nothing to
+   * update" — an unconnected user silently having their folder preference dropped would be a
+   * confusing failure mode.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
+  async setFolderId(userId: string, folderId: string | null): Promise<number> {
+    const result = await this.db
+      .updateTable('user_google_drive')
+      .set({ folderId })
+      .where('userId', '=', userId)
+      .executeTakeFirst();
+
+    return Number(result.numUpdatedRows);
+  }
+
+  /**
+   * Disconnects a user's Google Drive by deleting their credentials row.
+   *
+   * Note this intentionally leaves the `google_drive_upload` ledger rows in place. If the user
+   * reconnects the same Google account later, that history is what stops us from re-uploading
+   * every asset they've already got in Drive and creating a duplicate of each one.
+   */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  deleteCredentials(userId: string) {
+    return this.db.deleteFrom('user_google_drive').where('userId', '=', userId).execute();
+  }
 
   /**
    * Given a user and a list of candidate asset ids, returns the subset that has already been

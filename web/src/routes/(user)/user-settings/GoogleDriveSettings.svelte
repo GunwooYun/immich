@@ -1,50 +1,112 @@
 <script lang="ts">
   // This panel lives under Settings and is where a user manages their Google Drive connection:
-  //   1. "Connect to Google Drive" kicks off the OAuth flow (server side handles the rest).
-  //   2. "Target Folder ID" lets them choose where uploaded photos should land in their Drive.
+  //   1. "Connect to Google Drive" kicks off the OAuth flow (the server handles the rest).
+  //   2. Once connected, they can choose which Drive folder uploads should land in.
+  //   3. "Disconnect" discards the stored Google credentials.
   //
-  // Note: after Google redirects the user back here (server-side callback route
-  // GET /google-drive/callback), the browser lands on this settings page with a
-  // `?google-drive=connected` or `?google-drive=error` query flag. Reading that flag and showing
-  // a corresponding toast is a follow-up (not implemented yet) — right now this component only
-  // handles the "click connect" / "save folder" half of the flow, not the "coming back from
-  // Google" half.
+  // The component hydrates its state from GET /google-drive/status on mount, so what's rendered
+  // reflects the account's actual connection state rather than always starting from a blank,
+  // "nobody is connected" form.
+  import { goto } from '$app/navigation';
   import SettingInputField from '$lib/components/shared-components/settings/SettingInputField.svelte';
   import { SettingInputFieldType } from '$lib/constants';
-  import { Button, toastManager } from '@immich/ui';
+  import { handleError } from '$lib/utils/handle-error';
+  import { Button, LoadingSpinner, toastManager } from '@immich/ui';
+  import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
   import { fade } from 'svelte/transition';
-  import { handleError } from '$lib/utils/handle-error';
 
-  // The Drive folder ID the user wants uploads to go into. Left blank by default (meaning
-  // "upload to the root of My Drive") — this isn't pre-filled from the server on page load
-  // because there's currently no "get my current Google Drive settings" endpoint to read it
-  // from; see GET /google-drive/status in the implementation plan doc for that follow-up.
+  type GoogleDriveStatus = {
+    connected: boolean;
+    folderId: string | null;
+    connectedAt: string | null;
+  };
+
+  let loading = $state(true);
+  let connected = $state(false);
+  let connectedAt = $state<string | null>(null);
+  // Bound to the folder input. Kept as '' rather than null so the text input has a defined value;
+  // it's translated back to "no folder chosen" server-side.
   let folderId = $state('');
 
-  // Step 1 of connecting: ask the server for a Google OAuth consent URL (this also embeds a
-  // signed, short-lived "state" token server-side so the eventual callback can be verified — see
-  // GoogleDriveService#getAuthUrl on the backend), then navigate the whole browser tab there.
-  // From this point on, the user is on Google's own consent screen, not on Immich.
+  // `fetch` only rejects on network-level failures — an HTTP 4xx/5xx resolves normally — so every
+  // call here goes through this wrapper. Without it, a 401/500 would fall straight through to the
+  // success path and we'd show a "saved!" toast for a request that actually failed.
+  const request = async (url: string, init?: RequestInit) => {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+      throw new Error(`Request to ${url} failed with status ${response.status}`);
+    }
+    return response;
+  };
+
+  const loadStatus = async () => {
+    const response = await request('/api/google-drive/status');
+    const status = (await response.json()) as GoogleDriveStatus;
+    connected = status.connected;
+    connectedAt = status.connectedAt;
+    folderId = status.folderId ?? '';
+  };
+
+  onMount(async () => {
+    // After the user finishes (or abandons) Google's consent screen, the server-side callback route
+    // redirects the browser back to this settings page with a ?google-drive=connected|error flag
+    // (alongside ?isOpen=google-drive-sync, which is what expands this section so this component
+    // mounts at all). That flag is the only signal the user gets about whether linking worked.
+    const params = new URLSearchParams(globalThis.location.search);
+    const result = params.get('google-drive');
+
+    // Load status first. Doing this before the goto below matters: goto() replaces the whole query
+    // string, and this component only stays mounted while `isOpen` still names this section — so
+    // any work scheduled after it is at the mercy of a re-render.
+    try {
+      await loadStatus();
+    } catch (error) {
+      handleError(error, 'Unable to load Google Drive connection status');
+    } finally {
+      loading = false;
+    }
+
+    if (result) {
+      if (result === 'connected') {
+        toastManager.primary('Google Drive connected');
+      } else {
+        toastManager.danger('Unable to connect Google Drive. Please try again.');
+      }
+
+      // Drop the one-shot flag so a refresh (or a copied URL) doesn't replay the toast. Everything
+      // else in the query string is carried over untouched — in particular `isOpen`, which is what
+      // keeps this section expanded (and which can name several sections at once, space-separated,
+      // so rebuilding it by hand would silently collapse whatever else the user had open).
+      params.delete('google-drive');
+      await goto(`?${params.toString()}`, { replaceState: true, noScroll: true, keepFocus: true });
+    }
+  });
+
+  // Step 1 of connecting: ask the server for a Google OAuth consent URL (this also mints a signed,
+  // short-lived "state" token server-side so the eventual callback can be verified — see
+  // GoogleDriveService#getAuthUrl on the backend), then navigate the whole browser tab there. From
+  // this point on the user is on Google's own consent screen, not on Immich.
   const connectGoogleDrive = async () => {
     try {
-      const response = await fetch('/api/google-drive/auth-url');
-      const data = await response.json();
-      if (data.url) {
-        window.location.href = data.url;
+      const response = await request('/api/google-drive/auth-url');
+      const { url } = (await response.json()) as { url?: string };
+      if (!url) {
+        throw new Error('Server did not return a Google authorization URL');
       }
+      globalThis.location.href = url;
     } catch (error) {
       handleError(error, 'Unable to connect to Google Drive');
     }
   };
 
-  // Persists the chosen target folder ID on the user's account. This is a plain "set and forget"
-  // preference — there's no folder picker UI yet (Google's `drive.file` OAuth scope means we
-  // can't list the user's existing folders), so for now the user has to paste in a folder ID
-  // manually (found in a Google Drive folder's URL).
+  // Persists the chosen target folder. There's no folder picker: Google's `drive.file` OAuth scope
+  // only grants access to files this app itself created, so we can't enumerate the user's existing
+  // folders. Pasting an ID (visible in a Drive folder's URL) is the workaround until we either
+  // adopt the Google Picker API or auto-create a dedicated folder on link.
   const handleSaveFolder = async () => {
     try {
-      await fetch('/api/google-drive/folder', {
+      await request('/api/google-drive/folder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folderId }),
@@ -55,8 +117,22 @@
     }
   };
 
-  // Prevents the native browser form submission (which would trigger a full page reload) — we
-  // handle the "save" button's click ourselves via handleSaveFolder above instead.
+  const handleDisconnect = async () => {
+    try {
+      await request('/api/google-drive/link', { method: 'DELETE' });
+      // Reset locally rather than re-fetching: we already know the resulting state, and this keeps
+      // the UI from flashing stale "connected" content while a round trip completes.
+      connected = false;
+      connectedAt = null;
+      folderId = '';
+      toastManager.primary('Google Drive disconnected');
+    } catch (error) {
+      handleError(error, 'Unable to disconnect Google Drive');
+    }
+  };
+
+  // Prevents the native browser form submission (which would trigger a full page reload) — the
+  // "save" button's click is handled by handleSaveFolder above instead.
   const onsubmit = (event: Event) => {
     event.preventDefault();
   };
@@ -64,21 +140,39 @@
 
 <section class="my-4">
   <div in:fade={{ duration: 500 }}>
-    <form autocomplete="off" {onsubmit}>
-      <div class="flex flex-col gap-4 sm:ms-8">
-        <div class="flex justify-start">
-          <Button shape="round" type="button" size="small" onclick={connectGoogleDrive}>Connect to Google Drive</Button>
+    {#if loading}
+      <div class="flex justify-center py-4"><LoadingSpinner /></div>
+    {:else}
+      <form autocomplete="off" {onsubmit}>
+        <div class="flex flex-col gap-4 sm:ms-8">
+          {#if connected}
+            <p class="text-sm">
+              Connected to Google Drive{connectedAt ? ` since ${new Date(connectedAt).toLocaleString()}` : ''}.
+            </p>
+            <SettingInputField
+              inputType={SettingInputFieldType.TEXT}
+              label="Target Folder ID"
+              description="Where uploads land in Drive. Leave blank to use the root of My Drive."
+              bind:value={folderId}
+            />
+            <div class="flex justify-between">
+              <Button shape="round" type="button" size="small" color="danger" onclick={handleDisconnect}>
+                Disconnect
+              </Button>
+              <Button shape="round" type="submit" size="small" onclick={handleSaveFolder}>{$t('save')}</Button>
+            </div>
+          {:else}
+            <p class="text-sm">
+              Google Drive is not connected. Connect an account to automatically upload photos added to your albums.
+            </p>
+            <div class="flex justify-start">
+              <Button shape="round" type="button" size="small" onclick={connectGoogleDrive}>
+                Connect to Google Drive
+              </Button>
+            </div>
+          {/if}
         </div>
-        <SettingInputField
-          inputType={SettingInputFieldType.TEXT}
-          label="Target Folder ID"
-          description="The Google Drive folder ID where photos will be uploaded."
-          bind:value={folderId}
-        />
-        <div class="flex justify-end">
-          <Button shape="round" type="submit" size="small" onclick={handleSaveFolder}>{$t('save')}</Button>
-        </div>
-      </div>
-    </form>
+      </form>
+    {/if}
   </div>
 </section>

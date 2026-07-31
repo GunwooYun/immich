@@ -2,7 +2,7 @@
 
 This document tracks the ongoing progress of the "Sync Album to Google Drive" feature implementation. See [google-drive-album-sync-plan.md](./google-drive-album-sync-plan.md) for the target design.
 
-**Status as of commit `e7ca9d879` (branch `feature/google-drive-album-sync`).** Everything below was
+**Status: P1 complete (branch `feature/google-drive-album-sync`).** Everything below was
 re-verified directly against the committed code (`git show <commit>:<path>`), not just against commit
 messages or earlier drafts of this document — a previous version of this file had drifted out of sync
 with what was actually shipped (it still described pre-fix behavior for things that were fixed in the
@@ -57,8 +57,9 @@ against the actual diff rather than editing from memory.
 - `GoogleDriveRepository` (`getUploadedAssetIds`, `recordUpload`) wired into `BaseService`'s DI graph.
 
 ### ✅ Frontend (since `93b977eff`)
-- `GoogleDriveSettings.svelte`: "Connect to Google Drive" button + target folder ID field, registered
-  as an accordion section in `UserSettingsList.svelte`.
+- `GoogleDriveSettings.svelte`: registered as an accordion section in `UserSettingsList.svelte`.
+  Later extended in P1 — see "connection status, disconnect, and callback feedback" below for its
+  current behavior.
 - Album page: "Sync to Google Drive" icon button in the action bar, gated to `isOwned` (matches the
   backend's owner-only enforcement — a non-owner never sees a button that would just 403).
 
@@ -67,19 +68,45 @@ against the actual diff rather than editing from memory.
   2284, Web 3001, DB 5433), isolated upload path, no fixed container names — verified against the
   actual compose file (`2284:2283`, `3001:3000`, `5433:5432`).
 
+### ✅ P1: credentials moved off the `user` table
+- New `user_google_drive` table (`userId` PK/FK, `refreshToken`, `folderId`, `connectedAt`) replaces
+  the `googleDriveRefreshToken` / `googleDriveFolderId` columns on `user`. Those columns were part of
+  `columns.userAdmin`, so a long-lived OAuth secret was being loaded on essentially every user read;
+  it's now only read where explicitly needed (the link/unlink flow and the upload worker).
+- `GoogleDriveRepository` gained `getCredentials` / `upsertCredentials` / `setFolderId` /
+  `deleteCredentials`; `GoogleDriveService` no longer touches `userRepository` at all.
+- Migration `1785475800000-CreateUserGoogleDriveTable` creates the table, copies existing rows over,
+  then drops the two `user` columns. Written additively (rather than by rewriting the earlier
+  `1785423600000` migration) so anyone who already ran this branch locally doesn't end up with a
+  `kysely_migrations` row pointing at a deleted file.
+- **The token is stored in plaintext — a deliberate decision, not an oversight.** Immich has no
+  encryption-at-rest infrastructure and no master key: every other secret it stores (passwords, API
+  keys, session tokens, PIN codes) is *hashed*, because those only ever need verifying. A Google
+  refresh token must be readable to be usable, so it would need reversible encryption with a key held
+  outside the database — meaning a new mandatory operator-managed key whose loss forces every user to
+  re-link. Judged not worth it for this threat model; see plan §2.5.
+
+### ✅ P1: connection status, disconnect, and callback feedback
+- `GET /google-drive/status` returns `{ connected, folderId, connectedAt }` (never the token).
+- `DELETE /google-drive/link` disconnects. Deliberately leaves both the already-uploaded Drive files
+  and the `google_drive_upload` ledger alone — deleting a user's own cloud files because they
+  unlinked an integration would be destructive, and keeping the ledger means reconnecting later
+  doesn't re-upload everything as duplicates.
+- `GoogleDriveSettings.svelte` now hydrates from `/status` on mount (so it shows real connection
+  state instead of always rendering an empty "not connected" form), surfaces the
+  `?google-drive=connected|error` callback flag as a toast, clears that one-shot flag from the URL,
+  and offers a Disconnect button. All requests go through a wrapper that checks `response.ok`, since
+  `fetch` resolves normally on 4xx/5xx and would otherwise show a success toast for a failed request.
+- The OAuth callback redirect includes `isOpen=google-drive-sync`. This is load-bearing, not
+  cosmetic: settings sections are accordions that only render their contents while expanded, so
+  without it the panel never mounts and never reads the flag — the callback feedback would be dead
+  code. (Caught in review; the first cut of this used the wrong parameter name and silently did
+  nothing.)
+
 ## 2. Not started
 
-These are unchanged from the original plan and still genuinely outstanding — listed here in the same
-P1/P2/P3 priority order already agreed on:
-
-### P1 — needed before this is actually usable end-to-end
-- Frontend doesn't read the `?google-drive=connected|error` query param the callback redirects to —
-  the user gets no toast/feedback after completing (or failing) the Google consent flow.
-- No `GET /google-drive/status` endpoint — the settings page can't show current connection state or
-  pre-fill the configured folder ID on load.
-- Credentials still live on the `user` table (`googleDriveRefreshToken`, `googleDriveFolderId`) as
-  plaintext columns, riding along on every `columns.userAdmin` select. Plan §2.5 calls for moving
-  these into a dedicated `user_google_drive` table and encrypting the refresh token at rest. Not done.
+P1 is now complete (see §1). What remains is listed in the same P2/P3 priority order already agreed
+on:
 
 ### P2 — CI / integration correctness
 - OpenAPI spec/SDK not regenerated (new controller/DTOs aren't in `open-api/immich-openapi-specs.json`

@@ -243,19 +243,58 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Failed to link Google account');
     }
 
-    await this.userRepository.update(userId, {
-      googleDriveRefreshToken: refreshToken,
-    });
+    await this.googleDriveRepository.upsertCredentials(userId, refreshToken);
   }
 
   /**
    * Lets the user choose which Drive folder uploaded photos should land in. If left unset,
    * uploadAsset() below just uploads to the root of "My Drive".
+   *
+   * Rejects if the user hasn't connected Google Drive: there'd be no credentials row to attach the
+   * folder to, so the setting would silently evaporate and the user would have no idea why their
+   * photos kept landing somewhere else.
    */
   async setFolderId(userId: string, folderId: string): Promise<void> {
-    await this.userRepository.update(userId, {
-      googleDriveFolderId: folderId,
-    });
+    const updated = await this.googleDriveRepository.setFolderId(userId, folderId || null);
+    if (updated === 0) {
+      throw new BadRequestException('Google Drive is not connected for this user');
+    }
+  }
+
+  /**
+   * Powers the settings page: tells the frontend whether this user has Google Drive connected and,
+   * if so, which folder they picked and when they linked it.
+   *
+   * Deliberately never returns the refresh token itself — the frontend has no use for it, and the
+   * whole point of moving credentials into their own table was to stop the token travelling further
+   * than it needs to.
+   */
+  async getStatus(userId: string): Promise<{ connected: boolean; folderId: string | null; connectedAt: Date | null }> {
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
+      return { connected: false, folderId: null, connectedAt: null };
+    }
+
+    return {
+      connected: true,
+      folderId: credentials.folderId,
+      connectedAt: credentials.connectedAt,
+    };
+  }
+
+  /**
+   * Disconnects the user's Google Drive account by discarding the stored credentials.
+   *
+   * Idempotent: disconnecting an already-disconnected account is a no-op rather than an error, so a
+   * double-clicked button doesn't produce a spurious failure.
+   *
+   * Files already uploaded to the user's Drive are left alone — this feature is one-way sync, and
+   * deleting a user's photos out of their own cloud storage because they unlinked an integration
+   * would be a genuinely destructive surprise. The upload ledger is kept for the same reason (see
+   * GoogleDriveRepository#deleteCredentials).
+   */
+  async disconnect(userId: string): Promise<void> {
+    await this.googleDriveRepository.deleteCredentials(userId);
   }
 
   /**
@@ -279,8 +318,9 @@ export class GoogleDriveService extends BaseService {
   async uploadAsset(userId: string, assetId: string): Promise<'skipped' | 'uploaded'> {
     // 1) Does this user even have Google Drive connected? If not, there's nothing to do — and
     //    this is an expected, everyday case (most users won't have linked Drive), not an error.
-    const user = await this.userRepository.get(userId, {});
-    if (!user || !user.googleDriveRefreshToken) {
+    //    The absence of a `user_google_drive` row *is* the "not connected" signal.
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
       this.logger.debug(`Skipping Google Drive upload for asset ${assetId}: user ${userId} has not linked Drive`);
       return 'skipped';
     }
@@ -304,7 +344,7 @@ export class GoogleDriveService extends BaseService {
     // refresh token. The googleapis client automatically exchanges the refresh token for a
     // short-lived access token behind the scenes as needed.
     const oauth2Client = this.getOAuth2Client();
-    oauth2Client.setCredentials({ refresh_token: user.googleDriveRefreshToken });
+    oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
 
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
@@ -319,7 +359,7 @@ export class GoogleDriveService extends BaseService {
 
     // If the user configured a target folder (via setFolderId above), upload into it. Otherwise
     // the file lands in the root of "My Drive".
-    const folderId = user.googleDriveFolderId;
+    const folderId = credentials.folderId;
     const fileMetadata: drive_v3.Schema$File = {
       name: asset.originalFileName,
       parents: folderId ? [folderId] : [],

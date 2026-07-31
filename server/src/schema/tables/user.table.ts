@@ -82,18 +82,4 @@ export class UserTable {
 
   @UpdateIdColumn({ index: true })
   updateId!: Generated<string>;
-
-  // --- Google Drive sync feature ---
-  // See migration 1785423600000-AddGoogleDriveFieldsToUser.ts for the full explanation of these
-  // two columns and a note about a planned follow-up (moving them to their own table).
-
-  // The OAuth refresh token Google issued us for this user, after they completed the "Connect
-  // Google Drive" flow (GoogleDriveService#linkAccount). Null = user hasn't connected Drive yet.
-  @Column({ nullable: true })
-  googleDriveRefreshToken!: string | null;
-
-  // The Drive folder id the user chose as their upload destination (GoogleDriveService#setFolderId).
-  // Null = no folder chosen, uploads go to the root of the user's "My Drive".
-  @Column({ nullable: true })
-  googleDriveFolderId!: string | null;
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpStatus, Param, Post, Query, Redirect } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Redirect } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
@@ -12,15 +12,33 @@ import { UUIDParamDto } from 'src/validation';
  * calls and turning results into HTTP responses.
  *
  * Routes on this controller, in the order a user would normally hit them:
- *   1. GET  /google-drive/auth-url      - "Connect Google Drive" button asks for a Google login URL.
- *   2. GET  /google-drive/callback      - Google redirects the browser back here after the user approves.
- *   3. POST /google-drive/folder        - user optionally picks a target Drive folder.
- *   4. POST /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
+ *   1. GET    /google-drive/status        - settings page asks "is this user connected, and to which folder?"
+ *   2. GET    /google-drive/auth-url      - "Connect Google Drive" button asks for a Google login URL.
+ *   3. GET    /google-drive/callback      - Google redirects the browser back here after the user approves.
+ *   4. POST   /google-drive/folder        - user optionally picks a target Drive folder.
+ *   5. POST   /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
+ *   6. DELETE /google-drive/link          - "Disconnect" button discards the stored credentials.
  */
 @ApiTags('Google Drive')
 @Controller('google-drive')
 export class GoogleDriveController {
   constructor(private googleDriveService: GoogleDriveService) {}
+
+  /**
+   * Tells the settings page whether this user has Google Drive connected, and if so which folder
+   * they picked and when they linked it. Without this the settings form had no way to show current
+   * state — it always rendered as if nobody was connected and with an empty folder field.
+   *
+   * Never includes the refresh token; the frontend has no use for it.
+   */
+  @Get('status')
+  @Authenticated()
+  @ApiOperation({ summary: 'Get the current Google Drive connection status' })
+  async getStatus(
+    @Auth() auth: AuthDto,
+  ): Promise<{ connected: boolean; folderId: string | null; connectedAt: Date | null }> {
+    return this.googleDriveService.getStatus(auth.user.id);
+  }
 
   /**
    * Called by the frontend when the user clicks "Connect Google Drive" in Settings.
@@ -55,6 +73,12 @@ export class GoogleDriveController {
    * `google-drive` query flag so the frontend can show a "connected!" or "something went wrong"
    * toast to the user — whether things succeeded or failed, the user ends up looking at a normal
    * Immich page rather than a raw JSON error or a blank screen.
+   *
+   * The `isOpen=google-drive-sync` part is load-bearing, not cosmetic: settings sections are
+   * accordions that only render their contents while expanded (see SettingAccordion.svelte's
+   * `{#if isOpen}`), and expansion is driven by that query parameter. Without it the Google Drive
+   * panel stays collapsed, never mounts, and so never reads the `google-drive` flag — meaning the
+   * user would land on a settings page with no indication whatsoever of whether linking worked.
    */
   @Get('callback')
   @Redirect()
@@ -64,19 +88,19 @@ export class GoogleDriveController {
     // on the Google side, or omits `code`/`state` entirely for other failure modes. Either way,
     // there's nothing for us to do except send the user back with a friendly failure flag.
     if (error || !code || !state) {
-      return { url: '/user-settings?google-drive=error', statusCode: HttpStatus.FOUND };
+      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=error', statusCode: HttpStatus.FOUND };
     }
 
     try {
       // This is where the real work happens: verify the signed state, exchange the code for a
       // refresh token, and persist it against the right user. See GoogleDriveService for details.
       await this.googleDriveService.handleCallback(code, state);
-      return { url: '/user-settings?google-drive=connected', statusCode: HttpStatus.FOUND };
+      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=connected', statusCode: HttpStatus.FOUND };
     } catch {
       // Covers bad/expired state, or Google rejecting the code exchange (e.g. it was already
       // used, or too much time passed). We don't leak the underlying error to the browser URL —
       // just a generic "error" flag; the real error is already logged server-side.
-      return { url: '/user-settings?google-drive=error', statusCode: HttpStatus.FOUND };
+      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=error', statusCode: HttpStatus.FOUND };
     }
   }
 
@@ -112,5 +136,20 @@ export class GoogleDriveController {
   @ApiOperation({ summary: "Sync an album to the owner's Google Drive" })
   async syncAlbum(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
     await this.googleDriveService.syncAlbum(auth, id);
+  }
+
+  /**
+   * "Disconnect" button in settings — discards the stored Google credentials for this user.
+   *
+   * Does not touch anything already uploaded to their Drive (this is a one-way sync; deleting the
+   * user's own cloud files because they unlinked an integration would be a destructive surprise),
+   * and keeps the upload ledger so that reconnecting later doesn't re-upload everything as
+   * duplicates.
+   */
+  @Delete('link')
+  @Authenticated()
+  @ApiOperation({ summary: 'Disconnect the Google Drive account' })
+  async disconnect(@Auth() auth: AuthDto): Promise<void> {
+    await this.googleDriveService.disconnect(auth.user.id);
   }
 }
