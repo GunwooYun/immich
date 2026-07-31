@@ -299,6 +299,15 @@ export const getMocks = () => {
   databaseMock.getPostgresVersionRange = vitest.fn().mockReturnValue('>=14.0.0');
   databaseMock.createExtension = vitest.fn().mockResolvedValue(void 0);
 
+  const googleDriveMock = automock(GoogleDriveRepository, { strict: false });
+
+  // AlbumService queues Google Drive uploads on every successful add-to-album, and dereferences the
+  // returned Set to filter out already-uploaded assets. A bare non-strict automock resolves to
+  // `undefined`, which would make `.has()` throw in every album test that adds an asset — tests that
+  // have nothing to do with Google Drive. Default to "nothing uploaded yet"; individual tests
+  // override this when they're actually asserting dedup behavior.
+  googleDriveMock.getUploadedAssetIds.mockResolvedValue(new Set());
+
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),
     // eslint-disable-next-line no-sparse-arrays
@@ -320,7 +329,7 @@ export const getMocks = () => {
     email: automock(EmailRepository, { args: [loggerMock] }),
     // eslint-disable-next-line no-sparse-arrays
     event: automock(EventRepository, { args: [, , loggerMock], strict: false }),
-    googleDrive: automock(GoogleDriveRepository, { strict: false }),
+    googleDrive: googleDriveMock,
     integrityReport: automock(IntegrityRepository, { strict: false }),
     job: newJobRepositoryMock(),
     apiKey: automock(ApiKeyRepository),

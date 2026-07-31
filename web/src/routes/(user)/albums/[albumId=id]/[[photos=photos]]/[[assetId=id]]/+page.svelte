@@ -332,9 +332,9 @@
         // otherwise a 403/500 from the server would silently show a "sync started" success toast.
         throw new Error(`Sync request failed with status ${response.status}`);
       }
-      toastManager.primary('Google Drive sync started');
+      toastManager.primary($t('google_drive_sync_started'));
     } catch (error) {
-      handleError(error, 'Unable to start Google Drive sync');
+      handleError(error, $t('errors.unable_to_start_google_drive_sync'));
     }
   };
 
@@ -576,7 +576,7 @@
                   shape="round"
                   variant="ghost"
                   color="secondary"
-                  aria-label="Sync to Google Drive"
+                  aria-label={$t('google_drive_sync_album')}
                   onclick={handleGoogleDriveSync}
                   icon={mdiGoogleDrive}
                 />

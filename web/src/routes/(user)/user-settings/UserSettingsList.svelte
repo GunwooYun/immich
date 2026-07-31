@@ -144,8 +144,8 @@
 <SettingAccordion
   icon={mdiGoogleDrive}
   key="google-drive-sync"
-  title="Google Drive Sync"
-  subtitle="Connect and configure Google Drive backups"
+  title={$t('google_drive_sync')}
+  subtitle={$t('google_drive_sync_subtitle')}
 >
   <GoogleDriveSettings />
 </SettingAccordion>

@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { BulkIdErrorReason } from 'src/dtos/asset-ids.response.dto';
-import { AlbumUserRole, AssetOrder, UserMetadataKey } from 'src/enum';
+import { AlbumUserRole, AssetOrder, JobName, UserMetadataKey } from 'src/enum';
 import { AlbumService } from 'src/services/album.service';
 import { AlbumUserFactory } from 'test/factories/album-user.factory';
 import { AlbumFactory } from 'test/factories/album.factory';
@@ -940,6 +940,60 @@ describe(AlbumService.name, () => {
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(mocks.access.album.checkSharedLinkAccess).toHaveBeenCalled();
+    });
+
+    it('should queue Google Drive uploads for the album owner, not the user who added the assets', async () => {
+      const editor = UserFactory.create();
+      const album = AlbumFactory.from().albumUser({ userId: editor.id, role: AlbumUserRole.Editor }).build();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const asset = AssetFactory.create();
+      mocks.access.album.checkSharedAlbumAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await sut.addAssets(AuthFactory.create(editor), album.id, { ids: [asset.id] });
+
+      // Uploads land in the *owner's* Drive, so the job must carry the owner's id. Using the acting
+      // user's id would push a shared album's photos into a contributor's personal Drive instead.
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.GoogleDriveUpload, data: { userId: owner.id, assetId: asset.id } },
+      ]);
+      expect(owner.id).not.toBe(editor.id);
+    });
+
+    it('should not queue Google Drive uploads for assets already in the ledger', async () => {
+      const album = AlbumFactory.create();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const [asset1, asset2] = [AssetFactory.create(), AssetFactory.create()];
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset1.id, asset2.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([asset1.id]));
+
+      await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset1.id, asset2.id] });
+
+      // Both assets are new to the album, but one is already in the user's Drive from a previous
+      // album — re-uploading it would create a duplicate file, so it's filtered out before queueing.
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.GoogleDriveUpload, data: { userId: owner.id, assetId: asset2.id } },
+      ]);
+    });
+
+    it('should not queue anything when every added asset is already in the ledger', async () => {
+      const album = AlbumFactory.create();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const asset = AssetFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([asset.id]));
+
+      await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
+
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
   });
 

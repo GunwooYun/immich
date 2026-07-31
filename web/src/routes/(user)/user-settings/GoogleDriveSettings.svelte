@@ -62,16 +62,16 @@
     try {
       await loadStatus();
     } catch (error) {
-      handleError(error, 'Unable to load Google Drive connection status');
+      handleError(error, $t('errors.unable_to_load_google_drive_status'));
     } finally {
       loading = false;
     }
 
     if (result) {
       if (result === 'connected') {
-        toastManager.primary('Google Drive connected');
+        toastManager.primary($t('google_drive_connected'));
       } else {
-        toastManager.danger('Unable to connect Google Drive. Please try again.');
+        toastManager.danger($t('google_drive_connect_error'));
       }
 
       // Drop the one-shot flag so a refresh (or a copied URL) doesn't replay the toast. Everything
@@ -96,7 +96,7 @@
       }
       globalThis.location.href = url;
     } catch (error) {
-      handleError(error, 'Unable to connect to Google Drive');
+      handleError(error, $t('errors.unable_to_connect_google_drive'));
     }
   };
 
@@ -125,9 +125,9 @@
       connected = false;
       connectedAt = null;
       folderId = '';
-      toastManager.primary('Google Drive disconnected');
+      toastManager.primary($t('google_drive_disconnected'));
     } catch (error) {
-      handleError(error, 'Unable to disconnect Google Drive');
+      handleError(error, $t('errors.unable_to_disconnect_google_drive'));
     }
   };
 
@@ -147,27 +147,27 @@
         <div class="flex flex-col gap-4 sm:ms-8">
           {#if connected}
             <p class="text-sm">
-              Connected to Google Drive{connectedAt ? ` since ${new Date(connectedAt).toLocaleString()}` : ''}.
+              {connectedAt
+                ? $t('google_drive_connected_since', { values: { date: new Date(connectedAt).toLocaleString() } })
+                : $t('google_drive_connected')}
             </p>
             <SettingInputField
               inputType={SettingInputFieldType.TEXT}
-              label="Target Folder ID"
-              description="Where uploads land in Drive. Leave blank to use the root of My Drive."
+              label={$t('google_drive_folder_id')}
+              description={$t('google_drive_folder_id_description')}
               bind:value={folderId}
             />
             <div class="flex justify-between">
               <Button shape="round" type="button" size="small" color="danger" onclick={handleDisconnect}>
-                Disconnect
+                {$t('google_drive_disconnect')}
               </Button>
               <Button shape="round" type="submit" size="small" onclick={handleSaveFolder}>{$t('save')}</Button>
             </div>
           {:else}
-            <p class="text-sm">
-              Google Drive is not connected. Connect an account to automatically upload photos added to your albums.
-            </p>
+            <p class="text-sm">{$t('google_drive_not_connected')}</p>
             <div class="flex justify-start">
               <Button shape="round" type="button" size="small" onclick={connectGoogleDrive}>
-                Connect to Google Drive
+                {$t('google_drive_connect')}
               </Button>
             </div>
           {/if}
