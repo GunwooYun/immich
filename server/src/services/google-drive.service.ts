@@ -30,14 +30,14 @@ type GoogleDriveStateClaims = {
 @Injectable()
 export class GoogleDriveService extends BaseService {
   /**
-   * Returns the shared secret used to sign/verify the OAuth `state` parameter (see
-   * getAuthUrl/handleCallback below), generating and persisting one the very first time this
-   * feature is ever used on this Immich instance.
+   * Reads the shared secret used to sign/verify the OAuth `state` parameter, or returns null if
+   * this Immich instance has never issued a Google Drive auth URL yet (i.e. no secret has ever
+   * been persisted).
    *
-   * This used to be a plain in-memory field (`private stateSecret = randomBytesAsText(32)`),
-   * generated fresh every time the service class was instantiated — which in practice meant
-   * "once per server process". That was fine for a single-instance deployment, but broke in two
-   * very real scenarios:
+   * Background on why this lives in the database rather than in a class field: it used to be a
+   * plain in-memory field (`private stateSecret = randomBytesAsText(32)`), generated fresh every
+   * time the service class was instantiated — which in practice meant "once per server process".
+   * That was fine for a single-instance deployment, but broke in two very real scenarios:
    *   - Horizontally scaled deployments (multiple immich-server replicas behind a load
    *     balancer, e.g. `docker compose ... --scale immich-server=3`, which this project's own
    *     mise.toml dev/prod tasks support): if the "get auth url" request lands on replica A but
@@ -51,17 +51,39 @@ export class GoogleDriveService extends BaseService {
    * fixes both cases: every server process reads the same value from the database, and it
    * survives restarts.
    *
-   * Known, accepted minor race: if this feature is used for the very first time by two
-   * concurrent requests before any secret has been persisted yet, both could generate their own
-   * random secret and race to write it via `set()` (which unconditionally overwrites). Worst
-   * case, one of those two initial requests gets a spurious "invalid or expired" error and has
-   * to retry — there's no security impact (an attacker can't influence which secret wins), and
-   * this can only happen once, ever, per Immich instance, right after the feature is first used.
+   * This read-only variant is what the *verification* path (handleCallback) uses — see
+   * getOrCreateStateSecret below for the issuing path, and for why only that one is allowed to
+   * create a secret.
    */
-  private async getStateSecret(): Promise<string> {
+  private async findStateSecret(): Promise<string | null> {
     const existing = await this.systemMetadataRepository.get(SystemMetadataKey.GoogleDriveState);
-    if (existing?.secret) {
-      return existing.secret;
+    return existing?.secret ?? null;
+  }
+
+  /**
+   * Same as findStateSecret above, but mints and persists a new secret if none exists yet.
+   *
+   * Only the *issuing* side of the OAuth flow (getAuthUrl) may use this. The verification side
+   * (handleCallback) deliberately uses the read-only findStateSecret instead, for two reasons:
+   *   - handleCallback is a public, unauthenticated route (Google redirects the browser to it, so
+   *     it can't require a session). A verification path has no business creating signing
+   *     material — otherwise anyone hitting the callback URL on a fresh instance could cause a
+   *     secret to be generated and written to system_metadata.
+   *   - If a secret doesn't exist, then no auth URL was ever issued, so no valid `state` can
+   *     possibly exist either — the only correct answer is to reject, not to mint a fresh secret
+   *     and then fail verification against it anyway.
+   *
+   * Known, accepted minor race: if this feature is used for the very first time by two concurrent
+   * requests before any secret has been persisted yet, both could generate their own random
+   * secret and race to write it via `set()` (which unconditionally overwrites). Worst case, one
+   * of those two initial requests gets a spurious "invalid or expired" error and has to retry —
+   * there's no security impact (an attacker can't influence which secret wins), and this can only
+   * happen once, ever, per Immich instance, right after the feature is first used.
+   */
+  private async getOrCreateStateSecret(): Promise<string> {
+    const existing = await this.findStateSecret();
+    if (existing) {
+      return existing;
     }
 
     const secret = this.cryptoRepository.randomBytesAsText(32);
@@ -120,7 +142,7 @@ export class GoogleDriveService extends BaseService {
     // Sign a token containing the userId, valid for 10 minutes — plenty of time for a human to
     // click through Google's consent screen, but short enough that a leaked/replayed state
     // (e.g. from a browser history entry) becomes useless quickly.
-    const stateSecret = await this.getStateSecret();
+    const stateSecret = await this.getOrCreateStateSecret();
     const state = this.cryptoRepository.signJwt({ userId } satisfies GoogleDriveStateClaims, stateSecret, {
       expiresIn: '10m',
     });
@@ -146,11 +168,32 @@ export class GoogleDriveService extends BaseService {
    * reject the whole callback rather than trying to guess who it belongs to.
    */
   async handleCallback(code: string, state: string): Promise<{ userId: string }> {
+    // Read the signing secret *outside* the verification try/catch below. Failing to read it is an
+    // infrastructure problem (couldn't reach/read system_metadata), not "the user's state token is
+    // bad" — folding it into that catch would misreport a database outage as a rejected
+    // authorization request, both to the user and in the logs.
+    let stateSecret: string | null;
+    try {
+      stateSecret = await this.findStateSecret();
+    } catch (error) {
+      // The callback controller catches everything and redirects to "?google-drive=error", so this
+      // log line is the only place the real cause gets recorded — make it say what actually broke.
+      this.logger.error(`Failed to read the Google Drive OAuth state secret: ${error}`);
+      throw error;
+    }
+
+    // No secret persisted means this instance has never issued an auth URL, so no valid `state`
+    // can exist. Reject outright rather than creating one here (see getOrCreateStateSecret's
+    // comment: this route is public, and the verification path must not mint signing material).
+    if (!stateSecret) {
+      this.logger.warn('Rejected Google Drive OAuth callback: no state secret has been issued yet');
+      throw new BadRequestException('Invalid or expired Google Drive authorization request');
+    }
+
     let claims: GoogleDriveStateClaims;
     try {
       // jwt.verify (called internally here) checks both the signature *and* the expiry claim,
       // so an expired-but-otherwise-valid state token is rejected automatically.
-      const stateSecret = await this.getStateSecret();
       claims = this.cryptoRepository.verifyJwt<GoogleDriveStateClaims>(state, stateSecret);
     } catch (error) {
       this.logger.warn(`Rejected Google Drive OAuth callback with invalid state: ${error}`);
