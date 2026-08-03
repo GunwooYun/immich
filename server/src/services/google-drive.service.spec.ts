@@ -153,7 +153,11 @@ describe(GoogleDriveService.name, () => {
     });
 
     it('should queue only assets missing from the ledger, in one batch, for the owner', async () => {
-      const album = AlbumFactory.from().asset().asset().asset().build();
+      const album = AlbumFactory.from()
+        .asset({}, (builder) => builder.exif())
+        .asset({}, (builder) => builder.exif())
+        .asset({}, (builder) => builder.exif())
+        .build();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
       const [alreadySynced, pending1, pending2] = album.assets;
 
@@ -173,7 +177,10 @@ describe(GoogleDriveService.name, () => {
     });
 
     it('should not queue anything when every asset is already synced', async () => {
-      const album = AlbumFactory.from().asset().asset().build();
+      const album = AlbumFactory.from()
+        .asset({}, (builder) => builder.exif())
+        .asset({}, (builder) => builder.exif())
+        .build();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
 
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));

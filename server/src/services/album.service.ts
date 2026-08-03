@@ -183,7 +183,10 @@ export class AlbumService extends BaseService {
     // user's — see queueGoogleDriveUploads/getAlbumOwnerId below for why). This runs after
     // addAssets() has already committed the album_asset rows, so we only ever queue uploads for
     // assets that actually made it into the album.
-    await this.queueGoogleDriveUploads(this.getAlbumOwnerId(album), results.filter((r) => r.success).map((r) => r.id));
+    await this.queueGoogleDriveUploads(
+      this.getAlbumOwnerId(album),
+      results.filter((r) => r.success).map((r) => r.id),
+    );
 
     const { id: firstNewAssetId } = results.find(({ success }) => success) || {};
     if (firstNewAssetId) {

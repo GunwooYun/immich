@@ -8,8 +8,12 @@
 
 docker/upload
 docker/library
+docker/isolated-upload
+docker/test_data
 uploads
 coverage
+
+.claude
 
 mobile/gradle.properties
 mobile/openapi/pubspec.lock

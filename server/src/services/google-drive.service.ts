@@ -1,10 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { drive_v3, google } from 'googleapis';
 import { OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { AlbumUserRole, JobName, JobStatus, Permission, QueueName, SystemMetadataKey } from 'src/enum';
 import { BaseService } from 'src/services/base.service';
 import { mimeTypes } from 'src/utils/mime-types';
-import { google, drive_v3 } from 'googleapis';
 
 /**
  * This is the shape of the data we embed inside the OAuth `state` parameter.
@@ -422,9 +422,7 @@ export class GoogleDriveService extends BaseService {
     // Album ownership in Immich isn't a plain column on the album table — it's expressed as a
     // row in `album_user` with role = 'owner'. So we look through the album's user list for an
     // entry that (a) has the Owner role and (b) belongs to the person making this request.
-    const isOwner = album.albumUsers.some(
-      ({ role, user }) => role === AlbumUserRole.Owner && user.id === auth.user.id,
-    );
+    const isOwner = album.albumUsers.some(({ role, user }) => role === AlbumUserRole.Owner && user.id === auth.user.id);
     if (!isOwner) {
       throw new ForbiddenException('Only the album owner can sync it to Google Drive');
     }
@@ -433,7 +431,12 @@ export class GoogleDriveService extends BaseService {
     // above), but naming it `ownerId` makes the intent at each call site below clearer: this is
     // whose Google Drive the assets are being uploaded to, not just "the caller".
     const ownerId = auth.user.id;
-    const assetIds = album.assets.map((asset) => asset.id);
+    // album.assets is typed as possibly undefined because Kysely's `.$if(options.withAssets, ...)`
+    // can't statically know `withAssets: true` was actually passed at this call site — at runtime
+    // it always will be (we call getById with `{ withAssets: true }` above), but falling back to an
+    // empty array keeps this honest for the type checker without changing behavior: an "empty"
+    // album is handled identically to one that genuinely has no assets, by the check right below.
+    const assetIds = (album.assets ?? []).map((asset) => asset.id);
     if (assetIds.length === 0) {
       return; // Empty album — nothing to sync.
     }
@@ -473,7 +476,7 @@ export class GoogleDriveService extends BaseService {
    * currently does nothing useful beyond logging.
    */
   @OnJob({ name: JobName.GoogleDriveUploadQueueAll, queue: QueueName.GoogleDriveUpload })
-  async handleGoogleDriveUploadQueueAll(data: { force: boolean }) {
+  handleGoogleDriveUploadQueueAll(data: { force: boolean }): JobStatus {
     // For now, this is a placeholder to satisfy the QueueAll pattern.
     // In a full implementation, it might find all assets matching a condition and queue individual jobs.
     this.logger.debug(`handleGoogleDriveUploadQueueAll triggered with force=${data.force}`);
