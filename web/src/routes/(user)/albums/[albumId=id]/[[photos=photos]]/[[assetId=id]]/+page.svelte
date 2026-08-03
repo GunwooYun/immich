@@ -48,7 +48,14 @@
   import { handlePromiseError } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
   import { isAlbumsRoute, navigate, type AssetGridRouteSearchParams } from '$lib/utils/navigation';
-  import { AlbumUserRole, AssetVisibility, getAlbumInfo, updateAlbumInfo, type AlbumResponseDto } from '@immich/sdk';
+  import {
+    AlbumUserRole,
+    AssetVisibility,
+    getAlbumInfo,
+    syncAlbum as syncAlbumToGoogleDrive,
+    updateAlbumInfo,
+    type AlbumResponseDto,
+  } from '@immich/sdk';
   import {
     ActionButton,
     CommandPaletteDefaultProvider,
@@ -325,13 +332,9 @@
   // is just to avoid showing a button that would immediately fail with a permission error.
   const handleGoogleDriveSync = async () => {
     try {
-      const response = await fetch(`/api/google-drive/albums/${album.id}/sync`, { method: 'POST' });
-      if (!response.ok) {
-        // fetch() only rejects on network failures, not on HTTP error statuses (4xx/5xx) — so we
-        // have to check response.ok ourselves and turn a failed request into a thrown error,
-        // otherwise a 403/500 from the server would silently show a "sync started" success toast.
-        throw new Error(`Sync request failed with status ${response.status}`);
-      }
+      // The generated SDK client throws on any non-2xx response, so a 403/500 lands in the catch
+      // below — no hand-rolled `response.ok` check needed like the raw-fetch version had.
+      await syncAlbumToGoogleDrive({ id: album.id });
       toastManager.primary($t('google_drive_sync_started'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_start_google_drive_sync'));

@@ -2,7 +2,8 @@
 
 This document tracks the ongoing progress of the "Sync Album to Google Drive" feature implementation. See [google-drive-album-sync-plan.md](./google-drive-album-sync-plan.md) for the target design.
 
-**Status: P1 complete (branch `feature/google-drive-album-sync`).** Everything below was
+**Status: P2 complete — the branch is CI-parity clean (branch `feature/google-drive-album-sync`).**
+Everything below was
 re-verified directly against the committed code (`git show <commit>:<path>`), not just against commit
 messages or earlier drafts of this document — a previous version of this file had drifted out of sync
 with what was actually shipped (it still described pre-fix behavior for things that were fixed in the
@@ -103,24 +104,40 @@ against the actual diff rather than editing from memory.
   code. (Caught in review; the first cut of this used the wrong parameter name and silently did
   nothing.)
 
+### ✅ P2: tests, i18n, codegen, SDK migration — all complete
+- Unit tests: `google-drive.service.spec.ts` (skip paths, ledger dedup, owner-only sync, token
+  never leaked by `/status`), plus `album.service.spec.ts` extensions (owner-id targeting, dedup).
+  All validated by an actual local run: 2,250 passed / 0 failed, plus lint/tsc/format clean via the
+  same steps CI uses (`//server:ci-unit`).
+- i18n: all UI strings go through `$t()`; 17 keys added to `i18n/en.json` in lexical-sort order.
+- OpenAPI/SDK regenerated (`mise //:open-api`): spec, TypeScript SDK, and Dart SDK all include the
+  six google-drive endpoints. Response/request DTO classes (`google-drive.dto.ts`) were added when
+  the first regen exposed that inline TS return types produce an empty response schema — and worse,
+  that `@Body('folderId')` (property-level extraction) produced an SDK `setFolderId()` with **no
+  body parameter at all**. Now `setFolderId({ googleDriveSetFolderDto })` is fully typed.
+- SQL snapshots regenerated (`sync-sql` against the isolated Postgres): new
+  `server/src/queries/google.drive.repository.sql` with all six repository queries; no other
+  snapshot changed.
+- Migration drift check (`migrations generate TestMigration`) was run for real and **found real
+  drift**: the hand-written `google_drive_upload` create-table migration was missing the two
+  per-FK-column indexes the decorators imply. Fixed as a forward migration
+  (`1785769790549-AddGoogleDriveUploadIndexes`) — the `assetId` index matters for ON DELETE CASCADE
+  performance. Re-check now reports "No changes detected".
+- Frontend migrated off raw `fetch` onto `@immich/sdk` (`getStatus`/`getAuthUrl`/`setFolderId`/
+  `disconnect`/`syncAlbum`, aliased at import for readability).
+- `QueueName.GoogleDriveUpload` added to *three* exhaustive/refreshed web maps: the
+  `Record<QueueName, QueueItem>` in `queue.service.ts`, the `Record<QueueName, string>` queue-title
+  map in `admin/system-settings/JobSettings.svelte` (found by svelte-check, not by reading), and the
+  admin concurrency-input list in the same file (the server honors this queue's concurrency setting,
+  and it's the natural knob for Drive API rate limits). The admin *Queues* panel (`QueuePanel.svelte`)
+  was deliberately left without an entry: its "start" button would invoke the still-placeholder
+  QueueAll handler (P3) as a no-op.
+- Lesson recorded for future work: `nest build` does not delete stale outputs. A compiled copy of the
+  long-renamed `1800000000000-*` migration was still sitting in `server/dist` from an old docker-era
+  build and silently re-applied the dropped user columns during the first migration run. Fixed by
+  wiping `server/dist` and rebuilding; if migrations ever behave impossibly, check dist for ghosts.
+
 ## 2. Not started
-
-P1 is now complete (see §1). What remains is listed in the same P2/P3 priority order already agreed
-on:
-
-### P2 — CI / integration correctness
-- OpenAPI spec/SDK not regenerated (new controller/DTOs aren't in `open-api/immich-openapi-specs.json`
-  yet).
-- `web/src/lib/services/queue.service.ts`'s `Record<QueueName, QueueItem>` map not updated — this is
-  an exhaustive map, so regenerating the SDK without this update will break the web build's type
-  check.
-- `sync:sql` not run — `server/src/queries/user.repository.sql` (and a new
-  `google-drive.repository.sql`) are out of date relative to the schema.
-- No i18n keys — UI strings in `GoogleDriveSettings.svelte` and the album page button are hardcoded
-  English.
-- No tests: `google-drive.service.spec.ts` doesn't exist; `album.service.spec.ts` doesn't assert the
-  new job-queueing behavior (owner-id targeting, ledger dedup, batching).
-- Frontend calls raw `fetch('/api/google-drive/...')` instead of the generated `@immich/sdk` client.
 
 ### P3 — robustness
 - `handleGoogleDriveUploadQueueAll` (the admin "start"/"force" button for this job queue) is still a

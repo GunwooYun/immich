@@ -1,0 +1,128 @@
+//
+// AUTO-GENERATED FILE, DO NOT MODIFY!
+//
+// @dart=2.18
+
+// ignore_for_file: unused_element, unused_import
+// ignore_for_file: always_put_required_named_parameters_first
+// ignore_for_file: constant_identifier_names
+// ignore_for_file: lines_longer_than_80_chars
+
+part of openapi.api;
+
+class GoogleDriveStatusResponseDto {
+  /// Returns a new [GoogleDriveStatusResponseDto] instance.
+  GoogleDriveStatusResponseDto({
+    required this.connected,
+    required this.connectedAt,
+    required this.folderId,
+  });
+
+  /// Whether this user has linked a Google Drive account
+  bool connected;
+
+  /// When the account was linked, if connected
+  DateTime? connectedAt;
+
+  /// The configured upload destination folder, if any
+  String? folderId;
+
+  @override
+  bool operator ==(Object other) => identical(this, other) || other is GoogleDriveStatusResponseDto &&
+    other.connected == connected &&
+    other.connectedAt == connectedAt &&
+    other.folderId == folderId;
+
+  @override
+  int get hashCode =>
+    // ignore: unnecessary_parenthesis
+    (connected.hashCode) +
+    (connectedAt == null ? 0 : connectedAt!.hashCode) +
+    (folderId == null ? 0 : folderId!.hashCode);
+
+  @override
+  String toString() => 'GoogleDriveStatusResponseDto[connected=$connected, connectedAt=$connectedAt, folderId=$folderId]';
+
+  Map<String, dynamic> toJson() {
+    final json = <String, dynamic>{};
+      json[r'connected'] = this.connected;
+    if (this.connectedAt != null) {
+      json[r'connectedAt'] = _isEpochMarker(r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/')
+        ? this.connectedAt!.millisecondsSinceEpoch
+        : this.connectedAt!.toUtc().toIso8601String();
+    } else {
+      json[r'connectedAt'] = null;
+    }
+    if (this.folderId != null) {
+      json[r'folderId'] = this.folderId;
+    } else {
+      json[r'folderId'] = null;
+    }
+    return json;
+  }
+
+  /// Returns a new [GoogleDriveStatusResponseDto] instance and imports its values from
+  /// [value] if it's a [Map], null otherwise.
+  // ignore: prefer_constructors_over_static_methods
+  static GoogleDriveStatusResponseDto? fromJson(dynamic value) {
+    upgradeDto(value, "GoogleDriveStatusResponseDto");
+    if (value is Map) {
+      final json = value.cast<String, dynamic>();
+
+      return GoogleDriveStatusResponseDto(
+        connected: mapValueOfType<bool>(json, r'connected')!,
+        connectedAt: mapDateTime(json, r'connectedAt', r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/'),
+        folderId: mapValueOfType<String>(json, r'folderId'),
+      );
+    }
+    return null;
+  }
+
+  static List<GoogleDriveStatusResponseDto> listFromJson(dynamic json, {bool growable = false,}) {
+    final result = <GoogleDriveStatusResponseDto>[];
+    if (json is List && json.isNotEmpty) {
+      for (final row in json) {
+        final value = GoogleDriveStatusResponseDto.fromJson(row);
+        if (value != null) {
+          result.add(value);
+        }
+      }
+    }
+    return result.toList(growable: growable);
+  }
+
+  static Map<String, GoogleDriveStatusResponseDto> mapFromJson(dynamic json) {
+    final map = <String, GoogleDriveStatusResponseDto>{};
+    if (json is Map && json.isNotEmpty) {
+      json = json.cast<String, dynamic>(); // ignore: parameter_assignments
+      for (final entry in json.entries) {
+        final value = GoogleDriveStatusResponseDto.fromJson(entry.value);
+        if (value != null) {
+          map[entry.key] = value;
+        }
+      }
+    }
+    return map;
+  }
+
+  // maps a json object with a list of GoogleDriveStatusResponseDto-objects as value to a dart map
+  static Map<String, List<GoogleDriveStatusResponseDto>> mapListFromJson(dynamic json, {bool growable = false,}) {
+    final map = <String, List<GoogleDriveStatusResponseDto>>{};
+    if (json is Map && json.isNotEmpty) {
+      // ignore: parameter_assignments
+      json = json.cast<String, dynamic>();
+      for (final entry in json.entries) {
+        map[entry.key] = GoogleDriveStatusResponseDto.listFromJson(entry.value, growable: growable,);
+      }
+    }
+    return map;
+  }
+
+  /// The list of required keys that must be present in a JSON.
+  static const requiredKeys = <String>{
+    'connected',
+    'connectedAt',
+    'folderId',
+  };
+}
+

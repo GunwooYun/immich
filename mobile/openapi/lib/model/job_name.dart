@@ -76,6 +76,8 @@ class JobName {
   static const storageTemplateMigrationSingle = JobName._(r'StorageTemplateMigrationSingle');
   static const tagCleanup = JobName._(r'TagCleanup');
   static const versionCheck = JobName._(r'VersionCheck');
+  static const googleDriveUploadQueueAll = JobName._(r'GoogleDriveUploadQueueAll');
+  static const googleDriveUpload = JobName._(r'GoogleDriveUpload');
   static const ocrQueueAll = JobName._(r'OcrQueueAll');
   static const ocr = JobName._(r'Ocr');
   static const workflowAssetTrigger = JobName._(r'WorkflowAssetTrigger');
@@ -145,6 +147,8 @@ class JobName {
     storageTemplateMigrationSingle,
     tagCleanup,
     versionCheck,
+    googleDriveUploadQueueAll,
+    googleDriveUpload,
     ocrQueueAll,
     ocr,
     workflowAssetTrigger,
@@ -249,6 +253,8 @@ class JobNameTypeTransformer {
         case r'StorageTemplateMigrationSingle': return JobName.storageTemplateMigrationSingle;
         case r'TagCleanup': return JobName.tagCleanup;
         case r'VersionCheck': return JobName.versionCheck;
+        case r'GoogleDriveUploadQueueAll': return JobName.googleDriveUploadQueueAll;
+        case r'GoogleDriveUpload': return JobName.googleDriveUpload;
         case r'OcrQueueAll': return JobName.ocrQueueAll;
         case r'Ocr': return JobName.ocr;
         case r'WorkflowAssetTrigger': return JobName.workflowAssetTrigger;

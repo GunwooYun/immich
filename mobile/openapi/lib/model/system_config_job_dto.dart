@@ -16,6 +16,7 @@ class SystemConfigJobDto {
     required this.backgroundTask,
     required this.editor,
     required this.faceDetection,
+    required this.googleDriveUpload,
     required this.integrityCheck,
     required this.library_,
     required this.metadataExtraction,
@@ -35,6 +36,8 @@ class SystemConfigJobDto {
   JobSettingsDto editor;
 
   JobSettingsDto faceDetection;
+
+  JobSettingsDto googleDriveUpload;
 
   JobSettingsDto integrityCheck;
 
@@ -65,6 +68,7 @@ class SystemConfigJobDto {
     other.backgroundTask == backgroundTask &&
     other.editor == editor &&
     other.faceDetection == faceDetection &&
+    other.googleDriveUpload == googleDriveUpload &&
     other.integrityCheck == integrityCheck &&
     other.library_ == library_ &&
     other.metadataExtraction == metadataExtraction &&
@@ -84,6 +88,7 @@ class SystemConfigJobDto {
     (backgroundTask.hashCode) +
     (editor.hashCode) +
     (faceDetection.hashCode) +
+    (googleDriveUpload.hashCode) +
     (integrityCheck.hashCode) +
     (library_.hashCode) +
     (metadataExtraction.hashCode) +
@@ -98,13 +103,14 @@ class SystemConfigJobDto {
     (workflow.hashCode);
 
   @override
-  String toString() => 'SystemConfigJobDto[backgroundTask=$backgroundTask, editor=$editor, faceDetection=$faceDetection, integrityCheck=$integrityCheck, library_=$library_, metadataExtraction=$metadataExtraction, migration=$migration, notifications=$notifications, ocr=$ocr, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, thumbnailGeneration=$thumbnailGeneration, videoConversion=$videoConversion, workflow=$workflow]';
+  String toString() => 'SystemConfigJobDto[backgroundTask=$backgroundTask, editor=$editor, faceDetection=$faceDetection, googleDriveUpload=$googleDriveUpload, integrityCheck=$integrityCheck, library_=$library_, metadataExtraction=$metadataExtraction, migration=$migration, notifications=$notifications, ocr=$ocr, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, thumbnailGeneration=$thumbnailGeneration, videoConversion=$videoConversion, workflow=$workflow]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'backgroundTask'] = this.backgroundTask;
       json[r'editor'] = this.editor;
       json[r'faceDetection'] = this.faceDetection;
+      json[r'googleDriveUpload'] = this.googleDriveUpload;
       json[r'integrityCheck'] = this.integrityCheck;
       json[r'library'] = this.library_;
       json[r'metadataExtraction'] = this.metadataExtraction;
@@ -132,6 +138,7 @@ class SystemConfigJobDto {
         backgroundTask: JobSettingsDto.fromJson(json[r'backgroundTask'])!,
         editor: JobSettingsDto.fromJson(json[r'editor'])!,
         faceDetection: JobSettingsDto.fromJson(json[r'faceDetection'])!,
+        googleDriveUpload: JobSettingsDto.fromJson(json[r'googleDriveUpload'])!,
         integrityCheck: JobSettingsDto.fromJson(json[r'integrityCheck'])!,
         library_: JobSettingsDto.fromJson(json[r'library'])!,
         metadataExtraction: JobSettingsDto.fromJson(json[r'metadataExtraction'])!,
@@ -194,6 +201,7 @@ class SystemConfigJobDto {
     'backgroundTask',
     'editor',
     'faceDetection',
+    'googleDriveUpload',
     'integrityCheck',
     'library',
     'metadataExtraction',

@@ -391,6 +391,12 @@ class ApiClient {
           return FoldersResponse.fromJson(value);
         case 'FoldersUpdate':
           return FoldersUpdate.fromJson(value);
+        case 'GoogleDriveAuthUrlResponseDto':
+          return GoogleDriveAuthUrlResponseDto.fromJson(value);
+        case 'GoogleDriveSetFolderDto':
+          return GoogleDriveSetFolderDto.fromJson(value);
+        case 'GoogleDriveStatusResponseDto':
+          return GoogleDriveStatusResponseDto.fromJson(value);
         case 'HlsVideoResolution':
           return HlsVideoResolutionTypeTransformer().decode(value);
         case 'ImageFormat':

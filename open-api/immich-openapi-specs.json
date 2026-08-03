@@ -6280,6 +6280,211 @@
         "x-immich-state": "Stable"
       }
     },
+    "/google-drive/albums/{id}/sync": {
+      "post": {
+        "operationId": "syncAlbum",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Sync an album to the owner's Google Drive",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
+    "/google-drive/auth-url": {
+      "get": {
+        "operationId": "getAuthUrl",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveAuthUrlResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Get Google Drive OAuth URL",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
+    "/google-drive/callback": {
+      "get": {
+        "operationId": "handleCallback",
+        "parameters": [
+          {
+            "name": "code",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "OAuth callback for Google Drive linking",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
+    "/google-drive/folder": {
+      "post": {
+        "operationId": "setFolderId",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleDriveSetFolderDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Set target Google Drive folder ID",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
+    "/google-drive/link": {
+      "delete": {
+        "operationId": "disconnect",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Disconnect the Google Drive account",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
+    "/google-drive/status": {
+      "get": {
+        "operationId": "getStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveStatusResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Get the current Google Drive connection status",
+        "tags": [
+          "Google Drive"
+        ]
+      }
+    },
     "/jobs": {
       "get": {
         "deprecated": true,
@@ -19155,6 +19360,57 @@
         },
         "type": "object"
       },
+      "GoogleDriveAuthUrlResponseDto": {
+        "properties": {
+          "url": {
+            "description": "Google OAuth consent URL to redirect the browser to",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveSetFolderDto": {
+        "properties": {
+          "folderId": {
+            "description": "Drive folder id to upload into; empty string clears the setting",
+            "type": "string"
+          }
+        },
+        "required": [
+          "folderId"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveStatusResponseDto": {
+        "properties": {
+          "connected": {
+            "description": "Whether this user has linked a Google Drive account",
+            "type": "boolean"
+          },
+          "connectedAt": {
+            "description": "When the account was linked, if connected",
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "nullable": true,
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "folderId": {
+            "description": "The configured upload destination folder, if any",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "connected",
+          "connectedAt",
+          "folderId"
+        ],
+        "type": "object"
+      },
       "HlsVideoResolution": {
         "description": "HLS video resolution",
         "enum": [
@@ -19312,6 +19568,8 @@
           "StorageTemplateMigrationSingle",
           "TagCleanup",
           "VersionCheck",
+          "GoogleDriveUploadQueueAll",
+          "GoogleDriveUpload",
           "OcrQueueAll",
           "Ocr",
           "WorkflowAssetTrigger",
@@ -21597,7 +21855,8 @@
           "ocr",
           "workflow",
           "integrityCheck",
-          "editor"
+          "editor",
+          "googleDriveUpload"
         ],
         "type": "string"
       },
@@ -21731,6 +21990,9 @@
           "facialRecognition": {
             "$ref": "#/components/schemas/QueueResponseLegacyDto"
           },
+          "googleDriveUpload": {
+            "$ref": "#/components/schemas/QueueResponseLegacyDto"
+          },
           "integrityCheck": {
             "$ref": "#/components/schemas/QueueResponseLegacyDto"
           },
@@ -21778,6 +22040,7 @@
           "editor",
           "faceDetection",
           "facialRecognition",
+          "googleDriveUpload",
           "integrityCheck",
           "library",
           "metadataExtraction",
@@ -26001,6 +26264,9 @@
           "faceDetection": {
             "$ref": "#/components/schemas/JobSettingsDto"
           },
+          "googleDriveUpload": {
+            "$ref": "#/components/schemas/JobSettingsDto"
+          },
           "integrityCheck": {
             "$ref": "#/components/schemas/JobSettingsDto"
           },
@@ -26042,6 +26308,7 @@
           "backgroundTask",
           "editor",
           "faceDetection",
+          "googleDriveUpload",
           "integrityCheck",
           "library",
           "metadataExtraction",

@@ -172,6 +172,12 @@ Class | Method | HTTP request | Description
 *FacesApi* | [**deleteFace**](doc//FacesApi.md#deleteface) | **DELETE** /faces/{id} | Delete a face
 *FacesApi* | [**getFaces**](doc//FacesApi.md#getfaces) | **GET** /faces | Retrieve faces for asset
 *FacesApi* | [**reassignFacesById**](doc//FacesApi.md#reassignfacesbyid) | **PUT** /faces/{id} | Re-assign a face to another person
+*GoogleDriveApi* | [**disconnect**](doc//GoogleDriveApi.md#disconnect) | **DELETE** /google-drive/link | Disconnect the Google Drive account
+*GoogleDriveApi* | [**getAuthUrl**](doc//GoogleDriveApi.md#getauthurl) | **GET** /google-drive/auth-url | Get Google Drive OAuth URL
+*GoogleDriveApi* | [**getStatus**](doc//GoogleDriveApi.md#getstatus) | **GET** /google-drive/status | Get the current Google Drive connection status
+*GoogleDriveApi* | [**handleCallback**](doc//GoogleDriveApi.md#handlecallback) | **GET** /google-drive/callback | OAuth callback for Google Drive linking
+*GoogleDriveApi* | [**setFolderId**](doc//GoogleDriveApi.md#setfolderid) | **POST** /google-drive/folder | Set target Google Drive folder ID
+*GoogleDriveApi* | [**syncAlbum**](doc//GoogleDriveApi.md#syncalbum) | **POST** /google-drive/albums/{id}/sync | Sync an album to the owner's Google Drive
 *JobsApi* | [**createJob**](doc//JobsApi.md#createjob) | **POST** /jobs | Create a manual job
 *JobsApi* | [**getQueuesLegacy**](doc//JobsApi.md#getqueueslegacy) | **GET** /jobs | Retrieve queue counts and status
 *JobsApi* | [**runQueueCommandLegacy**](doc//JobsApi.md#runqueuecommandlegacy) | **PUT** /jobs/{name} | Run jobs
@@ -452,6 +458,9 @@ Class | Method | HTTP request | Description
  - [FacialRecognitionConfig](doc//FacialRecognitionConfig.md)
  - [FoldersResponse](doc//FoldersResponse.md)
  - [FoldersUpdate](doc//FoldersUpdate.md)
+ - [GoogleDriveAuthUrlResponseDto](doc//GoogleDriveAuthUrlResponseDto.md)
+ - [GoogleDriveSetFolderDto](doc//GoogleDriveSetFolderDto.md)
+ - [GoogleDriveStatusResponseDto](doc//GoogleDriveStatusResponseDto.md)
  - [HlsVideoResolution](doc//HlsVideoResolution.md)
  - [ImageFormat](doc//ImageFormat.md)
  - [IntegrityReport](doc//IntegrityReport.md)

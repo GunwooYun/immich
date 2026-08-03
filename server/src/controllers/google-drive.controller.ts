@@ -1,6 +1,11 @@
 import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Redirect } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthDto } from 'src/dtos/auth.dto';
+import {
+  GoogleDriveAuthUrlResponseDto,
+  GoogleDriveSetFolderDto,
+  GoogleDriveStatusResponseDto,
+} from 'src/dtos/google-drive.dto';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { UUIDParamDto } from 'src/validation';
@@ -34,9 +39,7 @@ export class GoogleDriveController {
   @Get('status')
   @Authenticated()
   @ApiOperation({ summary: 'Get the current Google Drive connection status' })
-  async getStatus(
-    @Auth() auth: AuthDto,
-  ): Promise<{ connected: boolean; folderId: string | null; connectedAt: Date | null }> {
+  async getStatus(@Auth() auth: AuthDto): Promise<GoogleDriveStatusResponseDto> {
     return this.googleDriveService.getStatus(auth.user.id);
   }
 
@@ -52,7 +55,7 @@ export class GoogleDriveController {
   @Get('auth-url')
   @Authenticated()
   @ApiOperation({ summary: 'Get Google Drive OAuth URL' })
-  async getAuthUrl(@Auth() auth: AuthDto): Promise<{ url: string }> {
+  async getAuthUrl(@Auth() auth: AuthDto): Promise<GoogleDriveAuthUrlResponseDto> {
     const url = await this.googleDriveService.getAuthUrl(auth.user.id);
     return { url };
   }
@@ -112,8 +115,8 @@ export class GoogleDriveController {
   @Post('folder')
   @Authenticated()
   @ApiOperation({ summary: 'Set target Google Drive folder ID' })
-  async setFolderId(@Auth() auth: AuthDto, @Body('folderId') folderId: string): Promise<void> {
-    await this.googleDriveService.setFolderId(auth.user.id, folderId);
+  async setFolderId(@Auth() auth: AuthDto, @Body() dto: GoogleDriveSetFolderDto): Promise<void> {
+    await this.googleDriveService.setFolderId(auth.user.id, dto.folderId);
   }
 
   /**

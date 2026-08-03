@@ -18,6 +18,7 @@ import {
   mdiFileJpgBox,
   mdiFileXmlBox,
   mdiFolderMove,
+  mdiGoogleDrive,
   mdiImageSearch,
   mdiLibraryShelves,
   mdiOcr,
@@ -249,6 +250,10 @@ export const asQueueItem = ($t: MessageFormatter, queue: { name: QueueName }): Q
     [QueueName.Editor]: {
       icon: mdiPencil,
       title: $t('editor'),
+    },
+    [QueueName.GoogleDriveUpload]: {
+      icon: mdiGoogleDrive,
+      title: $t('google_drive_sync'),
     },
   };
 

@@ -1204,6 +1204,22 @@ export type FaceDto = {
     /** Face ID */
     id: string;
 };
+export type GoogleDriveAuthUrlResponseDto = {
+    /** Google OAuth consent URL to redirect the browser to */
+    url: string;
+};
+export type GoogleDriveSetFolderDto = {
+    /** Drive folder id to upload into; empty string clears the setting */
+    folderId: string;
+};
+export type GoogleDriveStatusResponseDto = {
+    /** Whether this user has linked a Google Drive account */
+    connected: boolean;
+    /** When the account was linked, if connected */
+    connectedAt: string | null;
+    /** The configured upload destination folder, if any */
+    folderId: string | null;
+};
 export type QueueStatisticsDto = {
     /** Number of active jobs */
     active: number;
@@ -1235,6 +1251,7 @@ export type QueuesResponseLegacyDto = {
     editor: QueueResponseLegacyDto;
     faceDetection: QueueResponseLegacyDto;
     facialRecognition: QueueResponseLegacyDto;
+    googleDriveUpload: QueueResponseLegacyDto;
     integrityCheck: QueueResponseLegacyDto;
     library: QueueResponseLegacyDto;
     metadataExtraction: QueueResponseLegacyDto;
@@ -2401,6 +2418,7 @@ export type SystemConfigJobDto = {
     backgroundTask: JobSettingsDto;
     editor: JobSettingsDto;
     faceDetection: JobSettingsDto;
+    googleDriveUpload: JobSettingsDto;
     integrityCheck: JobSettingsDto;
     library: JobSettingsDto;
     metadataExtraction: JobSettingsDto;
@@ -4793,6 +4811,76 @@ export function reassignFacesById({ id, faceDto }: {
         method: "PUT",
         body: faceDto
     })));
+}
+/**
+ * Sync an album to the owner's Google Drive
+ */
+export function syncAlbum({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/google-drive/albums/${encodeURIComponent(id)}/sync`, {
+        ...opts,
+        method: "POST"
+    }));
+}
+/**
+ * Get Google Drive OAuth URL
+ */
+export function getAuthUrl(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveAuthUrlResponseDto;
+    }>("/google-drive/auth-url", {
+        ...opts
+    }));
+}
+/**
+ * OAuth callback for Google Drive linking
+ */
+export function handleCallback({ code, error, state }: {
+    code?: string;
+    error?: string;
+    state?: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/google-drive/callback${QS.query(QS.explode({
+        code,
+        error,
+        state
+    }))}`, {
+        ...opts
+    }));
+}
+/**
+ * Set target Google Drive folder ID
+ */
+export function setFolderId({ googleDriveSetFolderDto }: {
+    googleDriveSetFolderDto: GoogleDriveSetFolderDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText("/google-drive/folder", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: googleDriveSetFolderDto
+    })));
+}
+/**
+ * Disconnect the Google Drive account
+ */
+export function disconnect(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText("/google-drive/link", {
+        ...opts,
+        method: "DELETE"
+    }));
+}
+/**
+ * Get the current Google Drive connection status
+ */
+export function getStatus(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveStatusResponseDto;
+    }>("/google-drive/status", {
+        ...opts
+    }));
 }
 /**
  * Retrieve queue counts and status
@@ -7397,7 +7485,8 @@ export enum QueueName {
     Ocr = "ocr",
     Workflow = "workflow",
     IntegrityCheck = "integrityCheck",
-    Editor = "editor"
+    Editor = "editor",
+    GoogleDriveUpload = "googleDriveUpload"
 }
 export enum QueueCommand {
     Start = "start",
@@ -7487,6 +7576,8 @@ export enum JobName {
     StorageTemplateMigrationSingle = "StorageTemplateMigrationSingle",
     TagCleanup = "TagCleanup",
     VersionCheck = "VersionCheck",
+    GoogleDriveUploadQueueAll = "GoogleDriveUploadQueueAll",
+    GoogleDriveUpload = "GoogleDriveUpload",
     OcrQueueAll = "OcrQueueAll",
     Ocr = "Ocr",
     WorkflowAssetTrigger = "WorkflowAssetTrigger",

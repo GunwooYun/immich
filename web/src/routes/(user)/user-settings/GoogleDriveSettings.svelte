@@ -11,16 +11,21 @@
   import SettingInputField from '$lib/components/shared-components/settings/SettingInputField.svelte';
   import { SettingInputFieldType } from '$lib/constants';
   import { handleError } from '$lib/utils/handle-error';
+  // The generated client handles the base URL, auth headers, and throws on any non-2xx response —
+  // this component originally used raw `fetch('/api/...')` with a hand-rolled `response.ok` check,
+  // which worked but silently bypassed all of that (and would have broken on sub-path deployments).
+  // The generic upstream operation names (`getStatus`, `disconnect`, ...) come straight from the
+  // controller method names; aliased on import so call sites still read as Google-Drive-specific.
+  import {
+    disconnect as disconnectGoogleDrive,
+    getAuthUrl as getGoogleDriveAuthUrl,
+    getStatus as getGoogleDriveStatus,
+    setFolderId as setGoogleDriveFolder,
+  } from '@immich/sdk';
   import { Button, LoadingSpinner, toastManager } from '@immich/ui';
   import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
   import { fade } from 'svelte/transition';
-
-  type GoogleDriveStatus = {
-    connected: boolean;
-    folderId: string | null;
-    connectedAt: string | null;
-  };
 
   let loading = $state(true);
   let connected = $state(false);
@@ -29,20 +34,8 @@
   // it's translated back to "no folder chosen" server-side.
   let folderId = $state('');
 
-  // `fetch` only rejects on network-level failures — an HTTP 4xx/5xx resolves normally — so every
-  // call here goes through this wrapper. Without it, a 401/500 would fall straight through to the
-  // success path and we'd show a "saved!" toast for a request that actually failed.
-  const request = async (url: string, init?: RequestInit) => {
-    const response = await fetch(url, init);
-    if (!response.ok) {
-      throw new Error(`Request to ${url} failed with status ${response.status}`);
-    }
-    return response;
-  };
-
   const loadStatus = async () => {
-    const response = await request('/api/google-drive/status');
-    const status = (await response.json()) as GoogleDriveStatus;
+    const status = await getGoogleDriveStatus();
     connected = status.connected;
     connectedAt = status.connectedAt;
     folderId = status.folderId ?? '';
@@ -89,11 +82,7 @@
   // this point on the user is on Google's own consent screen, not on Immich.
   const connectGoogleDrive = async () => {
     try {
-      const response = await request('/api/google-drive/auth-url');
-      const { url } = (await response.json()) as { url?: string };
-      if (!url) {
-        throw new Error('Server did not return a Google authorization URL');
-      }
+      const { url } = await getGoogleDriveAuthUrl();
       globalThis.location.href = url;
     } catch (error) {
       handleError(error, $t('errors.unable_to_connect_google_drive'));
@@ -106,11 +95,7 @@
   // adopt the Google Picker API or auto-create a dedicated folder on link.
   const handleSaveFolder = async () => {
     try {
-      await request('/api/google-drive/folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId }),
-      });
+      await setGoogleDriveFolder({ googleDriveSetFolderDto: { folderId } });
       toastManager.primary($t('saved_settings'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_update_settings'));
@@ -119,7 +104,7 @@
 
   const handleDisconnect = async () => {
     try {
-      await request('/api/google-drive/link', { method: 'DELETE' });
+      await disconnectGoogleDrive();
       // Reset locally rather than re-fetching: we already know the resulting state, and this keeps
       // the UI from flashing stale "connected" content while a round trip completes.
       connected = false;
