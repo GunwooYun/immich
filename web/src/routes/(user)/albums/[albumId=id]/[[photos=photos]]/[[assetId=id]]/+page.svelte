@@ -574,7 +574,7 @@
                 onclick={() => handleDownloadAlbum(album)}
                 icon={mdiDownload}
               />
-              {#if isOwned}
+              {#if isOwned && featureFlagsManager.value.googleDrive}
                 <IconButton
                   shape="round"
                   variant="ghost"

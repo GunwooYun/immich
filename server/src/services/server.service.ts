@@ -22,6 +22,7 @@ import { mimeTypes } from 'src/utils/mime-types';
 import {
   isDuplicateDetectionEnabled,
   isFacialRecognitionEnabled,
+  isGoogleDriveEnabled,
   isOcrEnabled,
   isSmartSearchEnabled,
 } from 'src/utils/misc';
@@ -86,8 +87,18 @@ export class ServerService extends BaseService {
   }
 
   async getFeatures(): Promise<ServerFeaturesDto> {
-    const { reverseGeocoding, metadata, map, machineLearning, trash, oauth, passwordLogin, notifications, ffmpeg } =
-      await this.getConfig({ withCache: false });
+    const {
+      reverseGeocoding,
+      metadata,
+      map,
+      machineLearning,
+      trash,
+      oauth,
+      passwordLogin,
+      notifications,
+      ffmpeg,
+      googleDrive,
+    } = await this.getConfig({ withCache: false });
     const { configFile } = this.configRepository.getEnv();
 
     return {
@@ -107,6 +118,7 @@ export class ServerService extends BaseService {
       configFile: !!configFile,
       email: notifications.smtp.enabled,
       realtimeTranscoding: ffmpeg.realtime.enabled,
+      googleDrive: isGoogleDriveEnabled(googleDrive),
     };
   }
 

@@ -105,6 +105,15 @@ export const isDuplicateDetectionEnabled = (machineLearning: SystemConfig['machi
   isSmartSearchEnabled(machineLearning) && machineLearning.duplicateDetection.enabled;
 export const isFaceImportEnabled = (metadata: SystemConfig['metadata']) => metadata.faces.import;
 
+/**
+ * Google Drive sync needs both an explicit opt-in *and* a complete OAuth client — an admin who
+ * flips the switch on but hasn't filled in the credentials yet would otherwise expose a "Connect
+ * Google Drive" button that can only ever fail. Treating "configured" as part of "enabled" keeps
+ * that half-set-up state invisible to users instead of broken for them.
+ */
+export const isGoogleDriveEnabled = (googleDrive: SystemConfig['googleDrive']) =>
+  googleDrive.enabled && !!googleDrive.clientId && !!googleDrive.clientSecret && !!googleDrive.redirectUrl;
+
 export const isConnectionAborted = (error: Error | any) => error.code === 'ECONNABORTED';
 
 export const handlePromiseError = <T>(promise: Promise<T>, logger: LoggingRepository): void => {

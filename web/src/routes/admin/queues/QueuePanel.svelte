@@ -86,6 +86,13 @@
     [QueueName.Migration]: {
       missingText: $t('start'),
     },
+    // Only a plain "start" action: this queue's QueueAll handler has no force mode, because a
+    // forced run could only queue uploads the worker would skip anyway (see
+    // GoogleDriveService#handleGoogleDriveUploadQueueAll).
+    [QueueName.GoogleDriveUpload]: {
+      missingText: $t('start'),
+      disabled: !featureFlags.googleDrive,
+    },
   };
 
   let queueList = Object.entries(queueDetails) as [QueueName, QueueDetails][];

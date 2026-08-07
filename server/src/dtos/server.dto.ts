@@ -145,6 +145,7 @@ const ServerFeaturesSchema = z
     search: z.boolean().describe('Whether search is enabled'),
     email: z.boolean().describe('Whether email notifications are enabled'),
     ocr: z.boolean().describe('Whether OCR is enabled'),
+    googleDrive: z.boolean().describe('Whether Google Drive album sync is enabled and configured'),
     realtimeTranscoding: z.boolean().describe('Whether real-time transcoding is enabled'),
   })
   .meta({ id: 'ServerFeaturesDto' });

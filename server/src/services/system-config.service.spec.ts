@@ -107,6 +107,12 @@ const updatedConfig = Object.freeze<SystemConfig>({
       import: false,
     },
   },
+  googleDrive: {
+    enabled: false,
+    clientId: '',
+    clientSecret: '',
+    redirectUrl: '',
+  },
   machineLearning: {
     enabled: true,
     urls: ['http://immich-machine-learning:3003'],

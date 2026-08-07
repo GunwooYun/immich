@@ -141,14 +141,16 @@
   <PartnerSettings />
 </SettingAccordion>
 
-<SettingAccordion
-  icon={mdiGoogleDrive}
-  key="google-drive-sync"
-  title={$t('google_drive_sync')}
-  subtitle={$t('google_drive_sync_subtitle')}
->
-  <GoogleDriveSettings />
-</SettingAccordion>
+{#if featureFlagsManager.value.googleDrive}
+  <SettingAccordion
+    icon={mdiGoogleDrive}
+    key="google-drive-sync"
+    title={$t('google_drive_sync')}
+    subtitle={$t('google_drive_sync_subtitle')}
+  >
+    <GoogleDriveSettings />
+  </SettingAccordion>
+{/if}
 
 <SettingAccordion
   icon={mdiLockSmart}

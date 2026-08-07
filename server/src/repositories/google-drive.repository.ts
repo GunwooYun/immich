@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Kysely } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { DummyValue, GenerateSql } from 'src/decorators';
+import { AlbumUserRole } from 'src/enum';
 import { DB } from 'src/schema';
 
 /**
@@ -86,6 +87,52 @@ export class GoogleDriveRepository {
   @GenerateSql({ params: [DummyValue.UUID] })
   deleteCredentials(userId: string) {
     return this.db.deleteFrom('user_google_drive').where('userId', '=', userId).execute();
+  }
+
+  /**
+   * Streams every (owner, asset) pair that *should* be in Google Drive but isn't yet — i.e. the
+   * backlog the "queue all" admin job works through.
+   *
+   * An asset qualifies when all of these hold:
+   *   - it sits in an album whose owner has linked Google Drive (uploads always target the album
+   *     owner's account, never a contributor's — see AlbumService#getAlbumOwnerId);
+   *   - the owner has no ledger row for it yet;
+   *   - neither the asset nor its album has been soft-deleted.
+   *
+   * There is deliberately no "force" variant that drops the ledger anti-join. Dropping it would
+   * only queue jobs the upload worker re-checks and skips anyway, so it could never re-upload
+   * anything — and making it genuinely re-upload would mean ignoring the ledger, which is the sole
+   * safeguard against duplicating every file in the user's Drive. Recovering from a Drive folder
+   * that was emptied by hand therefore needs the ledger rows deleted first, which is an explicit
+   * operation rather than a checkbox.
+   *
+   * DISTINCT matters here: the same asset can live in several albums owned by the same person, and
+   * without it we'd stream (and queue) one job per album membership. The upload worker would
+   * de-duplicate anyway via its own ledger check, but only after paying for the extra jobs.
+   *
+   * Streamed rather than collected because this is inherently unbounded — a large instance could
+   * have hundreds of thousands of pending pairs, and the caller batches them into queue writes.
+   */
+  @GenerateSql({ params: [], stream: true })
+  streamPendingUploads() {
+    return this.db
+      .selectFrom('album_asset')
+      .innerJoin('album', 'album.id', 'album_asset.albumId')
+      .innerJoin('album_user', 'album_user.albumId', 'album.id')
+      .innerJoin('user_google_drive', 'user_google_drive.userId', 'album_user.userId')
+      .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+      .leftJoin('google_drive_upload', (join) =>
+        join
+          .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+          .onRef('google_drive_upload.userId', '=', 'album_user.userId'),
+      )
+      .where('album_user.role', '=', AlbumUserRole.Owner)
+      .where('album.deletedAt', 'is', null)
+      .where('asset.deletedAt', 'is', null)
+      .where('google_drive_upload.assetId', 'is', null)
+      .select(['album_user.userId as userId', 'album_asset.assetId as assetId'])
+      .distinct()
+      .stream();
   }
 
   /**

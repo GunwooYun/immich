@@ -118,6 +118,12 @@ export type SystemConfig = {
       import: boolean;
     };
   };
+  googleDrive: {
+    enabled: boolean;
+    clientId: string;
+    clientSecret: string;
+    redirectUrl: string;
+  };
   oauth: {
     autoLaunch: boolean;
     autoRegister: boolean;
@@ -335,6 +341,12 @@ export const defaults = Object.freeze<SystemConfig>({
     faces: {
       import: false,
     },
+  },
+  googleDrive: {
+    enabled: false,
+    clientId: '',
+    clientSecret: '',
+    redirectUrl: '',
   },
   oauth: {
     autoLaunch: false,

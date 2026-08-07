@@ -226,6 +226,20 @@ const SystemConfigNightlyTasksSchema = z
   })
   .meta({ id: 'SystemConfigNightlyTasksDto' });
 
+const SystemConfigGoogleDriveSchema = z
+  .object({
+    enabled: configBool.describe('Enabled'),
+    clientId: z.string().describe('Google OAuth client ID'),
+    clientSecret: z.string().describe('Google OAuth client secret'),
+    redirectUrl: z
+      .string()
+      .refine((url) => url.length === 0 || z.url().safeParse(url).success, {
+        error: 'Redirect URL must be an empty string or a valid URL',
+      })
+      .describe('OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback'),
+  })
+  .meta({ id: 'SystemConfigGoogleDriveDto' });
+
 const SystemConfigOAuthSchema = z
   .object({
     autoLaunch: configBool.describe('Auto launch'),
@@ -411,6 +425,7 @@ export const SystemConfigSchema = z
   .object({
     backup: SystemConfigBackupsSchema,
     ffmpeg: SystemConfigFFmpegSchema,
+    googleDrive: SystemConfigGoogleDriveSchema,
     logging: SystemConfigLoggingSchema,
     machineLearning: SystemConfigMachineLearningSchema,
     map: SystemConfigMapSchema,

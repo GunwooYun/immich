@@ -1,10 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { drive_v3, google } from 'googleapis';
+import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { AlbumUserRole, JobName, JobStatus, Permission, QueueName, SystemMetadataKey } from 'src/enum';
 import { BaseService } from 'src/services/base.service';
+import { JobItem } from 'src/types';
 import { mimeTypes } from 'src/utils/mime-types';
+import { isGoogleDriveEnabled } from 'src/utils/misc';
 
 /**
  * This is the shape of the data we embed inside the OAuth `state` parameter.
@@ -92,22 +95,62 @@ export class GoogleDriveService extends BaseService {
   }
 
   /**
-   * Builds a Google OAuth2 client using the app's client id/secret/redirect URL.
+   * Builds a Google OAuth2 client from the admin-managed system config.
    *
-   * NOTE: these currently fall back to placeholder strings ('YOUR_CLIENT_ID', etc.) when the
-   * corresponding environment variables aren't set. That's convenient for local development
-   * scaffolding, but it means a misconfigured production deployment will fail *silently* (with
-   * a confusing Google API error) instead of refusing to start up. A follow-up should move
-   * these into system config (so they're admin-configurable through the UI, like other
-   * integrations) and fail loudly at startup if they're missing.
+   * These used to come from `process.env` with placeholder fallbacks ('YOUR_CLIENT_ID', …), which
+   * meant a misconfigured deployment failed *silently*: every OAuth attempt bounced off Google with
+   * an opaque error and nothing pointed at the actual cause. They now live in system config
+   * alongside the OIDC login credentials, editable from the admin UI, and a missing value is
+   * rejected here with a message that names what to fix.
+   *
+   * Environment variables are still honoured as a fallback so that anyone who set up this feature
+   * before it moved into system config keeps working after an upgrade. Config wins when both are
+   * present.
    */
-  private getOAuth2Client() {
-    // In a real application, you would read these from system config or environment variables
-    const clientId = process.env.GOOGLE_CLIENT_ID || 'YOUR_CLIENT_ID';
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || 'YOUR_CLIENT_SECRET';
-    const redirectUrl = process.env.GOOGLE_REDIRECT_URL || 'YOUR_REDIRECT_URL';
+  private async getOAuth2Client() {
+    const { googleDrive } = await this.getConfig({ withCache: true });
+
+    const clientId = googleDrive.clientId || process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = googleDrive.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUrl = googleDrive.redirectUrl || process.env.GOOGLE_REDIRECT_URL;
+
+    if (!googleDrive.enabled) {
+      throw new BadRequestException('Google Drive sync is disabled for this server');
+    }
+
+    const missing = [
+      ['client ID', clientId],
+      ['client secret', clientSecret],
+      ['redirect URL', redirectUrl],
+    ]
+      .filter(([, value]) => !value)
+      .map(([label]) => label);
+
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Google Drive is not configured: missing ${missing.join(', ')}. Set these under Administration → Settings → Google Drive.`,
+      );
+    }
 
     return new google.auth.OAuth2(clientId, clientSecret, redirectUrl);
+  }
+
+  /**
+   * Whether the server operator has turned this feature on *and* finished configuring it.
+   *
+   * Used by the paths that must stay silent rather than throw when the feature is off: the upload
+   * worker (a queued job for a now-disabled feature should skip, not fail and retry) and the
+   * queue-all backfill. The interactive paths reuse getOAuth2Client's exceptions instead, since
+   * there a clear error message is more useful than silence.
+   */
+  private async isEnabled(): Promise<boolean> {
+    const { googleDrive } = await this.getConfig({ withCache: true });
+    return isGoogleDriveEnabled({
+      ...googleDrive,
+      clientId: googleDrive.clientId || process.env.GOOGLE_CLIENT_ID || '',
+      clientSecret: googleDrive.clientSecret || process.env.GOOGLE_CLIENT_SECRET || '',
+      redirectUrl: googleDrive.redirectUrl || process.env.GOOGLE_REDIRECT_URL || '',
+    });
   }
 
   /**
@@ -131,7 +174,7 @@ export class GoogleDriveService extends BaseService {
    *      state instead.
    */
   async getAuthUrl(userId: string): Promise<string> {
-    const oauth2Client = this.getOAuth2Client();
+    const oauth2Client = await this.getOAuth2Client();
 
     // `drive.file` is the narrowest scope Google offers for "upload files on behalf of the
     // user" — it only grants access to files/folders that our app itself creates, not the
@@ -216,7 +259,7 @@ export class GoogleDriveService extends BaseService {
   private async linkAccount(userId: string, code: string): Promise<void> {
     let refreshToken: string;
     try {
-      const oauth2Client = this.getOAuth2Client();
+      const oauth2Client = await this.getOAuth2Client();
       const { tokens } = await oauth2Client.getToken(code);
 
       // Google is only guaranteed to hand back a refresh_token on the *first* time a user grants
@@ -316,6 +359,13 @@ export class GoogleDriveService extends BaseService {
    * as an error.
    */
   async uploadAsset(userId: string, assetId: string): Promise<'skipped' | 'uploaded'> {
+    // 0) Has an admin turned the feature off (or never finished configuring it)? Jobs queued
+    //    before that can still be sitting in the queue, and failing them would just produce
+    //    retries against a server that has no intention of talking to Google.
+    if (!(await this.isEnabled())) {
+      return 'skipped';
+    }
+
     // 1) Does this user even have Google Drive connected? If not, there's nothing to do — and
     //    this is an expected, everyday case (most users won't have linked Drive), not an error.
     //    The absence of a `user_google_drive` row *is* the "not connected" signal.
@@ -343,7 +393,7 @@ export class GoogleDriveService extends BaseService {
     // Build an authenticated Drive API client for this specific user, using their stored
     // refresh token. The googleapis client automatically exchanges the refresh token for a
     // short-lived access token behind the scenes as needed.
-    const oauth2Client = this.getOAuth2Client();
+    const oauth2Client = await this.getOAuth2Client();
     oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
 
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
@@ -371,11 +421,40 @@ export class GoogleDriveService extends BaseService {
     };
 
     try {
-      const { data } = await drive.files.create({
-        requestBody: fileMetadata,
-        media,
-        fields: 'id', // We only need the new file's Drive-assigned id back, to record it in our upload ledger.
-      });
+      const { data } = await drive.files.create(
+        {
+          requestBody: fileMetadata,
+          media,
+          fields: 'id', // We only need the new file's Drive-assigned id back, to record it in our upload ledger.
+          // Resumable rather than the default simple/multipart upload. Google caps simple uploads
+          // at 5 MB, which plenty of photos and essentially every video exceed; resumable also lets
+          // the transfer survive a mid-flight network blip instead of restarting from zero.
+          uploadType: 'resumable',
+        },
+        {
+          // Drive enforces per-user and per-project rate limits and answers with 403
+          // (rateLimitExceeded / userRateLimitExceeded) or 429 once you cross them — very reachable
+          // when a "queue all" run pushes a large backlog through several concurrent workers.
+          // gaxios retries with exponential backoff starting from retryDelay.
+          //
+          // 403 is not in gaxios's default retry set (it's usually a genuine permission failure),
+          // so it has to be listed explicitly. A 403 that is *actually* a permission problem will
+          // simply fail all attempts and surface as before, just a few seconds later.
+          retryConfig: {
+            retry: 5,
+            retryDelay: 1000,
+            statusCodesToRetry: [
+              [403, 403],
+              [429, 429],
+              [500, 599],
+            ],
+            onRetryAttempt: (error) =>
+              this.logger.warn(
+                `Retrying Google Drive upload for asset ${assetId} after ${error?.status ?? 'unknown'} response`,
+              ),
+          },
+        },
+      );
 
       // Record this upload in our ledger table so future calls to uploadAsset() for the same
       // (userId, assetId) pair know to skip instead of re-uploading (see step 2 above).
@@ -386,9 +465,44 @@ export class GoogleDriveService extends BaseService {
       this.logger.debug(`Successfully uploaded asset ${assetId} to Google Drive`);
       return 'uploaded';
     } catch (error) {
+      // A revoked grant is terminal, not transient: the user removed Immich's access from their
+      // Google account settings, or the token expired after long disuse. Retrying can never
+      // succeed, and because uploads are queued on every add-to-album, leaving the credentials in
+      // place would turn every future album edit into another guaranteed failure.
+      //
+      // Dropping the row converts that permanent-failure loop into the ordinary "not connected"
+      // state: uploads skip silently and the settings page invites the user to reconnect. The
+      // ledger is deliberately left alone, so reconnecting won't re-upload what's already in Drive
+      // (the same reasoning as the explicit Disconnect action).
+      if (this.isInvalidGrant(error)) {
+        this.logger.warn(
+          `Google Drive access for user ${userId} was revoked or expired; clearing the stored credentials so they can reconnect`,
+        );
+        await this.googleDriveRepository.deleteCredentials(userId);
+        return 'skipped';
+      }
+
       this.logger.error(`Failed to upload asset ${assetId} to Google Drive: ${error}`);
       throw error;
     }
+  }
+
+  /**
+   * Detects Google's "this refresh token is no longer usable" signal.
+   *
+   * googleapis surfaces it as an OAuth error payload rather than a typed class, and the exact shape
+   * differs between the token-refresh path and the Drive API path, so this checks the documented
+   * `invalid_grant` code in the places it actually shows up instead of relying on `instanceof`.
+   */
+  private isInvalidGrant(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const { response, message } = error as { response?: { data?: { error?: unknown } }; message?: unknown };
+    return (
+      response?.data?.error === 'invalid_grant' || (typeof message === 'string' && message.includes('invalid_grant'))
+    );
   }
 
   /**
@@ -462,24 +576,47 @@ export class GoogleDriveService extends BaseService {
   }
 
   /**
-   * Handler for the "queue all" variant of this job, following the same pattern as other
-   * background job families in Immich (e.g. thumbnail generation, face detection): every job
-   * queue is expected to support a bulk "(re)process everything" trigger from the admin Jobs
-   * panel, even if — like here — there isn't yet a meaningful "everything" to reprocess for this
-   * particular feature.
+   * The "queue all" variant, driven by the admin Jobs panel — the instance-wide counterpart to the
+   * per-album `syncAlbum` button. It walks every album whose owner has linked Google Drive and
+   * queues an upload for each asset that isn't in that owner's ledger yet.
    *
-   * TODO: this is currently a placeholder. A complete implementation would, for every user who
-   * has linked Google Drive, find every asset in every album they own that hasn't been uploaded
-   * yet (i.e. reuse the same "diff against the ledger" logic as syncAlbum above, just across all
-   * of a user's albums instead of one), and queue GoogleDriveUpload jobs for each. Left
-   * unimplemented for now so the admin "start" button in the Jobs panel doesn't error out, but it
-   * currently does nothing useful beyond logging.
+   * This is the repair path for backlogs the per-album triggers can't cover on their own: albums
+   * that predate the Drive connection, uploads that failed while the queue was paused, or a run of
+   * `invalid_grant` skips that stopped once the user re-linked.
+   *
+   * Unlike most QueueAll handlers there is no meaningful `force` mode, and the flag is ignored: a
+   * forced run could only queue assets the upload worker then skips on its own ledger check, and
+   * making it genuinely re-upload would require ignoring the ledger — the one thing stopping every
+   * file from being duplicated in the user's Drive. The admin UI therefore offers only the plain
+   * "start" action (see QueuePanel.svelte, which lists no `allText` for this queue).
+   *
+   * Streamed and batched in JOBS_ASSET_PAGINATION_SIZE chunks, matching the other QueueAll
+   * handlers (see OcrService#handleQueueOcr): the backlog on a large instance can be far too big to
+   * materialize in memory or hand to the queue in one write.
    */
   @OnJob({ name: JobName.GoogleDriveUploadQueueAll, queue: QueueName.GoogleDriveUpload })
-  handleGoogleDriveUploadQueueAll(data: { force: boolean }): JobStatus {
-    // For now, this is a placeholder to satisfy the QueueAll pattern.
-    // In a full implementation, it might find all assets matching a condition and queue individual jobs.
-    this.logger.debug(`handleGoogleDriveUploadQueueAll triggered with force=${data.force}`);
+  async handleGoogleDriveUploadQueueAll(): Promise<JobStatus> {
+    if (!(await this.isEnabled())) {
+      return JobStatus.Skipped;
+    }
+
+    let jobs: JobItem[] = [];
+    let queued = 0;
+
+    for await (const { userId, assetId } of this.googleDriveRepository.streamPendingUploads()) {
+      jobs.push({ name: JobName.GoogleDriveUpload, data: { userId, assetId } });
+
+      if (jobs.length >= JOBS_ASSET_PAGINATION_SIZE) {
+        await this.jobRepository.queueAll(jobs);
+        queued += jobs.length;
+        jobs = [];
+      }
+    }
+
+    await this.jobRepository.queueAll(jobs);
+    queued += jobs.length;
+
+    this.logger.log(`Queued ${queued} Google Drive upload(s)`);
     return JobStatus.Success;
   }
 

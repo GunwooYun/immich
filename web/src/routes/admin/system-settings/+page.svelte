@@ -2,6 +2,7 @@
   import AuthSettings from './AuthSettings.svelte';
   import BackupSettings from './BackupSettings.svelte';
   import FFmpegSettings from './FFmpegSettings.svelte';
+  import GoogleDriveAdminSettings from './GoogleDriveSettings.svelte';
   import ImageSettings from './ImageSettings.svelte';
   import JobSettings from './JobSettings.svelte';
   import LibrarySettings from './LibrarySettings.svelte';
@@ -34,6 +35,7 @@
     mdiFileCheckOutline,
     mdiFileDocumentOutline,
     mdiFolderOutline,
+    mdiGoogleDrive,
     mdiImageOutline,
     mdiLockOutline,
     mdiMapMarkerOutline,
@@ -195,6 +197,13 @@
       subtitle: $t('admin.transcoding_settings_description'),
       key: 'video-transcoding',
       icon: mdiVideoOutline,
+    },
+    {
+      component: GoogleDriveAdminSettings,
+      title: $t('admin.google_drive_settings'),
+      subtitle: $t('admin.google_drive_settings_description'),
+      key: 'google-drive',
+      icon: mdiGoogleDrive,
     },
   ];
 
