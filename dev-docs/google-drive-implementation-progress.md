@@ -2,9 +2,8 @@
 
 This document tracks the ongoing progress of the "Sync Album to Google Drive" feature implementation. See [google-drive-album-sync-plan.md](./google-drive-album-sync-plan.md) for the target design.
 
-**Status: P2 complete — the branch is CI-parity clean (branch `feature/google-drive-album-sync`).**
-Everything below was
-re-verified directly against the committed code (`git show <commit>:<path>`), not just against commit
+**Status: P2 complete, and verified end-to-end against the real Google Drive API (see §1).**
+Everything below was re-verified directly against the committed code (`git show <commit>:<path>`), not just against commit
 messages or earlier drafts of this document — a previous version of this file had drifted out of sync
 with what was actually shipped (it still described pre-fix behavior for things that were fixed in the
 same commit that introduced them), which led to at least one external review citing already-fixed
@@ -136,6 +135,42 @@ against the actual diff rather than editing from memory.
   long-renamed `1800000000000-*` migration was still sitting in `server/dist` from an old docker-era
   build and silently re-applied the dropped user columns during the first migration run. Fixed by
   wiping `server/dist` and rebuilding; if migrations ever behave impossibly, check dist for ghosts.
+
+### ✅ End-to-end manual verification against the real Google Drive API (2026-08-07)
+Everything above this point was verified by types, unit tests, and generated artifacts only — no one
+had ever run the feature against Google. That gap is now closed. Run in the official Dev Container
+(`.devcontainer`, Docker Desktop + WSL2), with a real OAuth client and a real Google account:
+
+| Scenario | Result |
+| --- | --- |
+| OAuth link flow (consent → callback → persist) | refresh token stored in `user_google_drive` |
+| Add photos to an album | both auto-uploaded; `google_drive_upload` gained 2 rows with real `driveFileId`s; files visible in My Drive |
+| Add the *same* photos to a *second* album | `album_asset` grew to 4, ledger stayed at 2, `uploadedAt` unchanged — no duplicate Drive files |
+| Manual "sync album" button | nothing queued at all (Redis `bull:googleDriveUpload:*` empty) — the pre-queue ledger check works |
+| Disconnect | credentials row deleted, ledger **and** Drive files preserved, as designed |
+| Re-link the same account, then manual sync | still no re-upload — `uploadedAt` unchanged. This is the payoff for deliberately keeping the ledger on disconnect; wiping it would have duplicated every previously synced photo |
+
+Dev Container specifics worth knowing next time:
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` are passed through
+  `devcontainer.json`'s `remoteEnv` from the host shell, so **no secret is ever stored in a tracked
+  file**. Export them from a `chmod 600` file sourced by `~/.bashrc`. Because `remoteEnv` snapshots
+  the shell environment at VS Code launch, the variables must exist *before* `code .` — reopening an
+  already-running window is not enough.
+- The Google Cloud OAuth client needs redirect URI `http://localhost:2283/api/google-drive/callback`
+  and the tester's account added under Test users; the app can stay in Testing (no verification).
+- `drive.file` is now classified by Google as a **non-sensitive** scope, so no review is required.
+  It also means a hand-created Drive folder's ID will *not* work in the "Target folder ID" field —
+  the app can only touch folders it created itself. Leave it blank (uploads to My Drive root) until
+  the auto-create-folder idea in the plan doc is implemented.
+- On Windows, Hyper-V dynamically reserves TCP port ranges and had swallowed **9231** (the API
+  debug port), which made the container fail to start with a `/forwards/expose returned unexpected
+  status: 500` error. Fix: `netsh int ipv4 add excludedportrange protocol=tcp startport=9231
+  numberofports=1` from an admin shell, which only succeeds while the port isn't currently held —
+  a reboot first may be needed. Check with `netsh interface ipv4 show excludedportrange protocol=tcp`.
+- The `runOn: folderOpen` tasks that start Nest and Vite don't fire unless VS Code's automatic-task
+  prompt has been accepted; otherwise start them by hand via "Tasks: Run Task". Also note the
+  container image has neither `ss` nor `netstat`, so "is it listening?" must be checked with `curl`
+  from inside the container rather than by reading a socket table.
 
 ## 2. Not started
 
