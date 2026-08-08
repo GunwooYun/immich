@@ -263,6 +263,15 @@ export class JobRepository {
       case JobName.StorageTemplateMigrationSingle: {
         return { jobId: item.data.id };
       }
+      case JobName.GoogleDriveUpload: {
+        // Collapse concurrent duplicates for the same (user, asset). GoogleDriveService checks its
+        // upload ledger before uploading, but that check and the ledger write straddle the Drive
+        // API call — so two jobs queued close together (a double-clicked "sync album", or a manual
+        // sync racing the automatic queueing from add-to-album) can both pass the check and both
+        // create a file. The user ends up with two copies in Drive and the ledger only remembers
+        // the second one, leaving the first orphaned and untracked forever.
+        return { jobId: `${item.data.userId}/${item.data.assetId}` };
+      }
       case JobName.PersonGenerateThumbnail: {
         return { priority: 1 };
       }

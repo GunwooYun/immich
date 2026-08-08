@@ -142,6 +142,9 @@ describe(ServerService.name, () => {
         oauth: false,
         oauthAutoLaunch: false,
         ocr: true,
+        // Off by default: the feature needs both an explicit opt-in and a complete OAuth client,
+        // and the default config has neither (see isGoogleDriveEnabled).
+        googleDrive: false,
         passwordLogin: true,
         search: true,
         sidecar: true,

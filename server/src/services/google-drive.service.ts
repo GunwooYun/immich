@@ -430,9 +430,23 @@ export class GoogleDriveService extends BaseService {
     // 3) Load the actual asset row so we know where the original file lives on disk and what
     //    its original filename was (used both for the Drive upload's display name and for
     //    guessing its MIME type below).
+    //
+    //    Both "gone" cases are skips, not failures. Jobs are queued when an asset is added to an
+    //    album and can sit in the queue for a while, so by the time one runs the asset may have
+    //    been trashed or deleted outright — an ordinary race, not something worth failing and
+    //    retrying over. `getById` applies no `deletedAt` filter of its own (unlike the backlog
+    //    query in streamPendingUploads), so the trashed case has to be checked here; without it a
+    //    photo the user just deleted would still get copied into their Drive permanently, since
+    //    this sync is one-way and the ledger would then mark it as done forever.
     const asset = await this.assetRepository.getById(assetId);
     if (!asset) {
-      throw new BadRequestException('Asset not found');
+      this.logger.debug(`Skipping Google Drive upload: asset ${assetId} no longer exists`);
+      return 'skipped';
+    }
+
+    if (asset.deletedAt) {
+      this.logger.debug(`Skipping Google Drive upload: asset ${assetId} is trashed or deleted`);
+      return 'skipped';
     }
 
     // Build an authenticated Drive API client for this specific user, using their stored
@@ -529,6 +543,15 @@ export class GoogleDriveService extends BaseService {
 
       this.logger.error(`Failed to upload asset ${assetId} to Google Drive: ${error}`);
       throw error;
+    } finally {
+      // createReadStream hands back a live fs.ReadStream holding an open file descriptor. On the
+      // success path googleapis consumes the stream to completion, which closes it — but on any
+      // failure the pipe is abandoned mid-flight and nothing closes the source. A persistent
+      // failure mode (say the configured Drive folder was deleted, so every upload 404s) would
+      // then leak one descriptor per job; a large backlog at concurrency 5 walks the microservices
+      // process toward EMFILE and starts breaking unrelated I/O. destroy() is a no-op on an
+      // already-closed stream, so it's safe to call unconditionally.
+      streamInfo.stream.destroy();
     }
   }
 

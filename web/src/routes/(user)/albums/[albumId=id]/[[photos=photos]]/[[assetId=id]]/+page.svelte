@@ -330,7 +330,17 @@
   // album) trigger it would mean writing into someone else's Drive without their explicit
   // action — the server enforces this too (GoogleDriveService#syncAlbum), this client-side check
   // is just to avoid showing a button that would immediately fail with a permission error.
+  // Guards against a double-click firing two sync requests. The server also de-duplicates at the
+  // job level (see getJobOptions in job.repository.ts), but stopping it here avoids the pointless
+  // second round trip and the second toast.
+  let googleDriveSyncing = $state(false);
+
   const handleGoogleDriveSync = async () => {
+    if (googleDriveSyncing) {
+      return;
+    }
+
+    googleDriveSyncing = true;
     try {
       // The generated SDK client throws on any non-2xx response, so a 403/500 lands in the catch
       // below — no hand-rolled `response.ok` check needed like the raw-fetch version had.
@@ -338,6 +348,8 @@
       toastManager.primary($t('google_drive_sync_started'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_start_google_drive_sync'));
+    } finally {
+      googleDriveSyncing = false;
     }
   };
 
@@ -581,6 +593,7 @@
                   color="secondary"
                   aria-label={$t('google_drive_sync_album')}
                   onclick={handleGoogleDriveSync}
+                  disabled={googleDriveSyncing}
                   icon={mdiGoogleDrive}
                 />
               {/if}
