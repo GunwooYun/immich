@@ -173,7 +173,7 @@ export class GoogleDriveService extends BaseService {
    *      know which Immich user is completing the flow. We stash the userId inside the signed
    *      state instead.
    */
-  async getAuthUrl(userId: string): Promise<string> {
+  async getAuthUrl(userId: string): Promise<{ url: string; state: string }> {
     const oauth2Client = await this.getOAuth2Client();
 
     // `drive.file` is the narrowest scope Google offers for "upload files on behalf of the
@@ -190,7 +190,7 @@ export class GoogleDriveService extends BaseService {
       expiresIn: '10m',
     });
 
-    return oauth2Client.generateAuthUrl({
+    const url = oauth2Client.generateAuthUrl({
       // "offline" is what makes Google give us a refresh_token, not just a short-lived access token.
       access_type: 'offline',
       scope: scopes,
@@ -198,19 +198,45 @@ export class GoogleDriveService extends BaseService {
       prompt: 'consent',
       state,
     });
+
+    // The caller stores `state` in an HttpOnly cookie; handleCallback below requires the value
+    // Google echoes back to match it. Signing alone was not enough — see that method for why.
+    return { url, state };
   }
 
   /**
    * Step 2 of the "Connect Google Drive" flow — handles the redirect Google sends the user's
    * browser back to once they've approved (or denied) access.
    *
-   * `state` is the short-lived, signed token we minted in getAuthUrl above. Verifying its
-   * signature here is what stops an attacker's authorization `code` from being linked to a
-   * victim's account (this is the standard OAuth "state" CSRF defense). If verification fails
-   * (bad signature, tampered payload, or simply expired because the user took >10 minutes), we
-   * reject the whole callback rather than trying to guess who it belongs to.
+   * Three independent things must line up before a Google account gets linked:
+   *
+   *   1. the `state` Google echoed back verifies against our signing secret (not forgeable);
+   *   2. it equals the value in the caller's HttpOnly `cookieState` (proves this is the same
+   *      browser that started the flow);
+   *   3. the signed `userId` matches the authenticated caller (proves it's the same Immich user).
+   *
+   * The signature alone used to be the only check, and that was not enough. A signed state is a
+   * *bearer* token: anyone holding a fresh one could replay it from any browser, with no Immich
+   * session at all, approve with **their own** Google account, and have `upsertCredentials`
+   * silently overwrite the victim's link. Every photo the victim added to an album afterwards
+   * would upload into the attacker's Drive, while their settings page still read "connected".
+   * Capture only needed brief access to the auth URL within its 10-minute window — shared machine
+   * history, a screen share, browser history sync.
+   *
+   * Binding to the cookie closes that: the cookie is HttpOnly and only ever set in the browser
+   * that requested the auth URL, so a replayed state arrives without it. Requiring an
+   * authenticated session as well mirrors what Immich's own OIDC link flow does
+   * (`oauth.controller.ts` link is `@Authenticated()` and reads state from a cookie).
+   *
+   * The cookie is cleared by the controller once we return, which also makes each state
+   * single-use in practice.
    */
-  async handleCallback(code: string, state: string): Promise<{ userId: string }> {
+  async handleCallback(
+    code: string,
+    state: string,
+    cookieState: string | undefined,
+    authUserId: string,
+  ): Promise<{ userId: string }> {
     // Read the signing secret *outside* the verification try/catch below. Failing to read it is an
     // infrastructure problem (couldn't reach/read system_metadata), not "the user's state token is
     // bad" — folding it into that catch would misreport a database outage as a rejected
@@ -233,6 +259,16 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Invalid or expired Google Drive authorization request');
     }
 
+    // Binding check. Compared before signature verification because it costs nothing and rejects
+    // the replay case outright: a state lifted from someone else's browser arrives without the
+    // matching HttpOnly cookie.
+    if (!cookieState || cookieState !== state) {
+      this.logger.warn(
+        `Rejected Google Drive OAuth callback for user ${authUserId}: state did not match the browser that started the flow`,
+      );
+      throw new BadRequestException('Invalid or expired Google Drive authorization request');
+    }
+
     let claims: GoogleDriveStateClaims;
     try {
       // jwt.verify (called internally here) checks both the signature *and* the expiry claim,
@@ -240,6 +276,15 @@ export class GoogleDriveService extends BaseService {
       claims = this.cryptoRepository.verifyJwt<GoogleDriveStateClaims>(state, stateSecret);
     } catch (error) {
       this.logger.warn(`Rejected Google Drive OAuth callback with invalid state: ${error}`);
+      throw new BadRequestException('Invalid or expired Google Drive authorization request');
+    }
+
+    // Belt and braces: even with a matching cookie, refuse to link if the session completing the
+    // flow belongs to someone other than the user the state was issued for.
+    if (claims.userId !== authUserId) {
+      this.logger.warn(
+        `Rejected Google Drive OAuth callback: state was issued for user ${claims.userId} but completed by ${authUserId}`,
+      );
       throw new BadRequestException('Invalid or expired Google Drive authorization request');
     }
 

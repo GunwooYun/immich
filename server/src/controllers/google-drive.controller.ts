@@ -1,13 +1,16 @@
-import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Redirect } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Request, Response } from 'express';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   GoogleDriveAuthUrlResponseDto,
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
 } from 'src/dtos/google-drive.dto';
+import { ImmichCookie } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
 import { GoogleDriveService } from 'src/services/google-drive.service';
+import { respondWithCookie } from 'src/utils/response';
 import { UUIDParamDto } from 'src/validation';
 
 /**
@@ -55,22 +58,37 @@ export class GoogleDriveController {
   @Get('auth-url')
   @Authenticated()
   @ApiOperation({ summary: 'Get Google Drive OAuth URL' })
-  async getAuthUrl(@Auth() auth: AuthDto): Promise<GoogleDriveAuthUrlResponseDto> {
-    const url = await this.googleDriveService.getAuthUrl(auth.user.id);
-    return { url };
+  async getAuthUrl(
+    @Auth() auth: AuthDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<GoogleDriveAuthUrlResponseDto> {
+    const { url, state } = await this.googleDriveService.getAuthUrl(auth.user.id);
+
+    // Stash the state in an HttpOnly cookie as well as putting it in the URL. The callback
+    // requires the two to match, which is what proves the browser completing the flow is the one
+    // that started it — see GoogleDriveService#handleCallback for the attack this prevents.
+    return respondWithCookie(
+      res,
+      { url },
+      {
+        isSecure: request.secure,
+        values: [{ key: ImmichCookie.GoogleDriveOAuthState, value: state }],
+      },
+    );
   }
 
   /**
-   * Public: reached via browser redirect from Google, not an authenticated Immich session request.
-   * Security relies on the signed, short-lived `state` token minted by getAuthUrl (see
-   * GoogleDriveService.handleCallback), not on session auth.
+   * Reached via browser redirect from Google once the user approves (or declines).
    *
-   * Important: this route deliberately has NO @Authenticated() decorator. Google's redirect is a
-   * plain top-level browser navigation — there's no Immich session cookie/header we can rely on
-   * to authenticate it (and even if there were, cross-site cookie behavior for this kind of
-   * redirect can be unreliable across browsers). Instead, trust is established purely by the
-   * cryptographically signed `state` value, which only our own server could have produced (see
-   * getAuthUrl above) and which GoogleDriveService#handleCallback verifies before doing anything.
+   * This route now requires an authenticated session, and the flow is additionally bound to the
+   * browser through an HttpOnly cookie set by getAuthUrl. It used to be fully public, trusting the
+   * signed `state` alone — see GoogleDriveService#handleCallback for the account-takeover that
+   * made possible, and why signing by itself was not enough.
+   *
+   * Requiring auth here is safe because Google's redirect is a top-level GET navigation, which
+   * SameSite=Lax cookies (Immich's default, see utils/response.ts) are sent on. It also matches
+   * Immich's own OIDC link endpoint, which is `@Authenticated()`.
    *
    * We always respond with a redirect back into the Immich web app's settings page, with a
    * `google-drive` query flag so the frontend can show a "connected!" or "something went wrong"
@@ -84,26 +102,46 @@ export class GoogleDriveController {
    * user would land on a settings page with no indication whatsoever of whether linking worked.
    */
   @Get('callback')
-  @Redirect()
+  @Authenticated()
   @ApiOperation({ summary: 'OAuth callback for Google Drive linking' })
-  async handleCallback(@Query('code') code?: string, @Query('state') state?: string, @Query('error') error?: string) {
+  async handleCallback(
+    @Auth() auth: AuthDto,
+    @Req() request: Request,
+    @Res() res: Response,
+    @Query('code') code?: string,
+    @Query('state') state?: string,
+    @Query('error') error?: string,
+  ): Promise<void> {
+    // Redirects are issued directly rather than via Nest's `@Redirect()` decorator, because this
+    // handler also needs `@Res` to clear the state cookie and no other controller in the repo
+    // combines the two — so there's no established behaviour here to rely on. Taking full control
+    // of the response (plain `@Res()`, no passthrough) keeps it unambiguous.
+    const redirect = (result: 'connected' | 'error') =>
+      res.redirect(HttpStatus.FOUND, `/user-settings?isOpen=google-drive-sync&google-drive=${result}`);
+
+    // The state cookie is single-use: clear it no matter how this attempt ends, so a replay of the
+    // same callback URL can't find it waiting.
+    const cookieState = (request.cookies as Record<string, string> | undefined)?.[ImmichCookie.GoogleDriveOAuthState];
+    res.clearCookie(ImmichCookie.GoogleDriveOAuthState);
+
     // Google sets `error` (e.g. "access_denied") instead of `code` if the user declines consent
     // on the Google side, or omits `code`/`state` entirely for other failure modes. Either way,
     // there's nothing for us to do except send the user back with a friendly failure flag.
     if (error || !code || !state) {
-      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=error', statusCode: HttpStatus.FOUND };
+      redirect('error');
+      return;
     }
 
     try {
-      // This is where the real work happens: verify the signed state, exchange the code for a
-      // refresh token, and persist it against the right user. See GoogleDriveService for details.
-      await this.googleDriveService.handleCallback(code, state);
-      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=connected', statusCode: HttpStatus.FOUND };
+      // This is where the real work happens: verify the state (signature, cookie binding, and that
+      // it was issued for this same user), exchange the code for a refresh token, and persist it.
+      await this.googleDriveService.handleCallback(code, state, cookieState, auth.user.id);
+      redirect('connected');
     } catch {
-      // Covers bad/expired state, or Google rejecting the code exchange (e.g. it was already
-      // used, or too much time passed). We don't leak the underlying error to the browser URL —
-      // just a generic "error" flag; the real error is already logged server-side.
-      return { url: '/user-settings?isOpen=google-drive-sync&google-drive=error', statusCode: HttpStatus.FOUND };
+      // Covers bad/expired/unbound state, or Google rejecting the code exchange (e.g. it was
+      // already used, or too much time passed). We don't leak the underlying error to the browser
+      // URL — just a generic "error" flag; the real error is already logged server-side.
+      redirect('error');
     }
   }
 
