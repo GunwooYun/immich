@@ -178,16 +178,6 @@ export class AlbumService extends BaseService {
       { parentId: id, assetIds: dto.ids },
     );
 
-    // Google Drive integration: whenever assets are successfully added to an album, queue a
-    // background job to mirror each one to the album *owner's* Google Drive (not the acting
-    // user's — see queueGoogleDriveUploads/getAlbumOwnerId below for why). This runs after
-    // addAssets() has already committed the album_asset rows, so we only ever queue uploads for
-    // assets that actually made it into the album.
-    await this.queueGoogleDriveUploads(
-      this.getAlbumOwnerId(album),
-      results.filter((r) => r.success).map((r) => r.id),
-    );
-
     const { id: firstNewAssetId } = results.find(({ success }) => success) || {};
     if (firstNewAssetId) {
       await this.albumRepository.update(
@@ -206,6 +196,20 @@ export class AlbumService extends BaseService {
         await this.eventRepository.emit('AlbumUpdate', { id, recipientId });
       }
     }
+
+    // Google Drive integration: mirror each newly added asset to the album *owner's* Drive (not
+    // the acting user's — see queueGoogleDriveUploads/getAlbumOwnerId below for why).
+    //
+    // Queued last, deliberately. queueAll writes to Redis, which adding to an album never used to
+    // depend on; doing it earlier meant an unreachable Redis threw *after* the album_asset rows
+    // were already committed, leaving the album's thumbnail and updatedAt unset and the
+    // AlbumUpdate event unsent — so shared-album members never learned about the new photos. With
+    // the queueing last, that failure costs only the Drive upload, which the admin backfill job
+    // can pick up later anyway.
+    await this.queueGoogleDriveUploads(
+      this.getAlbumOwnerId(album),
+      results.filter((r) => r.success).map((r) => r.id),
+    );
 
     return results;
   }
@@ -282,18 +286,18 @@ export class AlbumService extends BaseService {
     // Persist the actual album_asset rows for every album we touched, in one bulk write.
     await this.albumRepository.addAssetIdsToAlbums(albumAssetValues);
 
-    // Only *after* the album_asset rows are safely committed do we queue the Google Drive upload
-    // jobs (one queueAll() call per distinct owner, batching all of that owner's pending assets
-    // together). Queuing before the insert would risk uploading assets that never actually made
-    // it into the album if the insert below failed.
-    for (const [ownerId, assetIds] of pendingUploadsByOwner) {
-      await this.queueGoogleDriveUploads(ownerId, [...assetIds]);
-    }
-
     for (const event of events) {
       for (const recipientId of event.recipients) {
         await this.eventRepository.emit('AlbumUpdate', { id: event.id, recipientId });
       }
+    }
+
+    // Queued after both the album_asset write and the AlbumUpdate events, for the same reason as
+    // addAssets above: queueAll depends on Redis, which this endpoint never used to need, so a
+    // Redis outage must not cost shared-album members their update notifications. One queueAll per
+    // distinct owner, batching that owner's pending assets together.
+    for (const [ownerId, assetIds] of pendingUploadsByOwner) {
+      await this.queueGoogleDriveUploads(ownerId, [...assetIds]);
     }
 
     return results;

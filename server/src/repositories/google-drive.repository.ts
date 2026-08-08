@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Kysely } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
-import { DummyValue, GenerateSql } from 'src/decorators';
+import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators';
 import { AlbumUserRole } from 'src/enum';
 import { DB } from 'src/schema';
 
@@ -144,6 +144,7 @@ export class GoogleDriveRepository {
    * itself, so it stays a simple, reusable "what's already there" lookup.
    */
   @GenerateSql({ params: [DummyValue.UUID, [DummyValue.UUID]] })
+  @ChunkedSet({ paramIndex: 1 })
   async getUploadedAssetIds(userId: string, assetIds: string[]): Promise<Set<string>> {
     // Guard against an empty IN (...) clause, which some SQL dialects/drivers handle
     // inconsistently — and it's also just a pointless round trip to the database when there's
