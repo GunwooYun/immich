@@ -116,8 +116,8 @@ export class GoogleDriveController {
     // handler also needs `@Res` to clear the state cookie and no other controller in the repo
     // combines the two — so there's no established behaviour here to rely on. Taking full control
     // of the response (plain `@Res()`, no passthrough) keeps it unambiguous.
-    const redirect = (result: 'connected' | 'error') =>
-      res.redirect(HttpStatus.FOUND, `/user-settings?isOpen=google-drive-sync&google-drive=${result}`);
+    const redirect = async (result: 'connected' | 'error') =>
+      res.redirect(HttpStatus.FOUND, await this.googleDriveService.getCallbackRedirectUrl(result));
 
     // The state cookie is single-use: clear it no matter how this attempt ends, so a replay of the
     // same callback URL can't find it waiting.
@@ -128,7 +128,7 @@ export class GoogleDriveController {
     // on the Google side, or omits `code`/`state` entirely for other failure modes. Either way,
     // there's nothing for us to do except send the user back with a friendly failure flag.
     if (error || !code || !state) {
-      redirect('error');
+      await redirect('error');
       return;
     }
 
@@ -136,12 +136,12 @@ export class GoogleDriveController {
       // This is where the real work happens: verify the state (signature, cookie binding, and that
       // it was issued for this same user), exchange the code for a refresh token, and persist it.
       await this.googleDriveService.handleCallback(code, state, cookieState, auth.user.id);
-      redirect('connected');
+      await redirect('connected');
     } catch {
       // Covers bad/expired/unbound state, or Google rejecting the code exchange (e.g. it was
       // already used, or too much time passed). We don't leak the underlying error to the browser
       // URL — just a generic "error" flag; the real error is already logged server-side.
-      redirect('error');
+      await redirect('error');
     }
   }
 

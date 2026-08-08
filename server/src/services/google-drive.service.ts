@@ -386,6 +386,26 @@ export class GoogleDriveService extends BaseService {
   }
 
   /**
+   * Where to send the browser once the OAuth callback finishes, one way or the other.
+   *
+   * Google redirects to the *API* origin (that's what the registered redirect URI points at), so a
+   * relative path would leave the user sitting on the API server. In a normal deployment that's
+   * harmless — one origin serves both the API and the web app — but they come apart wherever
+   * they're hosted separately, most visibly in the dev container, where the API is on :2283 and
+   * the web app on :3000. The user then lands on a URL that has no UI behind it.
+   *
+   * `server.externalDomain` is Immich's existing "the address users actually reach this instance
+   * at" setting, so when it's configured we send them there explicitly. Falling back to a relative
+   * path preserves today's behaviour for the same-origin case.
+   */
+  async getCallbackRedirectUrl(result: 'connected' | 'error'): Promise<string> {
+    const { server } = await this.getConfig({ withCache: true });
+    const path = `/user-settings?isOpen=google-drive-sync&google-drive=${result}`;
+
+    return server.externalDomain ? `${server.externalDomain}${path}` : path;
+  }
+
+  /**
    * Uploads a single asset's original file to the given user's Google Drive.
    *
    * This function is intentionally defensive about *not* uploading when it doesn't need to:
