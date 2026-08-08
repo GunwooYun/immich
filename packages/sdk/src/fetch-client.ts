@@ -2044,6 +2044,8 @@ export type ServerFeaturesDto = {
     email: boolean;
     /** Whether facial recognition is enabled */
     facialRecognition: boolean;
+    /** Whether Google Drive album sync is enabled and configured */
+    googleDrive: boolean;
     /** Whether face import is enabled */
     importFaces: boolean;
     /** Whether map feature is enabled */
@@ -2363,6 +2365,16 @@ export type SystemConfigFFmpegDto = {
     /** Two pass */
     twoPass: boolean;
 };
+export type SystemConfigGoogleDriveDto = {
+    /** Google OAuth client ID */
+    clientId: string;
+    /** Google OAuth client secret */
+    clientSecret: string;
+    /** Enabled */
+    enabled: boolean;
+    /** OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback */
+    redirectUrl: string;
+};
 export type SystemConfigGeneratedFullsizeImageDto = {
     /** Enabled */
     enabled: boolean;
@@ -2636,6 +2648,7 @@ export type SystemConfigUserDto = {
 export type SystemConfigDto = {
     backup: SystemConfigBackupsDto;
     ffmpeg: SystemConfigFFmpegDto;
+    googleDrive: SystemConfigGoogleDriveDto;
     image: SystemConfigImageDto;
     integrityChecks: SystemConfigIntegrityChecks;
     job: SystemConfigJobDto;

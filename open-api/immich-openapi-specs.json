@@ -6384,6 +6384,17 @@
             "description": ""
           }
         },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
         "summary": "OAuth callback for Google Drive linking",
         "tags": [
           "Google Drive"
@@ -22812,6 +22823,10 @@
             "description": "Whether facial recognition is enabled",
             "type": "boolean"
           },
+          "googleDrive": {
+            "description": "Whether Google Drive album sync is enabled and configured",
+            "type": "boolean"
+          },
           "importFaces": {
             "description": "Whether face import is enabled",
             "type": "boolean"
@@ -22866,6 +22881,7 @@
           "duplicateDetection",
           "email",
           "facialRecognition",
+          "googleDrive",
           "importFaces",
           "map",
           "oauth",
@@ -25842,6 +25858,9 @@
           "ffmpeg": {
             "$ref": "#/components/schemas/SystemConfigFFmpegDto"
           },
+          "googleDrive": {
+            "$ref": "#/components/schemas/SystemConfigGoogleDriveDto"
+          },
           "image": {
             "$ref": "#/components/schemas/SystemConfigImageDto"
           },
@@ -25906,6 +25925,7 @@
         "required": [
           "backup",
           "ffmpeg",
+          "googleDrive",
           "image",
           "integrityChecks",
           "job",
@@ -26151,6 +26171,33 @@
           "format",
           "quality",
           "size"
+        ],
+        "type": "object"
+      },
+      "SystemConfigGoogleDriveDto": {
+        "properties": {
+          "clientId": {
+            "description": "Google OAuth client ID",
+            "type": "string"
+          },
+          "clientSecret": {
+            "description": "Google OAuth client secret",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Enabled",
+            "type": "boolean"
+          },
+          "redirectUrl": {
+            "description": "OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clientId",
+          "clientSecret",
+          "enabled",
+          "redirectUrl"
         ],
         "type": "object"
       },

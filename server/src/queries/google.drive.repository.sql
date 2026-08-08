@@ -32,6 +32,24 @@ delete from "user_google_drive"
 where
   "userId" = $1
 
+-- GoogleDriveRepository.streamPendingUploads
+select distinct
+  "album_user"."userId" as "userId",
+  "album_asset"."assetId" as "assetId"
+from
+  "album_asset"
+  inner join "album" on "album"."id" = "album_asset"."albumId"
+  inner join "album_user" on "album_user"."albumId" = "album"."id"
+  inner join "user_google_drive" on "user_google_drive"."userId" = "album_user"."userId"
+  inner join "asset" on "asset"."id" = "album_asset"."assetId"
+  left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
+  and "google_drive_upload"."userId" = "album_user"."userId"
+where
+  "album_user"."role" = $1
+  and "album"."deletedAt" is null
+  and "asset"."deletedAt" is null
+  and "google_drive_upload"."assetId" is null
+
 -- GoogleDriveRepository.getUploadedAssetIds
 select
   "assetId"

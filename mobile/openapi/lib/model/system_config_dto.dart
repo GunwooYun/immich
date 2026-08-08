@@ -15,6 +15,7 @@ class SystemConfigDto {
   SystemConfigDto({
     required this.backup,
     required this.ffmpeg,
+    required this.googleDrive,
     required this.image,
     required this.integrityChecks,
     required this.job,
@@ -40,6 +41,8 @@ class SystemConfigDto {
   SystemConfigBackupsDto backup;
 
   SystemConfigFFmpegDto ffmpeg;
+
+  SystemConfigGoogleDriveDto googleDrive;
 
   SystemConfigImageDto image;
 
@@ -85,6 +88,7 @@ class SystemConfigDto {
   bool operator ==(Object other) => identical(this, other) || other is SystemConfigDto &&
     other.backup == backup &&
     other.ffmpeg == ffmpeg &&
+    other.googleDrive == googleDrive &&
     other.image == image &&
     other.integrityChecks == integrityChecks &&
     other.job == job &&
@@ -111,6 +115,7 @@ class SystemConfigDto {
     // ignore: unnecessary_parenthesis
     (backup.hashCode) +
     (ffmpeg.hashCode) +
+    (googleDrive.hashCode) +
     (image.hashCode) +
     (integrityChecks.hashCode) +
     (job.hashCode) +
@@ -133,12 +138,13 @@ class SystemConfigDto {
     (user.hashCode);
 
   @override
-  String toString() => 'SystemConfigDto[backup=$backup, ffmpeg=$ffmpeg, image=$image, integrityChecks=$integrityChecks, job=$job, library_=$library_, logging=$logging, machineLearning=$machineLearning, map=$map, metadata=$metadata, newVersionCheck=$newVersionCheck, nightlyTasks=$nightlyTasks, notifications=$notifications, oauth=$oauth, passwordLogin=$passwordLogin, reverseGeocoding=$reverseGeocoding, server=$server, storageTemplate=$storageTemplate, templates=$templates, theme=$theme, trash=$trash, user=$user]';
+  String toString() => 'SystemConfigDto[backup=$backup, ffmpeg=$ffmpeg, googleDrive=$googleDrive, image=$image, integrityChecks=$integrityChecks, job=$job, library_=$library_, logging=$logging, machineLearning=$machineLearning, map=$map, metadata=$metadata, newVersionCheck=$newVersionCheck, nightlyTasks=$nightlyTasks, notifications=$notifications, oauth=$oauth, passwordLogin=$passwordLogin, reverseGeocoding=$reverseGeocoding, server=$server, storageTemplate=$storageTemplate, templates=$templates, theme=$theme, trash=$trash, user=$user]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'backup'] = this.backup;
       json[r'ffmpeg'] = this.ffmpeg;
+      json[r'googleDrive'] = this.googleDrive;
       json[r'image'] = this.image;
       json[r'integrityChecks'] = this.integrityChecks;
       json[r'job'] = this.job;
@@ -173,6 +179,7 @@ class SystemConfigDto {
       return SystemConfigDto(
         backup: SystemConfigBackupsDto.fromJson(json[r'backup'])!,
         ffmpeg: SystemConfigFFmpegDto.fromJson(json[r'ffmpeg'])!,
+        googleDrive: SystemConfigGoogleDriveDto.fromJson(json[r'googleDrive'])!,
         image: SystemConfigImageDto.fromJson(json[r'image'])!,
         integrityChecks: SystemConfigIntegrityChecks.fromJson(json[r'integrityChecks'])!,
         job: SystemConfigJobDto.fromJson(json[r'job'])!,
@@ -242,6 +249,7 @@ class SystemConfigDto {
   static const requiredKeys = <String>{
     'backup',
     'ffmpeg',
+    'googleDrive',
     'image',
     'integrityChecks',
     'job',

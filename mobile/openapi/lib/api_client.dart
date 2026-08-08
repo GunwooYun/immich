@@ -775,6 +775,8 @@ class ApiClient {
           return SystemConfigGeneratedFullsizeImageDto.fromJson(value);
         case 'SystemConfigGeneratedImageDto':
           return SystemConfigGeneratedImageDto.fromJson(value);
+        case 'SystemConfigGoogleDriveDto':
+          return SystemConfigGoogleDriveDto.fromJson(value);
         case 'SystemConfigImageDto':
           return SystemConfigImageDto.fromJson(value);
         case 'SystemConfigIntegrityChecks':

@@ -650,6 +650,7 @@ Class | Method | HTTP request | Description
  - [SystemConfigFacesDto](doc//SystemConfigFacesDto.md)
  - [SystemConfigGeneratedFullsizeImageDto](doc//SystemConfigGeneratedFullsizeImageDto.md)
  - [SystemConfigGeneratedImageDto](doc//SystemConfigGeneratedImageDto.md)
+ - [SystemConfigGoogleDriveDto](doc//SystemConfigGoogleDriveDto.md)
  - [SystemConfigImageDto](doc//SystemConfigImageDto.md)
  - [SystemConfigIntegrityChecks](doc//SystemConfigIntegrityChecks.md)
  - [SystemConfigIntegrityChecksumJob](doc//SystemConfigIntegrityChecksumJob.md)

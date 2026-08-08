@@ -17,6 +17,7 @@ class ServerFeaturesDto {
     required this.duplicateDetection,
     required this.email,
     required this.facialRecognition,
+    required this.googleDrive,
     required this.importFaces,
     required this.map,
     required this.oauth,
@@ -42,6 +43,9 @@ class ServerFeaturesDto {
 
   /// Whether facial recognition is enabled
   bool facialRecognition;
+
+  /// Whether Google Drive album sync is enabled and configured
+  bool googleDrive;
 
   /// Whether face import is enabled
   bool importFaces;
@@ -85,6 +89,7 @@ class ServerFeaturesDto {
     other.duplicateDetection == duplicateDetection &&
     other.email == email &&
     other.facialRecognition == facialRecognition &&
+    other.googleDrive == googleDrive &&
     other.importFaces == importFaces &&
     other.map == map &&
     other.oauth == oauth &&
@@ -105,6 +110,7 @@ class ServerFeaturesDto {
     (duplicateDetection.hashCode) +
     (email.hashCode) +
     (facialRecognition.hashCode) +
+    (googleDrive.hashCode) +
     (importFaces.hashCode) +
     (map.hashCode) +
     (oauth.hashCode) +
@@ -119,7 +125,7 @@ class ServerFeaturesDto {
     (trash.hashCode);
 
   @override
-  String toString() => 'ServerFeaturesDto[configFile=$configFile, duplicateDetection=$duplicateDetection, email=$email, facialRecognition=$facialRecognition, importFaces=$importFaces, map=$map, oauth=$oauth, oauthAutoLaunch=$oauthAutoLaunch, ocr=$ocr, passwordLogin=$passwordLogin, realtimeTranscoding=$realtimeTranscoding, reverseGeocoding=$reverseGeocoding, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, trash=$trash]';
+  String toString() => 'ServerFeaturesDto[configFile=$configFile, duplicateDetection=$duplicateDetection, email=$email, facialRecognition=$facialRecognition, googleDrive=$googleDrive, importFaces=$importFaces, map=$map, oauth=$oauth, oauthAutoLaunch=$oauthAutoLaunch, ocr=$ocr, passwordLogin=$passwordLogin, realtimeTranscoding=$realtimeTranscoding, reverseGeocoding=$reverseGeocoding, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, trash=$trash]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -127,6 +133,7 @@ class ServerFeaturesDto {
       json[r'duplicateDetection'] = this.duplicateDetection;
       json[r'email'] = this.email;
       json[r'facialRecognition'] = this.facialRecognition;
+      json[r'googleDrive'] = this.googleDrive;
       json[r'importFaces'] = this.importFaces;
       json[r'map'] = this.map;
       json[r'oauth'] = this.oauth;
@@ -155,6 +162,7 @@ class ServerFeaturesDto {
         duplicateDetection: mapValueOfType<bool>(json, r'duplicateDetection')!,
         email: mapValueOfType<bool>(json, r'email')!,
         facialRecognition: mapValueOfType<bool>(json, r'facialRecognition')!,
+        googleDrive: mapValueOfType<bool>(json, r'googleDrive')!,
         importFaces: mapValueOfType<bool>(json, r'importFaces')!,
         map: mapValueOfType<bool>(json, r'map')!,
         oauth: mapValueOfType<bool>(json, r'oauth')!,
@@ -218,6 +226,7 @@ class ServerFeaturesDto {
     'duplicateDetection',
     'email',
     'facialRecognition',
+    'googleDrive',
     'importFaces',
     'map',
     'oauth',
