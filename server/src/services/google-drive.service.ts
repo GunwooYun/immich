@@ -97,22 +97,21 @@ export class GoogleDriveService extends BaseService {
   /**
    * Builds a Google OAuth2 client from the admin-managed system config.
    *
-   * These used to come from `process.env` with placeholder fallbacks ('YOUR_CLIENT_ID', …), which
-   * meant a misconfigured deployment failed *silently*: every OAuth attempt bounced off Google with
-   * an opaque error and nothing pointed at the actual cause. They now live in system config
-   * alongside the OIDC login credentials, editable from the admin UI, and a missing value is
-   * rejected here with a message that names what to fix.
+   * These briefly came from `process.env` (with placeholder fallbacks like 'YOUR_CLIENT_ID', which
+   * meant a misconfigured deployment failed *silently* — every OAuth attempt bounced off Google
+   * with an opaque error and nothing pointed at the cause). System config is now the only source,
+   * matching how the OIDC login credentials work, and a missing value is rejected here with a
+   * message that names what to fix.
    *
-   * Environment variables are still honoured as a fallback so that anyone who set up this feature
-   * before it moved into system config keeps working after an upgrade. Config wins when both are
-   * present.
+   * There is deliberately no environment-variable fallback. `GOOGLE_CLIENT_ID` and friends were
+   * never part of `EnvSchema`, so they were undocumented, untyped and unvalidated — and worse,
+   * their presence meant clearing the client ID in the admin UI didn't actually disable anything
+   * as long as the container still had them set.
    */
   private async getOAuth2Client() {
     const { googleDrive } = await this.getConfig({ withCache: true });
 
-    const clientId = googleDrive.clientId || process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = googleDrive.clientSecret || process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUrl = googleDrive.redirectUrl || process.env.GOOGLE_REDIRECT_URL;
+    const { clientId, clientSecret, redirectUrl } = googleDrive;
 
     if (!googleDrive.enabled) {
       throw new BadRequestException('Google Drive sync is disabled for this server');
@@ -145,12 +144,7 @@ export class GoogleDriveService extends BaseService {
    */
   private async isEnabled(): Promise<boolean> {
     const { googleDrive } = await this.getConfig({ withCache: true });
-    return isGoogleDriveEnabled({
-      ...googleDrive,
-      clientId: googleDrive.clientId || process.env.GOOGLE_CLIENT_ID || '',
-      clientSecret: googleDrive.clientSecret || process.env.GOOGLE_CLIENT_SECRET || '',
-      redirectUrl: googleDrive.redirectUrl || process.env.GOOGLE_REDIRECT_URL || '',
-    });
+    return isGoogleDriveEnabled(googleDrive);
   }
 
   /**

@@ -1,17 +1,4 @@
 {
-  "name": "Immich - Backend, Frontend and ML",
-  "service": "immich-server",
-  "runServices": [
-    "immich-init",
-    "immich-server",
-    "redis",
-    "database",
-    "immich-machine-learning"
-  ],
-  "dockerComposeFile": [
-    "../docker/docker-compose.dev.yml",
-    "./server/container-compose-overrides.yml"
-  ],
   "customizations": {
     "vscode": {
       "extensions": [
@@ -30,58 +17,62 @@
       ],
       "settings": {
         "tasks": {
-          "version": "2.0.0",
           "tasks": [
             {
-              "label": "Immich API Server (Nest)",
-              "type": "shell",
               "command": "[ -f /immich-devcontainer/container-start-backend.sh ] && /immich-devcontainer/container-start-backend.sh || exit 0",
               "isBackground": true,
+              "label": "Immich API Server (Nest)",
               "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "dedicated",
-                "showReuseMessage": true,
                 "clear": false,
+                "close": true,
+                "echo": true,
+                "focus": false,
                 "group": "Devcontainer tasks",
-                "close": true
+                "panel": "dedicated",
+                "reveal": "always",
+                "showReuseMessage": true
               },
+              "problemMatcher": [],
               "runOptions": {
                 "runOn": "folderOpen"
               },
-              "problemMatcher": []
+              "type": "shell"
             },
             {
-              "label": "Immich Web Server (Vite)",
-              "type": "shell",
               "command": "[ -f /immich-devcontainer/container-start-frontend.sh ] && /immich-devcontainer/container-start-frontend.sh || exit 0",
               "isBackground": true,
+              "label": "Immich Web Server (Vite)",
               "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": false,
-                "panel": "dedicated",
-                "showReuseMessage": true,
                 "clear": false,
+                "close": true,
+                "echo": true,
+                "focus": false,
                 "group": "Devcontainer tasks",
-                "close": true
+                "panel": "dedicated",
+                "reveal": "always",
+                "showReuseMessage": true
               },
+              "problemMatcher": [],
               "runOptions": {
                 "runOn": "folderOpen"
               },
-              "problemMatcher": []
+              "type": "shell"
             },
             {
+              "command": "pnpm --filter @immich/cli build:dev",
               "label": "Build Immich CLI",
-              "type": "shell",
-              "command": "pnpm --filter @immich/cli build:dev"
+              "type": "shell"
             }
-          ]
+          ],
+          "version": "2.0.0"
         }
       }
     }
   },
+  "dockerComposeFile": [
+    "../docker/docker-compose.dev.yml",
+    "./server/container-compose-overrides.yml"
+  ],
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       // https://github.com/devcontainers/features/issues/1466
@@ -89,47 +80,47 @@
     }
   },
   "forwardPorts": [3000, 9231, 9230, 2283],
+  "name": "Immich - Backend, Frontend and ML",
+  "overrideCommand": true,
   "portsAttributes": {
+    "2283": {
+      "description": "The API server of the Immich project",
+      "label": "Immich - API Server - HTTP"
+    },
     "3000": {
-      "label": "Immich - Frontend HTTP",
       "description": "The frontend of the Immich project",
+      "label": "Immich - Frontend HTTP",
       "onAutoForward": "openBrowserOnce"
     },
-    "2283": {
-      "label": "Immich - API Server - HTTP",
-      "description": "The API server of the Immich project"
+    "9230": {
+      "description": "The workers of the Immich project",
+      "label": "Immich - Workers - DEBUG"
     },
     "9231": {
-      "label": "Immich - API Server - DEBUG",
-      "description": "The API server of the Immich project"
-    },
-    "9230": {
-      "label": "Immich - Workers - DEBUG",
-      "description": "The workers of the Immich project"
+      "description": "The API server of the Immich project",
+      "label": "Immich - API Server - DEBUG"
     }
   },
-  "overrideCommand": true,
-  "workspaceFolder": "/usr/src/app",
-  "remoteUser": "root",
-  "userEnvProbe": "loginInteractiveShell",
   "remoteEnv": {
-    // The location where your uploaded files are stored
-    "UPLOAD_LOCATION": "${localEnv:UPLOAD_LOCATION:./library}",
+    //  The database name
+    "DB_DATABASE_NAME": "${localEnv:DB_DATABASE_NAME:immich}",
     //  Connection secret for postgres. You should change it to a random password
     //  Please use only the characters `A-Za-z0-9`, without special characters or spaces
     "DB_PASSWORD": "${localEnv:DB_PASSWORD:postgres}",
     //  The database username
     "DB_USERNAME": "${localEnv:DB_USERNAME:postgres}",
-    //  The database name
-    "DB_DATABASE_NAME": "${localEnv:DB_DATABASE_NAME:immich}",
-    //  Google Drive sync: OAuth client credentials, read from your host shell so that no secret
-    //  ever lands in a tracked file. Create the client at console.cloud.google.com (Web
-    //  application type) with redirect URI http://localhost:2283/api/google-drive/callback, then
-    //  export these three in your shell (e.g. from a chmod 600 file sourced by ~/.bashrc).
-    //  Without them GoogleDriveService falls back to placeholder strings and every OAuth attempt
-    //  fails; the feature is simply unusable in the dev container until they're set.
-    "GOOGLE_CLIENT_ID": "${localEnv:GOOGLE_CLIENT_ID}",
-    "GOOGLE_CLIENT_SECRET": "${localEnv:GOOGLE_CLIENT_SECRET}",
-    "GOOGLE_REDIRECT_URL": "${localEnv:GOOGLE_REDIRECT_URL}"
-  }
+    // The location where your uploaded files are stored
+    "UPLOAD_LOCATION": "${localEnv:UPLOAD_LOCATION:./library}"
+  },
+  "remoteUser": "root",
+  "runServices": [
+    "immich-init",
+    "immich-server",
+    "redis",
+    "database",
+    "immich-machine-learning"
+  ],
+  "service": "immich-server",
+  "userEnvProbe": "loginInteractiveShell",
+  "workspaceFolder": "/usr/src/app"
 }
