@@ -5,6 +5,7 @@ select
   "userId",
   "refreshToken",
   "folderId",
+  "folderName",
   "connectedAt"
 from
   "user_google_drive"
@@ -23,9 +24,10 @@ set
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"
 set
-  "folderId" = $1
+  "folderId" = $1,
+  "folderName" = $2
 where
-  "userId" = $2
+  "userId" = $3
 
 -- GoogleDriveRepository.deleteCredentials
 delete from "user_google_drive"
@@ -58,6 +60,17 @@ from
 where
   "userId" = $1
   and "assetId" in ($2)
+
+-- GoogleDriveRepository.hasUpload
+select
+  "assetId"
+from
+  "google_drive_upload"
+where
+  "userId" = $1
+  and "assetId" = $2
+limit
+  $3
 
 -- GoogleDriveRepository.recordUpload
 insert into

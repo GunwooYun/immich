@@ -38,7 +38,7 @@ export class GoogleDriveRepository {
   getCredentials(userId: string) {
     return this.db
       .selectFrom('user_google_drive')
-      .select(['userId', 'refreshToken', 'folderId', 'connectedAt'])
+      .select(['userId', 'refreshToken', 'folderId', 'folderName', 'connectedAt'])
       .where('userId', '=', userId)
       .executeTakeFirst();
   }
@@ -65,12 +65,17 @@ export class GoogleDriveRepository {
    * so the caller can tell "saved" apart from "this user isn't connected, there was nothing to
    * update" — an unconnected user silently having their folder preference dropped would be a
    * confusing failure mode.
+   *
+   * `folderName` is written alongside the id in the same statement rather than as a follow-up
+   * update, so the two can never disagree — a row showing one folder's name and another's id would
+   * be worse than showing no name at all. Callers that only have an id (the manual paste-an-id
+   * path) pass null for the name.
    */
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
-  async setFolderId(userId: string, folderId: string | null): Promise<number> {
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
+  async setFolderId(userId: string, folderId: string | null, folderName: string | null): Promise<number> {
     const result = await this.db
       .updateTable('user_google_drive')
-      .set({ folderId })
+      .set({ folderId, folderName })
       .where('userId', '=', userId)
       .executeTakeFirst();
 
@@ -161,6 +166,30 @@ export class GoogleDriveRepository {
       .execute();
 
     return new Set(rows.map((row) => row.assetId));
+  }
+
+  /**
+   * The single-asset version of getUploadedAssetIds: "has this one asset already gone to this
+   * user's Drive?"
+   *
+   * The upload job handler asks exactly this question once per asset, and used to do it by calling
+   * getUploadedAssetIds(userId, [assetId]) and then .has()-ing the one-element Set back out. That
+   * worked, but it dragged the whole batch machinery along for a single row — the @ChunkedSet
+   * wrapper, building a Set, an `assetId in (...)` clause with one value — and read as if a batch
+   * were being processed. A dedicated `select ... limit 1` returning a boolean says what it means
+   * and lets Postgres stop at the first matching row.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async hasUpload(userId: string, assetId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('google_drive_upload')
+      .select('assetId')
+      .where('userId', '=', userId)
+      .where('assetId', '=', assetId)
+      .limit(1)
+      .executeTakeFirst();
+
+    return !!row;
   }
 
   /**

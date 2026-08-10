@@ -14,26 +14,42 @@ class GoogleDriveSetFolderDto {
   /// Returns a new [GoogleDriveSetFolderDto] instance.
   GoogleDriveSetFolderDto({
     required this.folderId,
+    this.folderName = const Optional.absent(),
   });
 
   /// Drive folder id to upload into; empty string clears the setting
   String folderId;
 
+  /// Display name of the folder, if known
+  ///
+  /// Please note: This property should have been non-nullable! Since the specification file
+  /// does not include a default value (using the "default:" property), however, the generated
+  /// source code must fall back to having a nullable type.
+  /// Consider adding a "default:" property in the specification file to hide this note.
+  ///
+  Optional<String?> folderName;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveSetFolderDto &&
-    other.folderId == folderId;
+    other.folderId == folderId &&
+    other.folderName == folderName;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
-    (folderId.hashCode);
+    (folderId.hashCode) +
+    (folderName == null ? 0 : folderName!.hashCode);
 
   @override
-  String toString() => 'GoogleDriveSetFolderDto[folderId=$folderId]';
+  String toString() => 'GoogleDriveSetFolderDto[folderId=$folderId, folderName=$folderName]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'folderId'] = this.folderId;
+    if (this.folderName.isPresent) {
+      final value = this.folderName.value;
+      json[r'folderName'] = value;
+    }
     return json;
   }
 
@@ -47,6 +63,7 @@ class GoogleDriveSetFolderDto {
 
       return GoogleDriveSetFolderDto(
         folderId: mapValueOfType<String>(json, r'folderId')!,
+        folderName: json.containsKey(r'folderName') ? Optional.present(mapValueOfType<String>(json, r'folderName')) : const Optional.absent(),
       );
     }
     return null;

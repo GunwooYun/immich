@@ -31,6 +31,9 @@ const GoogleDriveAuthUrlResponseSchema = z
 const GoogleDriveSetFolderSchema = z
   .object({
     folderId: z.string().describe('Drive folder id to upload into; empty string clears the setting'),
+    // Sent by the Google Picker, which knows the folder's display name; omitted by the manual
+    // paste-an-id path, which doesn't. Purely cosmetic — uploads are always addressed by id.
+    folderName: z.string().optional().describe('Display name of the folder, if known'),
   })
   .meta({ id: 'GoogleDriveSetFolderDto' });
 
@@ -38,10 +41,35 @@ const GoogleDriveStatusResponseSchema = z
   .object({
     connected: z.boolean().describe('Whether this user has linked a Google Drive account'),
     folderId: z.string().nullable().describe('The configured upload destination folder, if any'),
+    folderName: z.string().nullable().describe('Display name of that folder, if it was chosen via the picker'),
     connectedAt: isoDatetimeToDate.nullable().describe('When the account was linked, if connected'),
   })
   .meta({ id: 'GoogleDriveStatusResponseDto' });
 
+/**
+ * Everything the browser needs to open Google's folder picker, in one round trip.
+ *
+ * The Picker is a Google-hosted widget that runs entirely in the user's browser, so it can't reach
+ * into our server for credentials — it has to be handed an OAuth access token, the OAuth client id
+ * and a Google API key up front. We hold the long-lived *refresh* token server-side and never let
+ * it out; this endpoint exchanges it for a short-lived access token (typically ~1 hour) scoped to
+ * `drive.file` only, which is the narrowest thing that lets the Picker work.
+ *
+ * What that access token can do if it leaked: create files in the user's Drive, and read or modify
+ * the files this app itself created. It cannot read the rest of their Drive — `drive.file` is a
+ * per-file grant, not a whole-account one — and it expires on its own. That's the tradeoff being
+ * made in exchange for a real folder picker instead of asking people to paste folder ids out of a
+ * URL bar.
+ */
+const GoogleDrivePickerConfigResponseSchema = z
+  .object({
+    accessToken: z.string().describe('Short-lived OAuth access token for the Picker to use'),
+    clientId: z.string().describe('Google OAuth client id the Picker should identify as'),
+    apiKey: z.string().describe('Google API key (developer key) the Picker requires'),
+  })
+  .meta({ id: 'GoogleDrivePickerConfigResponseDto' });
+
 export class GoogleDriveAuthUrlResponseDto extends createZodDto(GoogleDriveAuthUrlResponseSchema) {}
+export class GoogleDrivePickerConfigResponseDto extends createZodDto(GoogleDrivePickerConfigResponseSchema) {}
 export class GoogleDriveSetFolderDto extends createZodDto(GoogleDriveSetFolderSchema) {}
 export class GoogleDriveStatusResponseDto extends createZodDto(GoogleDriveStatusResponseSchema) {}

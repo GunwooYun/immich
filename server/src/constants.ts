@@ -156,6 +156,8 @@ export const endpointTags: Record<ApiTag, string> = {
   [ApiTag.Duplicates]: 'Endpoints for managing and identifying duplicate assets.',
   [ApiTag.Faces]:
     'A face is a detected human face within an asset, which can be associated with a person. Faces are normally detected via machine learning, but can also be created manually.',
+  [ApiTag.GoogleDrive]:
+    "Endpoints for linking a personal Google Drive account and mirroring album assets into it. Each user links their own account; uploads go to the album owner's Drive and are recorded so nothing is uploaded twice.",
   [ApiTag.Integrity]: 'Endpoints for viewing and managing integrity reports.',
   [ApiTag.Jobs]:
     'Queues and background jobs are used for processing tasks asynchronously. Queues can be paused and resumed as needed.',

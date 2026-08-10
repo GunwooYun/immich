@@ -52,7 +52,7 @@
     AlbumUserRole,
     AssetVisibility,
     getAlbumInfo,
-    syncAlbum as syncAlbumToGoogleDrive,
+    syncAlbumToGoogleDrive,
     updateAlbumInfo,
     type AlbumResponseDto,
   } from '@immich/sdk';

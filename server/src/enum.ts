@@ -1191,6 +1191,7 @@ export enum ApiTag {
   Download = 'Download',
   Duplicates = 'Duplicates',
   Faces = 'Faces',
+  GoogleDrive = 'Google Drive',
   Integrity = 'Integrity (admin)',
   Jobs = 'Jobs',
   Libraries = 'Libraries',

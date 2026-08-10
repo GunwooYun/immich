@@ -38,6 +38,18 @@ export class UserGoogleDriveTable {
   @Column({ nullable: true })
   folderId!: string | null;
 
+  // Human-readable name of that folder, captured at the moment it was chosen, purely so the
+  // settings page can say "Photos" instead of "1a2B3c4D5e6F7g8H9i0J".
+  //
+  // Denormalised on purpose. The alternative is asking the Drive API for the name on every settings
+  // render, which costs a network round trip and would break the moment the token needs refreshing.
+  // The cost of caching it is that a folder renamed in Drive shows its old name here until the user
+  // picks it again — a cosmetic staleness, since uploads are addressed by id and keep working.
+  // Null whenever folderId is null, and also for folders configured by pasting an id by hand (no
+  // picker involved, so no name to record).
+  @Column({ nullable: true })
+  folderName!: string | null;
+
   // When the user linked their account. Surfaced through the connection-status endpoint so the
   // settings UI can show something more useful than a bare "connected".
   @CreateDateColumn()

@@ -112,6 +112,7 @@ const updatedConfig = Object.freeze<SystemConfig>({
     clientId: '',
     clientSecret: '',
     redirectUrl: '',
+    apiKey: '',
   },
   machineLearning: {
     enabled: true,

@@ -16,6 +16,7 @@ class GoogleDriveStatusResponseDto {
     required this.connected,
     required this.connectedAt,
     required this.folderId,
+    required this.folderName,
   });
 
   /// Whether this user has linked a Google Drive account
@@ -27,21 +28,26 @@ class GoogleDriveStatusResponseDto {
   /// The configured upload destination folder, if any
   String? folderId;
 
+  /// Display name of that folder, if it was chosen via the picker
+  String? folderName;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveStatusResponseDto &&
     other.connected == connected &&
     other.connectedAt == connectedAt &&
-    other.folderId == folderId;
+    other.folderId == folderId &&
+    other.folderName == folderName;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
     (connected.hashCode) +
     (connectedAt == null ? 0 : connectedAt!.hashCode) +
-    (folderId == null ? 0 : folderId!.hashCode);
+    (folderId == null ? 0 : folderId!.hashCode) +
+    (folderName == null ? 0 : folderName!.hashCode);
 
   @override
-  String toString() => 'GoogleDriveStatusResponseDto[connected=$connected, connectedAt=$connectedAt, folderId=$folderId]';
+  String toString() => 'GoogleDriveStatusResponseDto[connected=$connected, connectedAt=$connectedAt, folderId=$folderId, folderName=$folderName]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -58,6 +64,11 @@ class GoogleDriveStatusResponseDto {
     } else {
       json[r'folderId'] = null;
     }
+    if (this.folderName != null) {
+      json[r'folderName'] = this.folderName;
+    } else {
+      json[r'folderName'] = null;
+    }
     return json;
   }
 
@@ -73,6 +84,7 @@ class GoogleDriveStatusResponseDto {
         connected: mapValueOfType<bool>(json, r'connected')!,
         connectedAt: mapDateTime(json, r'connectedAt', r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/'),
         folderId: mapValueOfType<String>(json, r'folderId'),
+        folderName: mapValueOfType<String>(json, r'folderName'),
       );
     }
     return null;
@@ -123,6 +135,7 @@ class GoogleDriveStatusResponseDto {
     'connected',
     'connectedAt',
     'folderId',
+    'folderName',
   };
 }
 

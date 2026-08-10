@@ -1,13 +1,15 @@
 import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Req, Res } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
+import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   GoogleDriveAuthUrlResponseDto,
+  GoogleDrivePickerConfigResponseDto,
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
 } from 'src/dtos/google-drive.dto';
-import { ImmichCookie } from 'src/enum';
+import { ApiTag, ImmichCookie } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { respondWithCookie } from 'src/utils/response';
@@ -23,11 +25,29 @@ import { UUIDParamDto } from 'src/validation';
  *   1. GET    /google-drive/status        - settings page asks "is this user connected, and to which folder?"
  *   2. GET    /google-drive/auth-url      - "Connect Google Drive" button asks for a Google login URL.
  *   3. GET    /google-drive/callback      - Google redirects the browser back here after the user approves.
- *   4. POST   /google-drive/folder        - user optionally picks a target Drive folder.
- *   5. POST   /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
- *   6. DELETE /google-drive/link          - "Disconnect" button discards the stored credentials.
+ *   4. GET    /google-drive/picker-config - hands the browser what Google's folder picker needs.
+ *   5. POST   /google-drive/folder        - stores whichever folder the picker (or the manual
+ *                                           fallback input) produced.
+ *   6. POST   /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
+ *   7. DELETE /google-drive/link          - "Disconnect" button discards the stored credentials.
+ *
+ * Two conventions worth knowing before editing this file:
+ *
+ * - Every method carries `@Endpoint(...)` rather than a bare `@ApiOperation(...)`. `@Endpoint` is
+ *   Immich's own wrapper (src/decorators.ts): it forwards the summary/description to Swagger but
+ *   *also* attaches the API-history extension that the generated docs use to show when an endpoint
+ *   was added and how stable it is. Using plain `@ApiOperation` skips that and prints a
+ *   "Missing history for endpoint" warning during the OpenAPI build.
+ *
+ * - The method names are deliberately long and Drive-specific. The OpenAPI generator derives each
+ *   operationId straight from the method name (`operationIdFactory` in src/utils/misc.ts), and the
+ *   TypeScript SDK turns every operationId into a *top-level* exported function. Naming a method
+ *   `getStatus` would therefore export a bare `getStatus()` from `@immich/sdk`, which says nothing
+ *   about Drive and collides with every other feature's idea of "status" — callers were already
+ *   having to write `import { getStatus as getGoogleDriveStatus }`. Keeping the noun in the method
+ *   name makes the SDK read correctly at the call site.
  */
-@ApiTags('Google Drive')
+@ApiTags(ApiTag.GoogleDrive)
 @Controller('google-drive')
 export class GoogleDriveController {
   constructor(private googleDriveService: GoogleDriveService) {}
@@ -41,8 +61,13 @@ export class GoogleDriveController {
    */
   @Get('status')
   @Authenticated()
-  @ApiOperation({ summary: 'Get the current Google Drive connection status' })
-  async getStatus(@Auth() auth: AuthDto): Promise<GoogleDriveStatusResponseDto> {
+  @Endpoint({
+    summary: 'Get Google Drive connection status',
+    description:
+      'Report whether the authenticated user has linked a Google Drive account, when they linked it, and which target folder they selected. Never includes the refresh token.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDriveStatus(@Auth() auth: AuthDto): Promise<GoogleDriveStatusResponseDto> {
     return this.googleDriveService.getStatus(auth.user.id);
   }
 
@@ -57,8 +82,13 @@ export class GoogleDriveController {
    */
   @Get('auth-url')
   @Authenticated()
-  @ApiOperation({ summary: 'Get Google Drive OAuth URL' })
-  async getAuthUrl(
+  @Endpoint({
+    summary: 'Start the Google Drive link flow',
+    description:
+      'Return the Google consent-screen URL the browser should navigate to. Also sets a short-lived HttpOnly cookie holding the OAuth `state`, which the callback requires in order to prove the browser finishing the flow is the one that started it.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDriveAuthUrl(
     @Auth() auth: AuthDto,
     @Req() request: Request,
     @Res({ passthrough: true }) res: Response,
@@ -103,8 +133,13 @@ export class GoogleDriveController {
    */
   @Get('callback')
   @Authenticated()
-  @ApiOperation({ summary: 'OAuth callback for Google Drive linking' })
-  async handleCallback(
+  @Endpoint({
+    summary: 'Complete the Google Drive link flow',
+    description:
+      'Redirect target for Google after the user approves or declines consent. Exchanges the authorization code for a refresh token and always responds with a 302 back into the Immich settings page — never JSON, so this is not meaningfully callable from an SDK.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async handleGoogleDriveCallback(
     @Auth() auth: AuthDto,
     @Req() request: Request,
     @Res() res: Response,
@@ -152,9 +187,14 @@ export class GoogleDriveController {
    */
   @Post('folder')
   @Authenticated()
-  @ApiOperation({ summary: 'Set target Google Drive folder ID' })
-  async setFolderId(@Auth() auth: AuthDto, @Body() dto: GoogleDriveSetFolderDto): Promise<void> {
-    await this.googleDriveService.setFolderId(auth.user.id, dto.folderId);
+  @Endpoint({
+    summary: 'Set the target Google Drive folder',
+    description:
+      'Choose which Drive folder subsequent uploads land in. An empty value clears the preference, which puts uploads in the root of the Drive.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async setGoogleDriveFolder(@Auth() auth: AuthDto, @Body() dto: GoogleDriveSetFolderDto): Promise<void> {
+    await this.googleDriveService.setFolderId(auth.user.id, dto.folderId, dto.folderName);
   }
 
   /**
@@ -172,10 +212,37 @@ export class GoogleDriveController {
    * already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method
    * just authenticates the caller and forwards the album id.
    */
+  /**
+   * Feeds the browser-side Google folder picker. Separate from `status` on purpose: `status` is
+   * fetched on every settings-page render, and minting an OAuth access token on each of those would
+   * mean a needless round trip to Google every time someone opens their settings. This is only
+   * called at the moment the user actually clicks "choose a folder".
+   *
+   * Returns a live (if short-lived) Drive access token, so it is authenticated and per-user like
+   * everything else here — see GoogleDrivePickerConfigResponseDto for what that token can and
+   * cannot do.
+   */
+  @Get('picker-config')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Get configuration for the Google Drive folder picker',
+    description:
+      'Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDrivePickerConfig(@Auth() auth: AuthDto): Promise<GoogleDrivePickerConfigResponseDto> {
+    return this.googleDriveService.getPickerConfig(auth.user.id);
+  }
+
   @Post('albums/:id/sync')
   @Authenticated()
-  @ApiOperation({ summary: "Sync an album to the owner's Google Drive" })
-  async syncAlbum(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
+  @Endpoint({
+    summary: "Sync an album to the owner's Google Drive",
+    description:
+      'Queue every not-yet-uploaded asset in the album for upload. Only the album owner may call this, and assets already recorded in the upload ledger are skipped rather than duplicated.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async syncAlbumToGoogleDrive(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
     await this.googleDriveService.syncAlbum(auth, id);
   }
 
@@ -189,8 +256,13 @@ export class GoogleDriveController {
    */
   @Delete('link')
   @Authenticated()
-  @ApiOperation({ summary: 'Disconnect the Google Drive account' })
-  async disconnect(@Auth() auth: AuthDto): Promise<void> {
+  @Endpoint({
+    summary: 'Disconnect the Google Drive account',
+    description:
+      'Discard the stored Google credentials for this user. Files already in their Drive are left alone, and the upload ledger is kept so that reconnecting later does not re-upload everything as duplicates.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async disconnectGoogleDrive(@Auth() auth: AuthDto): Promise<void> {
     await this.googleDriveService.disconnect(auth.user.id);
   }
 }

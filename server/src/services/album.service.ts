@@ -14,11 +14,12 @@ import {
 import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { MapMarkerResponseDto } from 'src/dtos/map.dto';
-import { AlbumUserRole, JobName, Permission } from 'src/enum';
+import { AlbumUserRole, Permission } from 'src/enum';
 import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository';
 import { BaseService } from 'src/services/base.service';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
 import { asDateTimeString } from 'src/utils/date';
+import { queueGoogleDriveUploads } from 'src/utils/google-drive';
 import { getPreferences } from 'src/utils/preferences';
 
 @Injectable()
@@ -206,7 +207,8 @@ export class AlbumService extends BaseService {
     // AlbumUpdate event unsent — so shared-album members never learned about the new photos. With
     // the queueing last, that failure costs only the Drive upload, which the admin backfill job
     // can pick up later anyway.
-    await this.queueGoogleDriveUploads(
+    await queueGoogleDriveUploads(
+      { googleDrive: this.googleDriveRepository, job: this.jobRepository },
       this.getAlbumOwnerId(album),
       results.filter((r) => r.success).map((r) => r.id),
     );
@@ -297,7 +299,9 @@ export class AlbumService extends BaseService {
     // Redis outage must not cost shared-album members their update notifications. One queueAll per
     // distinct owner, batching that owner's pending assets together.
     for (const [ownerId, assetIds] of pendingUploadsByOwner) {
-      await this.queueGoogleDriveUploads(ownerId, [...assetIds]);
+      await queueGoogleDriveUploads({ googleDrive: this.googleDriveRepository, job: this.jobRepository }, ownerId, [
+        ...assetIds,
+      ]);
     }
 
     return results;
@@ -318,36 +322,6 @@ export class AlbumService extends BaseService {
       throw new BadRequestException('Album has no owner');
     }
     return owner.user.id;
-  }
-
-  /**
-   * Shared helper for both addAssets() and addAssetsToAlbums() above: given a set of assets that
-   * just got added to some album(s) owned by `ownerId`, queue a background GoogleDriveUpload job
-   * for each one that hasn't already been uploaded before.
-   *
-   * The dedup check against the ledger (via googleDriveRepository.getUploadedAssetIds) happens
-   * here, *before* anything is queued — this keeps the job queue itself lean by never enqueuing
-   * jobs we already know are no-ops, rather than relying solely on the job handler
-   * (GoogleDriveService#uploadAsset) to discover that at execution time.
-   *
-   * Uses jobRepository.queueAll() (a single bulk insert) instead of calling queue() in a loop, so
-   * adding hundreds/thousands of photos to an album doesn't turn into that many individual round
-   * trips to the job queue's backing store.
-   */
-  private async queueGoogleDriveUploads(ownerId: string, assetIds: string[]): Promise<void> {
-    if (assetIds.length === 0) {
-      return;
-    }
-
-    const alreadyUploaded = await this.googleDriveRepository.getUploadedAssetIds(ownerId, assetIds);
-    const pending = assetIds.filter((assetId) => !alreadyUploaded.has(assetId));
-    if (pending.length === 0) {
-      return;
-    }
-
-    await this.jobRepository.queueAll(
-      pending.map((assetId) => ({ name: JobName.GoogleDriveUpload, data: { userId: ownerId, assetId } })),
-    );
   }
 
   async removeAssets(auth: AuthDto, id: string, dto: BulkIdsDto): Promise<BulkIdResponseDto[]> {

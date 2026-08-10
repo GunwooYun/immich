@@ -6,6 +6,7 @@ import { AuthDto } from 'src/dtos/auth.dto';
 import { AlbumUserRole, JobName, JobStatus, Permission, QueueName, SystemMetadataKey } from 'src/enum';
 import { BaseService } from 'src/services/base.service';
 import { JobItem } from 'src/types';
+import { queueGoogleDriveUploads } from 'src/utils/google-drive';
 import { mimeTypes } from 'src/utils/mime-types';
 import { isGoogleDriveEnabled } from 'src/utils/misc';
 
@@ -335,9 +336,19 @@ export class GoogleDriveService extends BaseService {
    * Rejects if the user hasn't connected Google Drive: there'd be no credentials row to attach the
    * folder to, so the setting would silently evaporate and the user would have no idea why their
    * photos kept landing somewhere else.
+   *
+   * `folderName` is optional because there are two ways to get here. The Google Picker knows the
+   * folder's name and sends it along, so the settings page can show "Photos". Pasting a folder id
+   * by hand doesn't — and we deliberately don't go and look it up, because that would turn saving a
+   * preference into a Drive API call that can fail on its own. An empty `folderId` clears both,
+   * which is what stops a stale name from outliving the folder it described.
    */
-  async setFolderId(userId: string, folderId: string): Promise<void> {
-    const updated = await this.googleDriveRepository.setFolderId(userId, folderId || null);
+  async setFolderId(userId: string, folderId: string, folderName?: string): Promise<void> {
+    const updated = await this.googleDriveRepository.setFolderId(
+      userId,
+      folderId || null,
+      (folderId && folderName) || null,
+    );
     if (updated === 0) {
       throw new BadRequestException('Google Drive is not connected for this user');
     }
@@ -351,17 +362,75 @@ export class GoogleDriveService extends BaseService {
    * whole point of moving credentials into their own table was to stop the token travelling further
    * than it needs to.
    */
-  async getStatus(userId: string): Promise<{ connected: boolean; folderId: string | null; connectedAt: Date | null }> {
+  async getStatus(userId: string): Promise<{
+    connected: boolean;
+    folderId: string | null;
+    folderName: string | null;
+    connectedAt: Date | null;
+  }> {
     const credentials = await this.googleDriveRepository.getCredentials(userId);
     if (!credentials) {
-      return { connected: false, folderId: null, connectedAt: null };
+      return { connected: false, folderId: null, folderName: null, connectedAt: null };
     }
 
     return {
       connected: true,
       folderId: credentials.folderId,
+      folderName: credentials.folderName,
       connectedAt: credentials.connectedAt,
     };
+  }
+
+  /**
+   * Hands the browser the three things Google's folder picker needs: a short-lived access token,
+   * the OAuth client id, and the Google API key.
+   *
+   * Why this endpoint has to exist at all: the Picker is a Google-hosted widget that runs in the
+   * user's browser. It authenticates by being *given* an access token — there is no way to have it
+   * call back into Immich for one. So the alternative to this endpoint would be running a second,
+   * browser-side OAuth flow purely for the picker, which means a second consent screen for the same
+   * account the user just linked. This keeps the refresh token where it belongs (the database,
+   * never sent to a browser) and mints a token with a lifetime measured in the tens of minutes.
+   *
+   * `getAccessToken()` refreshes against Google using the stored refresh token. Note it can return
+   * `{ token: null }` without throwing — that's not an error path googleapis models as an
+   * exception — so the null case is checked explicitly rather than assumed away.
+   *
+   * The `invalid_grant` case gets its own message because it's the one users actually hit: it means
+   * the refresh token is dead (revoked in the Google account's security settings, or expired after
+   * a long idle period on an unverified OAuth client), and the only fix is to reconnect. Reporting
+   * that as a generic failure would send people hunting for problems on the Immich side.
+   */
+  async getPickerConfig(userId: string): Promise<{ accessToken: string; clientId: string; apiKey: string }> {
+    const { googleDrive } = await this.getConfig({ withCache: true });
+    if (!googleDrive.apiKey) {
+      throw new BadRequestException('The Google Drive folder picker requires an API key to be configured');
+    }
+
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
+      throw new BadRequestException('Google Drive is not connected');
+    }
+
+    const oauth2Client = await this.getOAuth2Client();
+    oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
+
+    let accessToken: string | null | undefined;
+    try {
+      ({ token: accessToken } = await oauth2Client.getAccessToken());
+    } catch (error) {
+      if (this.isInvalidGrant(error)) {
+        this.logger.warn(`Google Drive access for user ${userId} was revoked; they need to reconnect`);
+        throw new BadRequestException('Google Drive access was revoked. Please reconnect your account.');
+      }
+      throw error;
+    }
+
+    if (!accessToken) {
+      throw new BadRequestException('Could not obtain a Google Drive access token');
+    }
+
+    return { accessToken, clientId: googleDrive.clientId, apiKey: googleDrive.apiKey };
   }
 
   /**
@@ -436,8 +505,7 @@ export class GoogleDriveService extends BaseService {
 
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive.
-    const alreadyUploaded = await this.googleDriveRepository.getUploadedAssetIds(userId, [assetId]);
-    if (alreadyUploaded.has(assetId)) {
+    if (await this.googleDriveRepository.hasUpload(userId, assetId)) {
       return 'skipped';
     }
 
@@ -637,23 +705,13 @@ export class GoogleDriveService extends BaseService {
       return; // Empty album — nothing to sync.
     }
 
-    // Skip assets that are already sitting in the owner's Drive from a previous sync (either
-    // automatic, on add-to-album, or an earlier manual sync). This keeps repeated clicks of the
-    // "sync" button cheap and avoids creating duplicate files.
-    const alreadyUploaded = await this.googleDriveRepository.getUploadedAssetIds(ownerId, assetIds);
-    const pending = assetIds.filter((assetId) => !alreadyUploaded.has(assetId));
-    if (pending.length === 0) {
-      return; // Everything in this album is already synced.
-    }
-
-    // queueAll (rather than calling queue() once per asset) batches all these jobs into a single
-    // bulk insert into the job queue, which matters a lot for large albums (hundreds/thousands
-    // of assets) — one round trip instead of one per asset.
-    await this.jobRepository.queueAll(
-      pending.map((assetId) => ({
-        name: JobName.GoogleDriveUpload,
-        data: { userId: ownerId, assetId },
-      })),
+    // Shared with AlbumService's automatic add-to-album path: skip anything already in the owner's
+    // ledger, then bulk-enqueue the rest. Repeated clicks of the "sync" button are therefore cheap
+    // and never produce duplicate Drive files. See utils/google-drive.ts for the reasoning.
+    await queueGoogleDriveUploads(
+      { googleDrive: this.googleDriveRepository, job: this.jobRepository },
+      ownerId,
+      assetIds,
     );
   }
 

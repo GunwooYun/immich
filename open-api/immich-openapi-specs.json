@@ -6282,7 +6282,8 @@
     },
     "/google-drive/albums/{id}/sync": {
       "post": {
-        "operationId": "syncAlbum",
+        "description": "Queue every not-yet-uploaded asset in the album for upload. Only the album owner may call this, and assets already recorded in the upload ledger are skipped rather than duplicated.",
+        "operationId": "syncAlbumToGoogleDrive",
         "parameters": [
           {
             "name": "id",
@@ -6314,12 +6315,24 @@
         "summary": "Sync an album to the owner's Google Drive",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/google-drive/auth-url": {
       "get": {
-        "operationId": "getAuthUrl",
+        "description": "Return the Google consent-screen URL the browser should navigate to. Also sets a short-lived HttpOnly cookie holding the OAuth `state`, which the callback requires in order to prove the browser finishing the flow is the one that started it.",
+        "operationId": "getGoogleDriveAuthUrl",
         "parameters": [],
         "responses": {
           "200": {
@@ -6344,15 +6357,27 @@
             "api_key": []
           }
         ],
-        "summary": "Get Google Drive OAuth URL",
+        "summary": "Called by the frontend when the user clicks \"Connect Google Drive\" in Settings.\nRequires an authenticated Immich session (@Authenticated()) because we need to know which\nImmich user is asking, so we can embed their userId into the signed `state` token that\nGoogle will hand back to us in the callback below.\n\nThe frontend simply navigates the browser to the returned `url` — from that point on, the\nuser is interacting with Google's own consent screen, not Immich.",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/google-drive/callback": {
       "get": {
-        "operationId": "handleCallback",
+        "description": "Redirect target for Google after the user approves or declines consent. Exchanges the authorization code for a refresh token and always responds with a 302 back into the Immich settings page — never JSON, so this is not meaningfully callable from an SDK.",
+        "operationId": "handleGoogleDriveCallback",
         "parameters": [
           {
             "name": "code",
@@ -6395,15 +6420,27 @@
             "api_key": []
           }
         ],
-        "summary": "OAuth callback for Google Drive linking",
+        "summary": "Reached via browser redirect from Google once the user approves (or declines).\n\nThis route now requires an authenticated session, and the flow is additionally bound to the\nbrowser through an HttpOnly cookie set by getAuthUrl. It used to be fully public, trusting the\nsigned `state` alone — see GoogleDriveService#handleCallback for the account-takeover that\nmade possible, and why signing by itself was not enough.\n\nRequiring auth here is safe because Google's redirect is a top-level GET navigation, which\nSameSite=Lax cookies (Immich's default, see utils/response.ts) are sent on. It also matches\nImmich's own OIDC link endpoint, which is `@Authenticated()`.\n\nWe always respond with a redirect back into the Immich web app's settings page, with a\n`google-drive` query flag so the frontend can show a \"connected!\" or \"something went wrong\"\ntoast to the user — whether things succeeded or failed, the user ends up looking at a normal\nImmich page rather than a raw JSON error or a blank screen.\n\nThe `isOpen=google-drive-sync` part is load-bearing, not cosmetic: settings sections are\naccordions that only render their contents while expanded (see SettingAccordion.svelte's\n`{#if isOpen}`), and expansion is driven by that query parameter. Without it the Google Drive\npanel stays collapsed, never mounts, and so never reads the `google-drive` flag — meaning the\nuser would land on a settings page with no indication whatsoever of whether linking worked.",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/google-drive/folder": {
       "post": {
-        "operationId": "setFolderId",
+        "description": "Choose which Drive folder subsequent uploads land in. An empty value clears the preference, which puts uploads in the root of the Drive.",
+        "operationId": "setGoogleDriveFolder",
         "parameters": [],
         "requestBody": {
           "content": {
@@ -6431,15 +6468,27 @@
             "api_key": []
           }
         ],
-        "summary": "Set target Google Drive folder ID",
+        "summary": "Lets a connected user choose which Google Drive folder new uploads should go into. This is a\nsimple \"set and forget\" preference — see GoogleDriveSettings.svelte on the frontend for the\n(currently very basic) folder-ID text input that calls this.",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/google-drive/link": {
       "delete": {
-        "operationId": "disconnect",
+        "description": "Discard the stored Google credentials for this user. Files already in their Drive are left alone, and the upload ledger is kept so that reconnecting later does not re-upload everything as duplicates.",
+        "operationId": "disconnectGoogleDrive",
         "parameters": [],
         "responses": {
           "200": {
@@ -6457,15 +6506,72 @@
             "api_key": []
           }
         ],
-        "summary": "Disconnect the Google Drive account",
+        "summary": "\"Disconnect\" button in settings — discards the stored Google credentials for this user.\n\nDoes not touch anything already uploaded to their Drive (this is a one-way sync; deleting the\nuser's own cloud files because they unlinked an integration would be a destructive surprise),\nand keeps the upload ledger so that reconnecting later doesn't re-upload everything as\nduplicates.",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/google-drive/picker-config": {
+      "get": {
+        "description": "Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.",
+        "operationId": "getGoogleDrivePickerConfig",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDrivePickerConfigResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an\nalbum's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was\nconnected, or an earlier automatic upload failed).\n\nNote there's no request body here beyond the `:id` in the URL — unlike the old prototype\nversion of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the\nURL path parameter means normal Immich route-level access checks and Swagger typing apply,\nand it matches the REST convention used by the rest of the album-related endpoints\n(`/albums/:id/...`).\n\nAll the actual permission enforcement (must the caller be the album owner? has this asset\nalready been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method\njust authenticates the caller and forwards the album id.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/google-drive/status": {
       "get": {
-        "operationId": "getStatus",
+        "description": "Report whether the authenticated user has linked a Google Drive account, when they linked it, and which target folder they selected. Never includes the refresh token.",
+        "operationId": "getGoogleDriveStatus",
         "parameters": [],
         "responses": {
           "200": {
@@ -6490,10 +6596,21 @@
             "api_key": []
           }
         ],
-        "summary": "Get the current Google Drive connection status",
+        "summary": "Tells the settings page whether this user has Google Drive connected, and if so which folder\nthey picked and when they linked it. Without this the settings form had no way to show current\nstate — it always rendered as if nobody was connected and with an empty folder field.\n\nNever includes the refresh token; the frontend has no use for it.",
         "tags": [
           "Google Drive"
-        ]
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
       }
     },
     "/jobs": {
@@ -16506,6 +16623,10 @@
       "description": "A face is a detected human face within an asset, which can be associated with a person. Faces are normally detected via machine learning, but can also be created manually."
     },
     {
+      "name": "Google Drive",
+      "description": "Endpoints for linking a personal Google Drive account and mirroring album assets into it. Each user links their own account; uploads go to the album owner's Drive and are recorded so nothing is uploaded twice."
+    },
+    {
       "name": "Integrity (admin)",
       "description": "Endpoints for viewing and managing integrity reports."
     },
@@ -19383,10 +19504,36 @@
         ],
         "type": "object"
       },
+      "GoogleDrivePickerConfigResponseDto": {
+        "properties": {
+          "accessToken": {
+            "description": "Short-lived OAuth access token for the Picker to use",
+            "type": "string"
+          },
+          "apiKey": {
+            "description": "Google API key (developer key) the Picker requires",
+            "type": "string"
+          },
+          "clientId": {
+            "description": "Google OAuth client id the Picker should identify as",
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken",
+          "apiKey",
+          "clientId"
+        ],
+        "type": "object"
+      },
       "GoogleDriveSetFolderDto": {
         "properties": {
           "folderId": {
             "description": "Drive folder id to upload into; empty string clears the setting",
+            "type": "string"
+          },
+          "folderName": {
+            "description": "Display name of the folder, if known",
             "type": "string"
           }
         },
@@ -19413,12 +19560,18 @@
             "description": "The configured upload destination folder, if any",
             "nullable": true,
             "type": "string"
+          },
+          "folderName": {
+            "description": "Display name of that folder, if it was chosen via the picker",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
           "connected",
           "connectedAt",
-          "folderId"
+          "folderId",
+          "folderName"
         ],
         "type": "object"
       },
@@ -26176,6 +26329,10 @@
       },
       "SystemConfigGoogleDriveDto": {
         "properties": {
+          "apiKey": {
+            "description": "Google API key, required only for the Drive folder picker",
+            "type": "string"
+          },
           "clientId": {
             "description": "Google OAuth client ID",
             "type": "string"
@@ -26194,6 +26351,7 @@
           }
         },
         "required": [
+          "apiKey",
           "clientId",
           "clientSecret",
           "enabled",

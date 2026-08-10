@@ -237,6 +237,11 @@ const SystemConfigGoogleDriveSchema = z
         error: 'Redirect URL must be an empty string or a valid URL',
       })
       .describe('OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback'),
+    // Only used by the browser-side Google Picker (the "choose a folder" dialog). It is a Google
+    // Cloud *API key*, not an OAuth secret: Picker refuses to open without one, and it grants
+    // nothing on its own — the actual Drive access still comes from the per-user OAuth token.
+    // Leave it empty to hide the picker button and fall back to pasting a folder ID by hand.
+    apiKey: z.string().describe('Google API key, required only for the Drive folder picker'),
   })
   .meta({ id: 'SystemConfigGoogleDriveDto' });
 

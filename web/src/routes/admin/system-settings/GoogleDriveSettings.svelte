@@ -49,6 +49,19 @@
           isEdited={configToEdit.googleDrive.redirectUrl !== config.googleDrive.redirectUrl}
           {disabled}
         />
+        <!-- Optional, unlike the three above: without it everything still syncs, users just have to
+             paste a folder id by hand instead of getting a folder picker. Kept as a TEXT (not
+             PASSWORD) field because a Google API key is not a secret — it's sent to the browser and
+             visible in the picker's own network requests; restrict it by HTTP referrer in Google
+             Cloud Console rather than by hiding it. -->
+        <SettingInputField
+          inputType={SettingInputFieldType.TEXT}
+          label={$t('admin.google_drive_api_key')}
+          description={$t('admin.google_drive_api_key_description')}
+          bind:value={configToEdit.googleDrive.apiKey}
+          isEdited={configToEdit.googleDrive.apiKey !== config.googleDrive.apiKey}
+          {disabled}
+        />
         <SettingButtonsRow bind:configToEdit keys={['googleDrive']} {disabled} />
       </div>
     </form>

@@ -8,6 +8,22 @@ import { getForAlbum } from 'test/mappers';
 import { newUuid } from 'test/small.factory';
 import { newTestService, ServiceMocks } from 'test/utils';
 
+/**
+ * A fully configured, switched-on Google Drive system config.
+ *
+ * The default config has the feature *off*, which is the right default for the product but a trap
+ * in tests: every path in this service checks `isEnabled()` first, so a test that forgets to stub
+ * the config gets 'skipped' back for the wrong reason and passes while proving nothing. Tests that
+ * care about behaviour past that first gate stub this in explicitly.
+ */
+const enabledConfig = {
+  enabled: true,
+  clientId: 'client-id',
+  clientSecret: 'client-secret',
+  redirectUrl: 'http://localhost:2283/api/google-drive/callback',
+  apiKey: '',
+};
+
 describe(GoogleDriveService.name, () => {
   let sut: GoogleDriveService;
   let mocks: ServiceMocks;
@@ -25,8 +41,17 @@ describe(GoogleDriveService.name, () => {
     // background job that fires on *every* add-to-album, for every user — throwing here instead of
     // skipping would bury the job queue in permanent failures for the majority of users who have
     // never connected Google Drive at all.
+    it('should skip when the feature is disabled', async () => {
+      // The default config has it off, so no stubbing needed here — this is the state a job queued
+      // before an admin switched the feature off would run in.
+      await expect(sut.uploadAsset(newUuid(), newUuid())).resolves.toBe('skipped');
+
+      expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
+    });
+
     it('should skip when the user has not connected Google Drive', async () => {
       const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
       mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
 
       await expect(sut.uploadAsset(userId, newUuid())).resolves.toBe('skipped');
@@ -39,16 +64,22 @@ describe(GoogleDriveService.name, () => {
     it('should skip an asset that is already in the upload ledger', async () => {
       const userId = newUuid();
       const assetId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
         folderId: null,
+        folderName: null,
         connectedAt: new Date(),
       });
-      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([assetId]));
+      mocks.googleDrive.hasUpload.mockResolvedValue(true);
 
       await expect(sut.uploadAsset(userId, assetId)).resolves.toBe('skipped');
 
+      expect(mocks.googleDrive.hasUpload).toHaveBeenCalledWith(userId, assetId);
+      // Bailing out before the asset row is loaded is what makes this cheap — asserting it also
+      // stops this test from passing for the wrong reason, since an automocked getById returns
+      // undefined and would produce a 'skipped' result all on its own.
       expect(mocks.asset.getById).not.toHaveBeenCalled();
       expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
     });
@@ -81,7 +112,17 @@ describe(GoogleDriveService.name, () => {
 
       await expect(sut.setFolderId(userId, 'folder-id')).resolves.toBeUndefined();
 
-      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id');
+      // No name passed: the manual paste-an-id path genuinely doesn't know one.
+      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id', null);
+    });
+
+    it('should save the folder name when the picker supplies one', async () => {
+      const userId = newUuid();
+      mocks.googleDrive.setFolderId.mockResolvedValue(1);
+
+      await sut.setFolderId(userId, 'folder-id', 'Holiday photos');
+
+      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id', 'Holiday photos');
     });
 
     it('should translate a blank folder into null', async () => {
@@ -90,7 +131,38 @@ describe(GoogleDriveService.name, () => {
 
       await sut.setFolderId(userId, '');
 
-      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, null);
+      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, null, null);
+    });
+
+    it('should not keep a folder name when the folder itself is cleared', async () => {
+      // Otherwise clearing the destination would leave the settings page confidently naming a
+      // folder that nothing is being uploaded to any more.
+      const userId = newUuid();
+      mocks.googleDrive.setFolderId.mockResolvedValue(1);
+
+      await sut.setFolderId(userId, '', 'Holiday photos');
+
+      expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, null, null);
+    });
+  });
+
+  describe('getPickerConfig', () => {
+    // This endpoint hands a live Drive access token to the browser, so the guards in front of it
+    // matter more than usual — each of these is a case where it must refuse rather than mint one.
+    it('should reject when no API key is configured', async () => {
+      // Without a developer key the Picker cannot open at all, so producing a token would be
+      // handing out credentials for a dialog that is guaranteed to fail.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+
+      await expect(sut.getPickerConfig(newUuid())).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
+    });
+
+    it('should reject when the user has not connected Google Drive', async () => {
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, apiKey: 'api-key' } });
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+
+      await expect(sut.getPickerConfig(newUuid())).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -101,6 +173,7 @@ describe(GoogleDriveService.name, () => {
       await expect(sut.getStatus(newUuid())).resolves.toEqual({
         connected: false,
         folderId: null,
+        folderName: null,
         connectedAt: null,
       });
     });
@@ -112,12 +185,13 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'super-secret-refresh-token',
         folderId: 'folder-id',
+        folderName: 'Folder name',
         connectedAt,
       });
 
       const status = await sut.getStatus(userId);
 
-      expect(status).toEqual({ connected: true, folderId: 'folder-id', connectedAt });
+      expect(status).toEqual({ connected: true, folderId: 'folder-id', folderName: 'Folder name', connectedAt });
       // Guard against someone later "simplifying" this into a spread of the credentials row.
       expect(JSON.stringify(status)).not.toContain('super-secret-refresh-token');
     });

@@ -123,6 +123,7 @@ export type SystemConfig = {
     clientId: string;
     clientSecret: string;
     redirectUrl: string;
+    apiKey: string;
   };
   oauth: {
     autoLaunch: boolean;
@@ -347,6 +348,7 @@ export const defaults = Object.freeze<SystemConfig>({
     clientId: '',
     clientSecret: '',
     redirectUrl: '',
+    apiKey: '',
   },
   oauth: {
     autoLaunch: false,
