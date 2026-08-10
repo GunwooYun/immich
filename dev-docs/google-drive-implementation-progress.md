@@ -172,22 +172,44 @@ Dev Container specifics worth knowing next time:
   container image has neither `ss` nor `netstat`, so "is it listening?" must be checked with `curl`
   from inside the container rather than by reading a socket table.
 
-## 2. Not started
+## 2. P3 — completed
 
-### P3 — robustness
-- `handleGoogleDriveUploadQueueAll` (the admin "start"/"force" button for this job queue) is still a
-  logging-only placeholder.
-- No `invalid_grant` handling (user revokes Immich's access from Google's side) — no path to detect
-  this and prompt the user to reconnect.
-- No resumable upload support or Drive API rate-limit backoff — relevant once real (especially video)
-  file sizes are involved.
-- The ledger check happens *before* queueing (in `album.service.ts` / `syncAlbum`) and again inside
-  `uploadAsset`, but there's no `jobId`-based dedup at the BullMQ level — two jobs racing for the same
-  `(userId, assetId)` could both pass the ledger check before either records its upload, producing a
-  duplicate file. Low probability, not addressed yet.
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` still fall back to placeholder
-  strings (`'YOUR_CLIENT_ID'`, etc.) read from `process.env`, rather than being admin-configurable via
-  system config with a loud failure on misconfiguration.
+Every item that was listed here as "not started" has since been implemented. Recorded with what
+changed, so a future reader can tell these apart from the ones that were merely planned.
+
+- **`handleGoogleDriveUploadQueueAll` is real.** It streams every (owner, asset) pair that belongs
+  to an album whose owner has linked Drive and has no ledger row yet, batching them into the queue.
+  There is deliberately no `force` variant — see `streamPendingUploads` for why one would be unable
+  to re-upload anything without also disabling the sole duplicate-safeguard.
+- **`invalid_grant` is handled.** A revoked or expired refresh token is detected (`isInvalidGrant`)
+  and turned into a skip plus a warning rather than an endlessly retrying job; the picker endpoint
+  turns it into a "reconnect your account" message.
+- **Resumable uploads and rate-limit backoff.** Uploads use `uploadType: 'resumable'` with a retry
+  policy covering 403/429/5xx, and the read stream is destroyed in a `finally` so a failed upload
+  cannot leak a file descriptor.
+- **BullMQ-level dedup.** `job.repository.ts` gives `GoogleDriveUpload` a `jobId` of
+  `${userId}/${assetId}`, so two jobs for the same pair collapse into one before either runs.
+- **Credentials moved to system config.** `googleDrive.{enabled,clientId,clientSecret,redirectUrl}`
+  are admin-editable, validated, and a missing value produces a message naming what to fix. The
+  `process.env.GOOGLE_*` fallback that briefly existed has been removed: those keys were never in
+  `EnvSchema`, and while they were honoured, clearing the client ID in the admin UI didn't actually
+  disable anything as long as the container still had them set.
+- **Folder selection via the Google Picker.** `GET /google-drive/picker-config` mints a short-lived
+  `drive.file` access token for the browser-side picker; `web/src/lib/utils/google-picker.ts` loads
+  Google's api.js lazily and opens the folder chooser. Requires a Google API key
+  (`googleDrive.apiKey`, optional); without one the picker button is inert and the manual
+  paste-a-folder-id field remains as the fallback. The chosen folder's name is cached in
+  `user_google_drive.folderName` so the settings page can show "Photos" rather than a raw id.
+
+## 2b. Deliberately not done
+
+- **Squashing the five migrations into one.** They have already been applied to real local
+  databases; a database that has a migration recorded in `kysely_migrations` never re-runs it, so
+  rewriting history here would leave those databases permanently short of the later changes.
+- **Auto-creating a dedicated "Immich" folder on link.** Considered and rejected in favour of the
+  picker, which lets the user put photos where they actually want them.
+- **Encrypting the refresh token at rest.** Requires an operator-managed key Immich doesn't have;
+  see the comment on `UserGoogleDriveTable` for the full trade-off.
 
 ## 3. How to Run the Current Progress
 To build and test the backend changes using the isolated environment:
