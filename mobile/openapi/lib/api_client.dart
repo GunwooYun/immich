@@ -97,9 +97,9 @@ class ApiClient {
       if (nullableHeaderParams != null) {
         request.headers.addAll(nullableHeaderParams);
       }
-      if (msgBody is String) {
+      if (msgBody is String && msgBody.isNotEmpty) {
         request.body = msgBody;
-      } else if (msgBody is List<int>) {
+      } else if (msgBody is List<int> && msgBody.isNotEmpty) {
         request.bodyBytes = msgBody;
       } else if (msgBody is Map<String, String>) {
         request.bodyFields = msgBody;
@@ -391,14 +391,6 @@ class ApiClient {
           return FoldersResponse.fromJson(value);
         case 'FoldersUpdate':
           return FoldersUpdate.fromJson(value);
-        case 'GoogleDriveAuthUrlResponseDto':
-          return GoogleDriveAuthUrlResponseDto.fromJson(value);
-        case 'GoogleDrivePickerConfigResponseDto':
-          return GoogleDrivePickerConfigResponseDto.fromJson(value);
-        case 'GoogleDriveSetFolderDto':
-          return GoogleDriveSetFolderDto.fromJson(value);
-        case 'GoogleDriveStatusResponseDto':
-          return GoogleDriveStatusResponseDto.fromJson(value);
         case 'HlsVideoResolution':
           return HlsVideoResolutionTypeTransformer().decode(value);
         case 'ImageFormat':
@@ -777,8 +769,6 @@ class ApiClient {
           return SystemConfigGeneratedFullsizeImageDto.fromJson(value);
         case 'SystemConfigGeneratedImageDto':
           return SystemConfigGeneratedImageDto.fromJson(value);
-        case 'SystemConfigGoogleDriveDto':
-          return SystemConfigGoogleDriveDto.fromJson(value);
         case 'SystemConfigImageDto':
           return SystemConfigImageDto.fromJson(value);
         case 'SystemConfigIntegrityChecks':

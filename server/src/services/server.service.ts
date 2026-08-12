@@ -78,7 +78,7 @@ export class ServerService extends BaseService {
     serverInfo.diskAvailableRaw = diskInfo.available;
     serverInfo.diskSizeRaw = diskInfo.total;
     serverInfo.diskUseRaw = diskInfo.total - diskInfo.free;
-    serverInfo.diskUsagePercentage = Number.parseFloat(usagePercentage);
+    serverInfo.diskUsagePercentage = Number(usagePercentage);
     return serverInfo;
   }
 
@@ -202,8 +202,12 @@ export class ServerService extends BaseService {
       throw new BadRequestException('Invalid license key');
     }
     const { licensePublicKey } = this.configRepository.getEnv();
-    const licenseValid = this.cryptoRepository.verifySha256(dto.licenseKey, dto.activationKey, licensePublicKey.server);
-    if (!licenseValid) {
+    const isLicenseValid = this.cryptoRepository.verifySha256(
+      dto.licenseKey,
+      dto.activationKey,
+      licensePublicKey.server,
+    );
+    if (!isLicenseValid) {
       throw new BadRequestException('Invalid license key');
     }
 

@@ -191,11 +191,9 @@ export class AlbumService extends BaseService {
         auth.user.id,
       );
 
-      const allUsersExceptUs = album.albumUsers.map(({ user }) => user.id).filter((userId) => userId !== auth.user.id);
-
-      for (const recipientId of allUsersExceptUs) {
-        await this.eventRepository.emit('AlbumUpdate', { id, recipientId });
-      }
+      const userIds = album.albumUsers.map(({ user }) => user.id);
+      const recipientIds = userIds.filter((userId) => userId !== auth.user.id);
+      await this.eventRepository.emit('AlbumUpdate', { id, userIds, recipientIds });
     }
 
     // Google Drive integration: mirror each newly added asset to the album *owner's* Drive (not
@@ -239,7 +237,7 @@ export class AlbumService extends BaseService {
     }
 
     const albumAssetValues: { albumId: string; assetId: string }[] = [];
-    const events: { id: string; recipients: string[] }[] = [];
+    const events: { id: string; userIds: string[]; recipientIds: string[] }[] = [];
     // Google Drive integration: this endpoint can add assets to *multiple* albums (possibly
     // owned by different people) in one call, so we can't just queue upload jobs as we go the
     // way addAssets() above does — different albums here can have different owners, and we want
@@ -250,7 +248,7 @@ export class AlbumService extends BaseService {
     const pendingUploadsByOwner = new Map<string, Set<string>>();
     for (const albumId of allowedAlbumIds) {
       const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...allowedAssetIds]);
-      const notPresentAssetIds = [...allowedAssetIds].filter((id) => !existingAssetIds.has(id));
+      const notPresentAssetIds = [...allowedAssetIds.difference(existingAssetIds)];
       if (notPresentAssetIds.length === 0) {
         continue;
       }
@@ -281,17 +279,16 @@ export class AlbumService extends BaseService {
         },
         auth.user.id,
       );
-      const allUsersExceptUs = album.albumUsers.map(({ user }) => user.id).filter((userId) => userId !== auth.user.id);
-      events.push({ id: albumId, recipients: allUsersExceptUs });
+      const userIds = album.albumUsers.map(({ user }) => user.id);
+      const recipientIds = userIds.filter((userId) => userId !== auth.user.id);
+      events.push({ id: albumId, userIds, recipientIds });
     }
 
     // Persist the actual album_asset rows for every album we touched, in one bulk write.
     await this.albumRepository.addAssetIdsToAlbums(albumAssetValues);
 
     for (const event of events) {
-      for (const recipientId of event.recipients) {
-        await this.eventRepository.emit('AlbumUpdate', { id: event.id, recipientId });
-      }
+      await this.eventRepository.emit('AlbumUpdate', event);
     }
 
     // Queued after both the album_asset write and the AlbumUpdate events, for the same reason as
@@ -335,8 +332,16 @@ export class AlbumService extends BaseService {
     );
 
     const removedIds = results.filter(({ success }) => success).map(({ id }) => id);
-    if (removedIds.length > 0 && album.albumThumbnailAssetId && removedIds.includes(album.albumThumbnailAssetId)) {
-      await this.albumRepository.updateThumbnails();
+    if (removedIds.length > 0) {
+      if (album.albumThumbnailAssetId && removedIds.includes(album.albumThumbnailAssetId)) {
+        await this.albumRepository.updateThumbnails();
+      }
+
+      await this.eventRepository.emit('AlbumUpdate', {
+        id,
+        userIds: album.albumUsers.map(({ user }) => user.id),
+        recipientIds: [],
+      });
     }
 
     return results;
@@ -352,7 +357,7 @@ export class AlbumService extends BaseService {
         throw new BadRequestException('Cannot add another owner');
       }
 
-      const exists = album.albumUsers.find(({ user: { id } }) => id === userId);
+      const exists = album.albumUsers.some(({ user: { id } }) => id === userId);
       if (exists) {
         continue;
       }
@@ -367,7 +372,7 @@ export class AlbumService extends BaseService {
       await this.eventRepository.emit('AlbumInvite', { id, userId, senderName: auth.user.name });
     }
 
-    return this.findOrFail(id, auth.user.id, { withAssets: true }).then(mapAlbum);
+    return mapAlbum(await this.findOrFail(id, auth.user.id, { withAssets: true }));
   }
 
   async removeUser(auth: AuthDto, id: string, userId: string | 'me'): Promise<void> {
