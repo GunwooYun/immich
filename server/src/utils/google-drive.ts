@@ -33,8 +33,13 @@ export const queueGoogleDriveUploads = async (
   repositories: { googleDrive: GoogleDriveRepository; job: JobRepository },
   ownerId: string,
   assetIds: string[],
+  enabled: boolean,
 ): Promise<void> => {
-  if (assetIds.length === 0) {
+  // `enabled` is passed in rather than read here because this is a plain function with no access
+  // to system config. Checking it *first* is the point: without it, every add-to-album on an
+  // instance that has never touched Google Drive still pays for a ledger lookup whose answer
+  // cannot change the outcome, since the worker would discard the jobs anyway.
+  if (!enabled || assetIds.length === 0) {
     return;
   }
 

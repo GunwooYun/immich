@@ -272,7 +272,22 @@ export class JobRepository {
         // sync racing the automatic queueing from add-to-album) can both pass the check and both
         // create a file. The user ends up with two copies in Drive and the ledger only remembers
         // the second one, leaving the first orphaned and untracked forever.
-        return { jobId: `${item.data.userId}/${item.data.assetId}` };
+        //
+        // `removeOnFail` overrides the global default (`removeOnFail: false`, see
+        // config.repository.ts) and is load-bearing rather than cosmetic. BullMQ refuses to enqueue
+        // a job whose id already exists *in any state*, and a retained failed job counts. Combined
+        // with the jobId above, one genuine failure — a full Drive, a destination folder deleted
+        // out from under us, an unreadable file — would poison that (user, asset) pair forever:
+        // re-adding the asset to an album, pressing "Sync album", and the admin "queue all"
+        // backfill all compute the same id and are handed back the dead job instead of running.
+        // Nothing would retry until an operator manually cleared failed jobs, which quietly breaks
+        // the recovery story the whole design leans on.
+        //
+        // Dropping failed jobs does cost the failure count in the admin Jobs panel. That's an
+        // acceptable trade: every failure is already logged server-side with the asset id, and a
+        // persistent problem resurfaces on the next backfill rather than sitting silently
+        // un-retryable.
+        return { jobId: `${item.data.userId}/${item.data.assetId}`, removeOnFail: true };
       }
       case JobName.PersonGenerateThumbnail: {
         return { priority: 1 };

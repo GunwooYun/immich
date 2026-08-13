@@ -543,10 +543,26 @@ export class GoogleDriveService extends BaseService {
     // important for large video files. We also look up a MIME type from the filename extension
     // (Immich doesn't store MIME type directly on the asset row) so that Drive can show a proper
     // preview/thumbnail for the uploaded file instead of treating it as a generic binary blob.
-    const streamInfo = await this.storageRepository.createReadStream(
-      asset.originalPath,
-      mimeTypes.lookup(asset.originalFileName),
-    );
+    //
+    // Opening it can fail even though the asset row looked healthy a moment ago. The row is not
+    // proof the bytes are still on disk: the file may have been removed out from under Immich by a
+    // failed storage-template migration, a half-restored backup, or an operator tidying up by
+    // hand. `createReadStream` stats the file first, so that surfaces as an ENOENT throw. Treated
+    // as a skip rather than a failure, for the same reason the deleted-asset cases above are — the
+    // file is not coming back on a retry, and a failed job would hold this asset's dedup id (see
+    // job.repository.ts) and keep the pair from being retried if the file is later restored.
+    let streamInfo;
+    try {
+      streamInfo = await this.storageRepository.createReadStream(
+        asset.originalPath,
+        mimeTypes.lookup(asset.originalFileName),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Skipping Google Drive upload for asset ${assetId}: could not read ${asset.originalPath} (${error})`,
+      );
+      return 'skipped';
+    }
 
     // If the user configured a target folder (via setFolderId above), upload into it. Otherwise
     // the file lands in the root of "My Drive".
@@ -566,7 +582,9 @@ export class GoogleDriveService extends BaseService {
         {
           requestBody: fileMetadata,
           media,
-          fields: 'id', // We only need the new file's Drive-assigned id back, to record it in our upload ledger.
+          // `id` goes in the ledger; `size` is what lets us prove the upload actually arrived
+          // intact before we record it as done — see the check below.
+          fields: 'id,size',
           // Resumable rather than the default simple/multipart upload. Google caps simple uploads
           // at 5 MB, which plenty of photos and essentially every video exceed; resumable also lets
           // the transfer survive a mid-flight network blip instead of restarting from zero.
@@ -596,6 +614,37 @@ export class GoogleDriveService extends BaseService {
           },
         },
       );
+
+      // Before trusting the 200, check Drive stored as many bytes as we sent.
+      //
+      // The retry policy above is the reason this matters. `media.body` is a live fs.ReadStream,
+      // opened once, and a stream that has already been partially consumed cannot rewind. If a
+      // retry re-sends a body that is mid-flight, Drive can answer 200 for a file that is short or
+      // empty. That failure is uniquely nasty here: the ledger would record the asset as uploaded,
+      // every later run would skip it, and the user would be left with a truncated photo in Drive
+      // and no indication anything went wrong — the ledger's entire purpose defeated by a silent
+      // success. Comparing sizes converts it into an ordinary loud failure.
+      //
+      // Drive returns `size` as a string, and omits it for Google-native document types — which we
+      // never create, since every upload here is a photo or video with real bytes. A missing size
+      // is therefore treated as unverifiable rather than assumed fine.
+      const uploadedSize = data.size === null || data.size === undefined ? undefined : Number(data.size);
+      if (uploadedSize !== streamInfo.length) {
+        // Clean up the partial file rather than leaving an orphan the user has to find. It's
+        // unambiguously ours — we have its id from the response — but a failure to delete must not
+        // mask the real error, hence the inner catch.
+        if (data.id) {
+          try {
+            await drive.files.delete({ fileId: data.id });
+          } catch (deleteError) {
+            this.logger.warn(`Could not remove the incomplete Drive file for asset ${assetId}: ${deleteError}`);
+          }
+        }
+
+        throw new Error(
+          `Google Drive stored ${uploadedSize ?? 'an unknown number of'} bytes for asset ${assetId}, expected ${streamInfo.length}`,
+        );
+      }
 
       // Record this upload in our ledger table so future calls to uploadAsset() for the same
       // (userId, assetId) pair know to skip instead of re-uploading (see step 2 above).
@@ -675,6 +724,16 @@ export class GoogleDriveService extends BaseService {
    *      uploads.
    */
   async syncAlbum(auth: AuthDto, albumId: string): Promise<void> {
+    // Refuse up front when the feature is switched off or half-configured, rather than cheerfully
+    // enqueuing work the worker will silently discard. This is an interactive, user-initiated
+    // action: pressing "Sync to Google Drive" and getting a success toast for jobs that can never
+    // run is worse than being told why it can't happen. The background paths deliberately do the
+    // opposite and skip in silence — a queued job for a since-disabled feature is not the user's
+    // problem to see.
+    if (!(await this.isEnabled())) {
+      throw new BadRequestException('Google Drive sync is not enabled on this server');
+    }
+
     // Basic read-access check: the caller must at least be able to see this album.
     await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [albumId] });
 
@@ -708,10 +767,13 @@ export class GoogleDriveService extends BaseService {
     // Shared with AlbumService's automatic add-to-album path: skip anything already in the owner's
     // ledger, then bulk-enqueue the rest. Repeated clicks of the "sync" button are therefore cheap
     // and never produce duplicate Drive files. See utils/google-drive.ts for the reasoning.
+    // `true` rather than another config read: this method already refused at the top if the
+    // feature was off, so re-deriving it here could only produce the same answer.
     await queueGoogleDriveUploads(
       { googleDrive: this.googleDriveRepository, job: this.jobRepository },
       ownerId,
       assetIds,
+      true,
     );
   }
 

@@ -20,6 +20,7 @@ import { BaseService } from 'src/services/base.service';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
 import { asDateTimeString } from 'src/utils/date';
 import { queueGoogleDriveUploads } from 'src/utils/google-drive';
+import { isGoogleDriveEnabled } from 'src/utils/misc';
 import { getPreferences } from 'src/utils/preferences';
 
 @Injectable()
@@ -209,6 +210,7 @@ export class AlbumService extends BaseService {
       { googleDrive: this.googleDriveRepository, job: this.jobRepository },
       this.getAlbumOwnerId(album),
       results.filter((r) => r.success).map((r) => r.id),
+      await this.isGoogleDriveEnabled(),
     );
 
     return results;
@@ -294,14 +296,32 @@ export class AlbumService extends BaseService {
     // Queued after both the album_asset write and the AlbumUpdate events, for the same reason as
     // addAssets above: queueAll depends on Redis, which this endpoint never used to need, so a
     // Redis outage must not cost shared-album members their update notifications. One queueAll per
-    // distinct owner, batching that owner's pending assets together.
+    // distinct owner, batching that owner's pending assets together. The enabled check is resolved
+    // once here rather than per owner — it's the same server-wide answer for every iteration.
+    const driveEnabled = await this.isGoogleDriveEnabled();
     for (const [ownerId, assetIds] of pendingUploadsByOwner) {
-      await queueGoogleDriveUploads({ googleDrive: this.googleDriveRepository, job: this.jobRepository }, ownerId, [
-        ...assetIds,
-      ]);
+      await queueGoogleDriveUploads(
+        { googleDrive: this.googleDriveRepository, job: this.jobRepository },
+        ownerId,
+        [...assetIds],
+        driveEnabled,
+      );
     }
 
     return results;
+  }
+
+  /**
+   * Whether Google Drive sync is switched on *and* fully configured, for the queueing calls above.
+   *
+   * Wrapped in a method rather than inlined at both call sites so the two can't drift apart, and
+   * so the condition stays the same one the upload worker applies (`isGoogleDriveEnabled`) — a
+   * different notion of "enabled" here would mean queueing work the worker discards, or skipping
+   * work it would have done.
+   */
+  private async isGoogleDriveEnabled(): Promise<boolean> {
+    const { googleDrive } = await this.getConfig({ withCache: true });
+    return isGoogleDriveEnabled(googleDrive);
   }
 
   /**

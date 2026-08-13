@@ -2,11 +2,38 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AlbumUserRole, JobName, JobStatus } from 'src/enum';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { AlbumFactory } from 'test/factories/album.factory';
+import { AssetFactory } from 'test/factories/asset.factory';
 import { AuthFactory } from 'test/factories/auth.factory';
 import { UserFactory } from 'test/factories/user.factory';
-import { getForAlbum } from 'test/mappers';
+import { getForAlbum, getForAsset } from 'test/mappers';
 import { newUuid } from 'test/small.factory';
 import { newTestService, ServiceMocks } from 'test/utils';
+
+/**
+ * Stand-in for the Google Drive API client.
+ *
+ * Mocked at the module level because the one behaviour worth testing here — refusing to record a
+ * truncated upload — only exists on the far side of a real network call. Everything else in this
+ * file bails out well before `drive.files.create` is reached, so nothing else is affected.
+ */
+const { driveFilesCreate, driveFilesDelete } = vi.hoisted(() => ({
+  driveFilesCreate: vi.fn(),
+  driveFilesDelete: vi.fn(),
+}));
+
+vi.mock('googleapis', () => ({
+  google: {
+    auth: {
+      OAuth2: class {
+        setCredentials() {}
+        getAccessToken() {
+          return { token: 'access-token' };
+        }
+      },
+    },
+    drive: () => ({ files: { create: driveFilesCreate, delete: driveFilesDelete } }),
+  },
+}));
 
 /**
  * A fully configured, switched-on Google Drive system config.
@@ -22,6 +49,28 @@ const enabledConfig = {
   clientSecret: 'client-secret',
   redirectUrl: 'http://localhost:2283/api/google-drive/callback',
   apiKey: '',
+};
+
+// Drives every test below to the same point: connected user, asset present, nothing in the
+// ledger, a readable 1024-byte original. Only the size Drive reports back then varies.
+const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
+  const asset = AssetFactory.create();
+  mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+  mocks.googleDrive.getCredentials.mockResolvedValue({
+    userId,
+    refreshToken: 'refresh-token',
+    folderId: null,
+    folderName: null,
+    connectedAt: new Date(),
+  });
+  mocks.googleDrive.hasUpload.mockResolvedValue(false);
+  mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+  mocks.storage.createReadStream.mockResolvedValue({
+    stream: { destroy: vi.fn() } as never,
+    length: 1024,
+    type: 'image/jpeg',
+  });
+  return asset;
 };
 
 describe(GoogleDriveService.name, () => {
@@ -82,6 +131,84 @@ describe(GoogleDriveService.name, () => {
       // undefined and would produce a 'skipped' result all on its own.
       expect(mocks.asset.getById).not.toHaveBeenCalled();
       expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+    });
+
+    it('should skip when the original file is missing from disk', async () => {
+      // An asset row is not proof the bytes are still there — a half-restored backup or a failed
+      // storage-template migration can leave the row pointing at nothing. This has to be a *skip*
+      // rather than a failure: a failed job holds this asset's dedup jobId (see job.repository.ts),
+      // which would stop the pair being retried even after the file was restored.
+      const userId = newUuid();
+      const asset = AssetFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'refresh-token',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+      mocks.googleDrive.hasUpload.mockResolvedValue(false);
+      mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+      mocks.storage.createReadStream.mockRejectedValue(
+        Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }),
+      );
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+      expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The upload body is a live fs.ReadStream and the request retries on 403/429/5xx. A stream that
+     * has already been partially consumed cannot rewind, so a retry can leave Drive holding a short
+     * file while still answering 200. That is the one failure the ledger cannot survive: record it
+     * and every future run skips the asset, leaving a truncated photo in Drive forever with nothing
+     * to indicate anything went wrong. Comparing byte counts turns it into an ordinary loud error.
+     */
+    describe('upload verification', () => {
+      beforeEach(() => {
+        driveFilesCreate.mockReset();
+        driveFilesDelete.mockReset();
+        driveFilesDelete.mockResolvedValue({});
+      });
+
+      it('should record the upload when the stored size matches', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id');
+        expect(driveFilesDelete).not.toHaveBeenCalled();
+      });
+
+      it('should refuse to record a truncated upload, and remove the partial file', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '512' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow(/512.*expected 1024/);
+
+        // Not recording is the critical half — the ledger must never claim a partial file is done.
+        expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+        // Removing the partial file is the courteous half: it is unambiguously ours, and leaving it
+        // behind means the user finds a corrupt photo they have to identify and delete by hand.
+        expect(driveFilesDelete).toHaveBeenCalledWith({ fileId: 'drive-file-id' });
+      });
+
+      it('should treat a missing size as unverifiable rather than assume success', async () => {
+        // Drive omits `size` only for Google-native document types, which this never creates. If it
+        // is absent, something is wrong with an assumption — refuse rather than guess.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow();
+
+        expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -211,6 +338,23 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('syncAlbum', () => {
+    // Every test here is about what happens *past* the enabled gate, so they all need the feature
+    // switched on. The gate itself gets its own test below.
+    beforeEach(() => {
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+    });
+
+    it('should reject when the feature is disabled', async () => {
+      // Deliberately different from the background paths, which skip in silence. This one is
+      // user-initiated, so a success toast for jobs that can never run would be a lie.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, enabled: false } });
+
+      await expect(sut.syncAlbum(AuthFactory.create(UserFactory.create()), newUuid())).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
     it('should reject a non-owner even when they can read the album', async () => {
       const editor = UserFactory.create();
       const album = AlbumFactory.from().albumUser({ userId: editor.id, role: AlbumUserRole.Editor }).build();

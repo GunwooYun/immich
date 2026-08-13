@@ -12,6 +12,22 @@ import { getForAlbum } from 'test/mappers';
 import { newUuid } from 'test/small.factory';
 import { newTestService, ServiceMocks } from 'test/utils';
 
+/**
+ * Google Drive switched on and fully configured.
+ *
+ * AlbumService skips the whole queueing path — including the ledger lookup — unless the feature is
+ * enabled, and the default test config has it off. Any test asserting that jobs *were* queued must
+ * stub this; any test asserting jobs were *not* queued must stub it too, or it passes for the
+ * trivial reason that the feature was never on.
+ */
+const googleDriveEnabled = {
+  enabled: true,
+  clientId: 'client-id',
+  clientSecret: 'client-secret',
+  redirectUrl: 'http://localhost:2283/api/google-drive/callback',
+  apiKey: '',
+};
+
 describe(AlbumService.name, () => {
   let sut: AlbumService;
   let mocks: ServiceMocks;
@@ -948,6 +964,7 @@ describe(AlbumService.name, () => {
       const album = AlbumFactory.from().albumUser({ userId: editor.id, role: AlbumUserRole.Editor }).build();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
       const asset = AssetFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: googleDriveEnabled });
       mocks.access.album.checkSharedAlbumAccess.mockResolvedValue(new Set([album.id]));
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
@@ -967,6 +984,7 @@ describe(AlbumService.name, () => {
       const album = AlbumFactory.create();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
       const [asset1, asset2] = [AssetFactory.create(), AssetFactory.create()];
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: googleDriveEnabled });
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset1.id, asset2.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
@@ -986,6 +1004,9 @@ describe(AlbumService.name, () => {
       const album = AlbumFactory.create();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
       const asset = AssetFactory.create();
+      // Without this the feature is off, nothing is ever queued, and this assertion would hold for
+      // a reason that has nothing to do with the ledger.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: googleDriveEnabled });
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
@@ -994,6 +1015,26 @@ describe(AlbumService.name, () => {
 
       await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
 
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+      // Proves the ledger is what suppressed the job, rather than the feature being off.
+      expect(mocks.googleDrive.getUploadedAssetIds).toHaveBeenCalled();
+    });
+
+    it('should not touch the ledger at all when Google Drive is disabled', async () => {
+      // The default config has the feature off, which is the state the overwhelming majority of
+      // instances are in. Adding to an album is a hot path there, and it should cost nothing —
+      // not even the ledger lookup, whose answer could not change the outcome.
+      const album = AlbumFactory.create();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const asset = AssetFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
+
+      expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
   });

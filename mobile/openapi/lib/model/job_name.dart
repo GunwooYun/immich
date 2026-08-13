@@ -65,6 +65,8 @@ enum JobName {
   storageTemplateMigrationSingle._(r'StorageTemplateMigrationSingle'),
   tagCleanup._(r'TagCleanup'),
   versionCheck._(r'VersionCheck'),
+  googleDriveUploadQueueAll._(r'GoogleDriveUploadQueueAll'),
+  googleDriveUpload._(r'GoogleDriveUpload'),
   ocrQueueAll._(r'OcrQueueAll'),
   ocr._(r'Ocr'),
   workflowAssetTrigger._(r'WorkflowAssetTrigger'),
@@ -190,6 +192,8 @@ class JobNameTypeTransformer {
         case r'StorageTemplateMigrationSingle': return JobName.storageTemplateMigrationSingle;
         case r'TagCleanup': return JobName.tagCleanup;
         case r'VersionCheck': return JobName.versionCheck;
+        case r'GoogleDriveUploadQueueAll': return JobName.googleDriveUploadQueueAll;
+        case r'GoogleDriveUpload': return JobName.googleDriveUpload;
         case r'OcrQueueAll': return JobName.ocrQueueAll;
         case r'Ocr': return JobName.ocr;
         case r'WorkflowAssetTrigger': return JobName.workflowAssetTrigger;
