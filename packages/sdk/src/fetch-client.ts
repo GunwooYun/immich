@@ -1223,10 +1223,14 @@ export type GoogleDrivePickerConfigResponseDto = {
     clientId: string;
 };
 export type GoogleDriveStatusResponseDto = {
+    /** Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing' */
+    blockedReason: string | null;
     /** Whether this user has linked a Google Drive account */
     connected: boolean;
     /** When the account was linked, if connected */
     connectedAt: string | null;
+    /** Number of uploads currently in a failed state */
+    failedCount: number;
     /** The configured upload destination folder, if any */
     folderId: string | null;
     /** Display name of that folder, if it was chosen via the picker */
@@ -4952,6 +4956,17 @@ export function getGoogleDrivePickerConfig(opts?: Oazapfts.RequestOpts) {
         data: GoogleDrivePickerConfigResponseDto;
     }>("/google-drive/picker-config", {
         ...opts
+    }));
+}
+/**
+ * The "resume uploads" button in Settings — shown when the account is blocked (Drive full).
+ * Clears the block *and* immediately re-queues this user's pending set; see
+ * GoogleDriveService#resumeUploads for why the re-queue half is not optional.
+ */
+export function resumeGoogleDriveUploads(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText("/google-drive/resume", {
+        ...opts,
+        method: "POST"
     }));
 }
 /**

@@ -271,6 +271,47 @@ class GoogleDriveApi {
     }
   }
 
+  /// The \"resume uploads\" button in Settings — shown when the account is blocked (Drive full). Clears the block *and* immediately re-queues this user's pending set; see GoogleDriveService#resumeUploads for why the re-queue half is not optional.
+  ///
+  /// Clear the account-level block (e.g. after freeing Drive storage) and immediately re-queue the user's pending uploads.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  Future<Response> resumeGoogleDriveUploadsWithHttpInfo({ Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/resume';
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'POST',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// The \"resume uploads\" button in Settings — shown when the account is blocked (Drive full). Clears the block *and* immediately re-queues this user's pending set; see GoogleDriveService#resumeUploads for why the re-queue half is not optional.
+  ///
+  /// Clear the account-level block (e.g. after freeing Drive storage) and immediately re-queue the user's pending uploads.
+  Future<void> resumeGoogleDriveUploads({ Future<void>? abortTrigger, }) async {
+    final response = await resumeGoogleDriveUploadsWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
+
   /// Lets a connected user choose which Google Drive folder new uploads should go into. This is a simple \"set and forget\" preference — see GoogleDriveSettings.svelte on the frontend for the (currently very basic) folder-ID text input that calls this.
   ///
   /// Choose which Drive folder subsequent uploads land in. An empty value clears the preference, which puts uploads in the root of the Drive.

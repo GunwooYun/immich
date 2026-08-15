@@ -13,17 +13,28 @@ part of openapi.api;
 class GoogleDriveStatusResponseDto {
   /// Returns a new [GoogleDriveStatusResponseDto] instance.
   GoogleDriveStatusResponseDto({
+    required this.blockedReason,
     required this.connected,
     required this.connectedAt,
+    required this.failedCount,
     required this.folderId,
     required this.folderName,
   });
+
+  /// Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing'
+  String? blockedReason;
 
   /// Whether this user has linked a Google Drive account
   bool connected;
 
   /// When the account was linked, if connected
   DateTime? connectedAt;
+
+  /// Number of uploads currently in a failed state
+  ///
+  /// Minimum value: -9007199254740991
+  /// Maximum value: 9007199254740991
+  int failedCount;
 
   /// The configured upload destination folder, if any
   String? folderId;
@@ -33,24 +44,33 @@ class GoogleDriveStatusResponseDto {
 
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveStatusResponseDto &&
+    other.blockedReason == blockedReason &&
     other.connected == connected &&
     other.connectedAt == connectedAt &&
+    other.failedCount == failedCount &&
     other.folderId == folderId &&
     other.folderName == folderName;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
+    (blockedReason == null ? 0 : blockedReason!.hashCode) +
     (connected.hashCode) +
     (connectedAt == null ? 0 : connectedAt!.hashCode) +
+    (failedCount.hashCode) +
     (folderId == null ? 0 : folderId!.hashCode) +
     (folderName == null ? 0 : folderName!.hashCode);
 
   @override
-  String toString() => 'GoogleDriveStatusResponseDto[connected=$connected, connectedAt=$connectedAt, folderId=$folderId, folderName=$folderName]';
+  String toString() => 'GoogleDriveStatusResponseDto[blockedReason=$blockedReason, connected=$connected, connectedAt=$connectedAt, failedCount=$failedCount, folderId=$folderId, folderName=$folderName]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
+    if (this.blockedReason != null) {
+      json[r'blockedReason'] = this.blockedReason;
+    } else {
+      json[r'blockedReason'] = null;
+    }
       json[r'connected'] = this.connected;
     if (this.connectedAt != null) {
       json[r'connectedAt'] = _isEpochMarker(r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/')
@@ -59,6 +79,7 @@ class GoogleDriveStatusResponseDto {
     } else {
       json[r'connectedAt'] = null;
     }
+      json[r'failedCount'] = this.failedCount;
     if (this.folderId != null) {
       json[r'folderId'] = this.folderId;
     } else {
@@ -81,8 +102,10 @@ class GoogleDriveStatusResponseDto {
       final json = value.cast<String, dynamic>();
 
       return GoogleDriveStatusResponseDto(
+        blockedReason: mapValueOfType<String>(json, r'blockedReason'),
         connected: mapValueOfType<bool>(json, r'connected')!,
         connectedAt: mapDateTime(json, r'connectedAt', r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/'),
+        failedCount: mapValueOfType<int>(json, r'failedCount')!,
         folderId: mapValueOfType<String>(json, r'folderId'),
         folderName: mapValueOfType<String>(json, r'folderName'),
       );
@@ -132,8 +155,10 @@ class GoogleDriveStatusResponseDto {
 
   /// The list of required keys that must be present in a JSON.
   static const requiredKeys = <String>{
+    'blockedReason',
     'connected',
     'connectedAt',
+    'failedCount',
     'folderId',
     'folderName',
   };

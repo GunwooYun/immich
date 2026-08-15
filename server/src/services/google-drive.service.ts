@@ -3,10 +3,26 @@ import { drive_v3, google } from 'googleapis';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
-import { AlbumUserRole, JobName, JobStatus, Permission, QueueName, SystemMetadataKey } from 'src/enum';
+import {
+  AlbumUserRole,
+  GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES,
+  GoogleDriveUploadErrorClass,
+  JobName,
+  JobStatus,
+  NotificationLevel,
+  NotificationType,
+  Permission,
+  QueueName,
+  SystemMetadataKey,
+} from 'src/enum';
 import { BaseService } from 'src/services/base.service';
 import { JobItem } from 'src/types';
-import { queueGoogleDriveUploads } from 'src/utils/google-drive';
+import {
+  classifyDriveError,
+  GoogleDriveSizeMismatchError,
+  queueGoogleDriveUploads,
+  shouldRetryDriveRequest,
+} from 'src/utils/google-drive';
 import { mimeTypes } from 'src/utils/mime-types';
 import { isGoogleDriveEnabled } from 'src/utils/misc';
 
@@ -327,6 +343,11 @@ export class GoogleDriveService extends BaseService {
     }
 
     await this.googleDriveRepository.upsertCredentials(userId, refreshToken);
+
+    // A fresh grant makes any `revoked` failure rows stale — those assets are still pending (no
+    // ledger row), so the next sync or backfill will retry them; the rows would only sit around
+    // misreporting "failed" in the UI.
+    await this.googleDriveRepository.clearErrors(userId, [GoogleDriveUploadErrorClass.Revoked]);
   }
 
   /**
@@ -352,6 +373,10 @@ export class GoogleDriveService extends BaseService {
     if (updated === 0) {
       throw new BadRequestException('Google Drive is not connected for this user');
     }
+
+    // Choosing a folder (or clearing back to Drive root) is precisely the fix for the
+    // "destination folder was deleted" block, so resolve it here — no separate resume needed.
+    await this.googleDriveRepository.clearErrors(userId, [GoogleDriveUploadErrorClass.FolderMissing]);
   }
 
   /**
@@ -367,17 +392,26 @@ export class GoogleDriveService extends BaseService {
     folderId: string | null;
     folderName: string | null;
     connectedAt: Date | null;
+    failedCount: number;
+    blockedReason: (typeof GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES)[number] | null;
   }> {
     const credentials = await this.googleDriveRepository.getCredentials(userId);
     if (!credentials) {
-      return { connected: false, folderId: null, folderName: null, connectedAt: null };
+      // Disconnected users still get their failure summary: after an automatic disconnect
+      // (revoked grant) the credentials row is gone, but the `revoked` error rows are exactly
+      // what explains to the user *why* they're suddenly disconnected.
+      const { failedCount, blockedReason } = await this.googleDriveRepository.getErrorSummary(userId);
+      return { connected: false, folderId: null, folderName: null, connectedAt: null, failedCount, blockedReason };
     }
 
+    const { failedCount, blockedReason } = await this.googleDriveRepository.getErrorSummary(userId);
     return {
       connected: true,
       folderId: credentials.folderId,
       folderName: credentials.folderName,
       connectedAt: credentials.connectedAt,
+      failedCount,
+      blockedReason,
     };
   }
 
@@ -503,6 +537,21 @@ export class GoogleDriveService extends BaseService {
       return 'skipped';
     }
 
+    // 1.5) Is this user's account currently blocked (Drive full, destination folder deleted)?
+    //    Account-level state: every upload is guaranteed to fail the same way, so calling Drive
+    //    per job would only rediscover it — expensively. This gate is what turns "quota hit
+    //    mid-backfill" from ~N doomed API calls into one failure plus N−1 cheap skips: the first
+    //    failing job writes the blocking row, and every job behind it in the queue lands here.
+    //    Deliberately *no* error row per skipped asset — these assets stay pending (no ledger
+    //    row), which is exactly what lets the resume path re-queue them later.
+    const blockingError = await this.googleDriveRepository.getBlockingError(userId);
+    if (blockingError) {
+      this.logger.debug(
+        `Skipping Google Drive upload for asset ${assetId}: user ${userId} is blocked (${blockingError})`,
+      );
+      return 'skipped';
+    }
+
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive.
     if (await this.googleDriveRepository.hasUpload(userId, assetId)) {
@@ -561,6 +610,15 @@ export class GoogleDriveService extends BaseService {
       this.logger.warn(
         `Skipping Google Drive upload for asset ${assetId}: could not read ${asset.originalPath} (${error})`,
       );
+      // Recorded even though this is a skip, not a failure — skips never pass through the catch
+      // below, so without an explicit write here the settings page would have no idea this photo
+      // isn't making it to Drive. (The second roadmap review caught exactly this seam.)
+      await this.googleDriveRepository.upsertError(
+        userId,
+        assetId,
+        GoogleDriveUploadErrorClass.SourceUnreadable,
+        `Could not read ${asset.originalPath}`,
+      );
       return 'skipped';
     }
 
@@ -602,11 +660,12 @@ export class GoogleDriveService extends BaseService {
           retryConfig: {
             retry: 5,
             retryDelay: 1000,
-            statusCodesToRetry: [
-              [403, 403],
-              [429, 429],
-              [500, 599],
-            ],
+            // Replaces the old statusCodesToRetry ranges (supplying shouldRetry makes gaxios use
+            // it *instead of* them): same 403/429/5xx retries, except quota-exceeded 403s and
+            // folder-gone 404s fail immediately — retrying a full Drive five times per job only
+            // delays the failure ~14s and, across a large backfill, multiplies it by every queued
+            // job. See shouldRetryDriveRequest for the classification.
+            shouldRetry: shouldRetryDriveRequest,
             onRetryAttempt: (error) =>
               this.logger.warn(
                 `Retrying Google Drive upload for asset ${assetId} after ${error?.status ?? 'unknown'} response`,
@@ -641,7 +700,7 @@ export class GoogleDriveService extends BaseService {
           }
         }
 
-        throw new Error(
+        throw new GoogleDriveSizeMismatchError(
           `Google Drive stored ${uploadedSize ?? 'an unknown number of'} bytes for asset ${assetId}, expected ${streamInfo.length}`,
         );
       }
@@ -668,11 +727,37 @@ export class GoogleDriveService extends BaseService {
         this.logger.warn(
           `Google Drive access for user ${userId} was revoked or expired; clearing the stored credentials so they can reconnect`,
         );
+        // Record before returning: this path is a skip, so it never reaches the classification
+        // below, and the settings page needs *something* to explain why backups stopped. The
+        // rows are cleared automatically when the user re-links (see linkAccount).
+        const { firstOfClass } = await this.googleDriveRepository.upsertError(
+          userId,
+          assetId,
+          GoogleDriveUploadErrorClass.Revoked,
+          'Google Drive access was revoked or expired',
+        );
+        if (firstOfClass) {
+          await this.notifyUploadFailure(userId, GoogleDriveUploadErrorClass.Revoked);
+        }
         await this.googleDriveRepository.deleteCredentials(userId);
         return 'skipped';
       }
 
-      this.logger.error(`Failed to upload asset ${assetId} to Google Drive: ${error}`);
+      // Every genuine failure lands in the error table before the job dies. This has to happen
+      // here, pre-throw: the queue drops failed Drive jobs (removeOnFail, so the dedup jobId
+      // frees up for retries), which means this row is the only durable record of the failure.
+      const classification = classifyDriveError(error);
+      const { firstOfClass } = await this.googleDriveRepository.upsertError(
+        userId,
+        assetId,
+        classification,
+        error instanceof Error ? error.message : String(error),
+      );
+      if (firstOfClass && classification === GoogleDriveUploadErrorClass.QuotaExceeded) {
+        await this.notifyUploadFailure(userId, classification);
+      }
+
+      this.logger.error(`Failed to upload asset ${assetId} to Google Drive (${classification}): ${error}`);
       throw error;
     } finally {
       // createReadStream hands back a live fs.ReadStream holding an open file descriptor. On the
@@ -802,11 +887,21 @@ export class GoogleDriveService extends BaseService {
       return JobStatus.Skipped;
     }
 
+    const queued = await this.queuePendingUploads();
+    this.logger.log(`Queued ${queued} Google Drive upload(s)`);
+    return JobStatus.Success;
+  }
+
+  /**
+   * Streams the pending set (optionally for one user) into the job queue in batches. Shared by
+   * the admin backfill above and the resume path below — same query, different scope.
+   */
+  private async queuePendingUploads(userId?: string): Promise<number> {
     let jobs: JobItem[] = [];
     let queued = 0;
 
-    for await (const { userId, assetId } of this.googleDriveRepository.streamPendingUploads()) {
-      jobs.push({ name: JobName.GoogleDriveUpload, data: { userId, assetId } });
+    for await (const row of this.googleDriveRepository.streamPendingUploads(userId)) {
+      jobs.push({ name: JobName.GoogleDriveUpload, data: { userId: row.userId, assetId: row.assetId } });
 
       if (jobs.length >= JOBS_ASSET_PAGINATION_SIZE) {
         await this.jobRepository.queueAll(jobs);
@@ -817,9 +912,52 @@ export class GoogleDriveService extends BaseService {
 
     await this.jobRepository.queueAll(jobs);
     queued += jobs.length;
+    return queued;
+  }
 
-    this.logger.log(`Queued ${queued} Google Drive upload(s)`);
-    return JobStatus.Success;
+  /**
+   * The "resume uploads" button: clears the user's account-level block and immediately re-queues
+   * their pending set.
+   *
+   * The immediate re-queue is the point (roadmap review, gap C). Clearing the block alone would
+   * leave uploading stopped until some future trigger — an album edit, a manual sync, an admin
+   * backfill — which could be days away. Someone who just freed Drive space and pressed the
+   * button expects uploading to start *now*.
+   *
+   * Racing an in-flight failure is fine: if space wasn't actually freed, the first re-queued
+   * upload fails, re-writes the quota row, and everything behind it skips at the entry gate —
+   * the system converges back to blocked at the cost of one API call.
+   */
+  async resumeUploads(auth: AuthDto): Promise<void> {
+    if (!(await this.isEnabled())) {
+      throw new BadRequestException('Google Drive sync is not enabled on this server');
+    }
+
+    await this.googleDriveRepository.clearErrors(auth.user.id, [...GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES]);
+    const queued = await this.queuePendingUploads(auth.user.id);
+    this.logger.log(`Resumed Google Drive uploads for user ${auth.user.id}: ${queued} job(s) queued`);
+  }
+
+  /**
+   * One in-app notification per account-level state transition — fired only when the error
+   * table's classification *first appears* for the user (the upsert reports it atomically), so a
+   * thousand-asset failure storm produces one banner, not a thousand.
+   *
+   * Only the two states the user must personally act on are notified: a full Drive (free space,
+   * press resume) and a revoked grant (reconnect). Per-asset failures are visible in the settings
+   * page instead — notifying each one would be noise.
+   */
+  private async notifyUploadFailure(userId: string, classification: GoogleDriveUploadErrorClass): Promise<void> {
+    const isQuota = classification === GoogleDriveUploadErrorClass.QuotaExceeded;
+    await this.notificationRepository.create({
+      userId,
+      type: NotificationType.Custom,
+      level: NotificationLevel.Warning,
+      title: isQuota ? 'Google Drive uploads paused' : 'Google Drive disconnected',
+      description: isQuota
+        ? 'Your Google Drive storage is full. Free up space, then resume uploads from Settings.'
+        : 'Google Drive access was revoked or expired. Reconnect from Settings to continue backing up.',
+    });
   }
 
   /**

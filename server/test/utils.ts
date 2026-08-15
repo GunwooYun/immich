@@ -309,6 +309,10 @@ export const getMocks = () => {
   // have nothing to do with Google Drive. Default to "nothing uploaded yet"; individual tests
   // override this when they're actually asserting dedup behavior.
   googleDriveMock.getUploadedAssetIds.mockResolvedValue(new Set());
+  // Failure-table defaults: the healthy state. Tests exercising failures override per-case.
+  googleDriveMock.getBlockingError.mockResolvedValue(null);
+  googleDriveMock.upsertError.mockResolvedValue({ firstOfClass: false });
+  googleDriveMock.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
 
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),

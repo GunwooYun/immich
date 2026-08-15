@@ -1179,6 +1179,41 @@ export enum CronJob {
   VersionCheck = 'VersionCheck',
 }
 
+/**
+ * Classification vocabulary for `google_drive_upload_error.error`.
+ *
+ * The load-bearing distinction is account-level vs per-asset. QuotaExceeded and FolderMissing
+ * describe the *user's account* (Drive is full; the destination folder was deleted) — while such
+ * a row exists, every further upload for that user is guaranteed to fail the same way, so the
+ * worker skips them wholesale (see GoogleDriveService#uploadAsset's entry gate) instead of
+ * burning a Drive API call per queued job to rediscover it. The rest describe a single asset and
+ * gate nothing.
+ */
+export enum GoogleDriveUploadErrorClass {
+  /** Drive storage is full. Account-level: blocks the user until they free space and resume. */
+  QuotaExceeded = 'quota_exceeded',
+  /** The chosen destination folder no longer exists. Account-level: blocks until a new folder is picked. */
+  FolderMissing = 'folder_missing',
+  /** Drive reported fewer bytes than we sent — a truncated upload that was refused, never ledgered. */
+  SizeMismatch = 'size_mismatch',
+  /** The asset row exists but its file on disk could not be opened. */
+  SourceUnreadable = 'source_unreadable',
+  /** The user revoked Immich's access; credentials were discarded. */
+  Revoked = 'revoked',
+  /** Rate-limit retries were exhausted (429 / rate-limit 403). Transient; retryable later. */
+  RateLimited = 'rate_limited',
+  /** Anything not classified above. */
+  Unknown = 'unknown',
+}
+
+/**
+ * The account-level subset of GoogleDriveUploadErrorClass — the classes that gate a whole user.
+ */
+export const GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES = [
+  GoogleDriveUploadErrorClass.QuotaExceeded,
+  GoogleDriveUploadErrorClass.FolderMissing,
+] as const;
+
 export enum ApiTag {
   Activities = 'Activities',
   Albums = 'Albums',

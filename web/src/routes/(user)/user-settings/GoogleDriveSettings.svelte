@@ -23,9 +23,10 @@
     getGoogleDriveAuthUrl,
     getGoogleDrivePickerConfig,
     getGoogleDriveStatus,
+    resumeGoogleDriveUploads,
     setGoogleDriveFolder,
   } from '@immich/sdk';
-  import { Button, LoadingSpinner, toastManager } from '@immich/ui';
+  import { Alert, Button, LoadingSpinner, toastManager } from '@immich/ui';
   import { onMount } from 'svelte';
   import { locale, t } from 'svelte-i18n';
   import { fade } from 'svelte/transition';
@@ -43,6 +44,13 @@
   // loading ~100KB of Google's script, so without this a slow connection looks like a dead button
   // and invites repeated clicking.
   let pickerLoading = $state(false);
+  // Failure visibility, fed by the same status call: how many uploads are currently failed, and
+  // whether the whole account is blocked (Drive full / destination folder gone). blockedReason
+  // drives the banner below; resuming is guarded like the picker so a slow round trip (it
+  // re-queues the whole pending set) doesn't invite double-clicks.
+  let failedCount = $state(0);
+  let blockedReason = $state<string | null>(null);
+  let resuming = $state(false);
 
   const loadStatus = async () => {
     const status = await getGoogleDriveStatus();
@@ -50,6 +58,8 @@
     connectedAt = status.connectedAt;
     folderId = status.folderId ?? '';
     folderName = status.folderName ?? null;
+    failedCount = status.failedCount;
+    blockedReason = status.blockedReason ?? null;
   };
 
   onMount(async () => {
@@ -57,7 +67,7 @@
     // redirects the browser back to this settings page with a ?google-drive=connected|error flag
     // (alongside ?isOpen=google-drive-sync, which is what expands this section so this component
     // mounts at all). That flag is the only signal the user gets about whether linking worked.
-    const params = new URLSearchParams(globalThis.location.search);
+    const params = new URLSearchParams(location.search);
     const result = params.get('google-drive');
 
     // Load status first. Doing this before the goto below matters: goto() replaces the whole query
@@ -91,9 +101,7 @@
       // mutating a plain URLSearchParams (mutation is invisible to Svelte's reactivity), and a
       // rebuild-by-filter says the same thing without reaching for the reactive variant, which this
       // one-shot cleanup has no use for.
-      const remaining = [...new URLSearchParams(globalThis.location.search)].filter(
-        ([key]) => key !== 'google-drive',
-      );
+      const remaining = [...new URLSearchParams(location.search)].filter(([key]) => key !== 'google-drive');
       await goto(`?${new URLSearchParams(remaining).toString()}`, {
         replaceState: true,
         noScroll: true,
@@ -109,7 +117,7 @@
   const connectGoogleDrive = async () => {
     try {
       const { url } = await getGoogleDriveAuthUrl();
-      globalThis.location.href = url;
+      location.assign(url);
     } catch (error) {
       handleError(error, $t('errors.unable_to_connect_google_drive'));
     }
@@ -162,6 +170,23 @@
     }
   };
 
+  // "Resume uploads" for the quota block: the server clears the block and immediately re-queues
+  // everything pending, so by the time the toast shows, uploading has genuinely restarted (not
+  // merely become possible again). Status is re-fetched afterwards because a re-block can happen
+  // fast if space wasn't actually freed.
+  const handleResume = async () => {
+    resuming = true;
+    try {
+      await resumeGoogleDriveUploads();
+      toastManager.primary($t('google_drive_resumed'));
+      await loadStatus();
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_resume_google_drive'));
+    } finally {
+      resuming = false;
+    }
+  };
+
   const handleDisconnect = async () => {
     try {
       await disconnectGoogleDrive();
@@ -191,6 +216,31 @@
     {:else}
       <form autocomplete="off" {onsubmit}>
         <div class="flex flex-col gap-4 sm:ms-8">
+          {#if blockedReason === 'quota_exceeded'}
+            <!-- Account-level block: nothing uploads until the user acts, so this outranks the
+                 per-field content below. The button is the fix, right next to the explanation. -->
+            <Alert color="warning" title={$t('google_drive_uploads_blocked_quota')}>
+              <div class="mt-2 flex justify-start">
+                <Button
+                  shape="round"
+                  type="button"
+                  size="small"
+                  onclick={handleResume}
+                  disabled={resuming}
+                  loading={resuming}
+                >
+                  {$t('google_drive_resume_uploads')}
+                </Button>
+              </div>
+            </Alert>
+          {:else if blockedReason === 'folder_missing'}
+            <!-- The fix for this one is picking a new folder (which clears the block server-side),
+                 and the picker button is already on this page — the banner just explains. -->
+            <Alert color="warning" title={$t('google_drive_uploads_blocked_folder')} />
+          {/if}
+          {#if failedCount > 0 && !blockedReason}
+            <p class="text-sm">{$t('google_drive_failed_count', { values: { count: failedCount } })}</p>
+          {/if}
           {#if connected}
             <p class="text-sm">
               <!-- toLocaleString() with no argument uses the *browser's* locale, which is not

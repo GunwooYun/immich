@@ -51,6 +51,15 @@ where
   and "album"."deletedAt" is null
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
+  and not exists (
+    select
+      1 as "one"
+    from
+      "google_drive_upload_error"
+    where
+      "google_drive_upload_error"."userId" = "album_user"."userId"
+      and "google_drive_upload_error"."error" in ($2, $3)
+  )
 
 -- GoogleDriveRepository.getUploadedAssetIds
 select
@@ -72,11 +81,105 @@ where
 limit
   $3
 
--- GoogleDriveRepository.recordUpload
-insert into
-  "google_drive_upload" ("userId", "assetId", "driveFileId")
-values
-  ($1, $2, $3)
-on conflict ("userId", "assetId") do update
-set
-  "driveFileId" = "excluded"."driveFileId"
+-- GoogleDriveRepository.upsertError
+with
+  "others" as (
+    select
+      count(*)::int as "c"
+    from
+      "google_drive_upload_error"
+    where
+      "userId" = $1
+      and "error" = $2
+      and "assetId" <> $3
+  ),
+  "old_row" as (
+    select
+      "error"
+    from
+      "google_drive_upload_error"
+    where
+      "userId" = $4
+      and "assetId" = $5
+  ),
+  "ins" as (
+    insert into
+      "google_drive_upload_error" ("userId", "assetId", "error", "detail")
+    values
+      ($6, $7, $8, $9)
+    on conflict ("userId", "assetId") do update
+    set
+      "error" = excluded."error",
+      "detail" = excluded."detail",
+      "attempts" = "google_drive_upload_error"."attempts" + 1,
+      "lastFailedAt" = now()
+    returning
+      1
+  )
+select
+  (
+    select
+      "c"
+    from
+      "others"
+  ) = 0
+  and coalesce(
+    (
+      select
+        "error"
+      from
+        "old_row"
+    ),
+    ''
+  ) <> $10 as "firstOfClass"
+from
+  "ins"
+
+-- GoogleDriveRepository.getBlockingError
+select
+  "error"
+from
+  "google_drive_upload_error"
+where
+  "userId" = $1
+  and "error" in ($2, $3)
+order by
+  case "error"
+    when $4 then 0
+    else 1
+  end
+limit
+  $5
+
+-- GoogleDriveRepository.clearErrors
+delete from "google_drive_upload_error"
+where
+  "userId" = $1
+  and "error" in ($2)
+
+-- GoogleDriveRepository.getErrorSummary
+select
+  count(*) as "count"
+from
+  "google_drive_upload_error"
+  inner join "asset" on "asset"."id" = "google_drive_upload_error"."assetId"
+  left join "google_drive_upload" on "google_drive_upload"."assetId" = "google_drive_upload_error"."assetId"
+  and "google_drive_upload"."userId" = "google_drive_upload_error"."userId"
+where
+  "google_drive_upload_error"."userId" = $1
+  and "asset"."deletedAt" is null
+  and "google_drive_upload"."assetId" is null
+select
+  "error"
+from
+  "google_drive_upload_error"
+where
+  "userId" = $1
+  and "error" in ($2, $3)
+order by
+  case "error"
+    when $4 then 0
+    else 1
+  end
+limit
+  $5

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { AlbumUserRole, JobName, JobStatus } from 'src/enum';
+import { AlbumUserRole, GoogleDriveUploadErrorClass, JobName, JobStatus } from 'src/enum';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { AlbumFactory } from 'test/factories/album.factory';
 import { AssetFactory } from 'test/factories/asset.factory';
@@ -133,6 +133,30 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
     });
 
+    it('should skip a blocked user without touching the asset or calling Drive', async () => {
+      // Account-level block (Drive full / folder gone): every upload is doomed identically, so
+      // the gate turns a queue full of this user's jobs into cheap skips. This is the difference
+      // between 1 and N quota-discovery calls when quota hits mid-backfill (roadmap review, gap A).
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'refresh-token',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+      mocks.googleDrive.getBlockingError.mockResolvedValue(GoogleDriveUploadErrorClass.QuotaExceeded);
+
+      await expect(sut.uploadAsset(userId, newUuid())).resolves.toBe('skipped');
+
+      expect(mocks.asset.getById).not.toHaveBeenCalled();
+      expect(driveFilesCreate).not.toHaveBeenCalled();
+      // No per-asset error row either: the skipped assets stay pending, which is what lets the
+      // resume path re-queue them.
+      expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+    });
+
     it('should skip when the original file is missing from disk', async () => {
       // An asset row is not proof the bytes are still there — a half-restored backup or a failed
       // storage-template migration can leave the row pointing at nothing. This has to be a *skip*
@@ -157,6 +181,14 @@ describe(GoogleDriveService.name, () => {
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
 
       expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+      // A skip, but a *recorded* one — this path never reaches the failure catch, so without an
+      // explicit write the settings page would show nothing (the seam review #2 caught).
+      expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+        userId,
+        asset.id,
+        GoogleDriveUploadErrorClass.SourceUnreadable,
+        expect.any(String),
+      );
     });
 
     /**
@@ -193,9 +225,78 @@ describe(GoogleDriveService.name, () => {
 
         // Not recording is the critical half — the ledger must never claim a partial file is done.
         expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+        // But the *failure* is recorded, with the right classification, before the job dies —
+        // removeOnFail drops the job the moment it fails, so this row is the only durable trace.
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.SizeMismatch,
+          expect.stringContaining('512'),
+        );
         // Removing the partial file is the courteous half: it is unambiguously ours, and leaving it
         // behind means the user finds a corrupt photo they have to identify and delete by hand.
         expect(driveFilesDelete).toHaveBeenCalledWith({ fileId: 'drive-file-id' });
+      });
+
+      it('should classify a quota failure, record it, and notify exactly once', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        const quotaError = Object.assign(new Error('quota'), {
+          response: { status: 403, data: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
+        });
+        driveFilesCreate.mockRejectedValue(quotaError);
+        mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+        mocks.notification.create.mockResolvedValue({} as never);
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow();
+
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.QuotaExceeded,
+          expect.any(String),
+        );
+        // First appearance of the class → one notification.
+        expect(mocks.notification.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('should not notify again for subsequent failures of the same class', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockRejectedValue(
+          Object.assign(new Error('quota'), {
+            response: { status: 403, data: { error: { errors: [{ reason: 'storageQuotaExceeded' }] } } },
+          }),
+        );
+        // Not the first row of this class for the user — the storm after the first failure.
+        mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: false });
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow();
+
+        expect(mocks.notification.create).not.toHaveBeenCalled();
+      });
+
+      it('should record a revoked grant, notify, and clear the credentials', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockRejectedValue(
+          Object.assign(new Error('x'), { response: { data: { error: 'invalid_grant' } } }),
+        );
+        mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+        mocks.notification.create.mockResolvedValue({} as never);
+
+        // A skip, not a failure: retrying can never succeed, and the queued follow-ups for this
+        // user will skip at the not-connected check once the credentials are gone.
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.Revoked,
+          expect.any(String),
+        );
+        expect(mocks.notification.create).toHaveBeenCalledTimes(1);
+        expect(mocks.googleDrive.deleteCredentials).toHaveBeenCalledWith(userId);
       });
 
       it('should treat a missing size as unverifiable rather than assume success', async () => {
@@ -241,6 +342,8 @@ describe(GoogleDriveService.name, () => {
 
       // No name passed: the manual paste-an-id path genuinely doesn't know one.
       expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id', null);
+      // Picking a folder is the fix for the folder-gone block, so it clears it in the same act.
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(userId, [GoogleDriveUploadErrorClass.FolderMissing]);
     });
 
     it('should save the folder name when the picker supplies one', async () => {
@@ -273,6 +376,41 @@ describe(GoogleDriveService.name, () => {
     });
   });
 
+  describe('resumeUploads', () => {
+    it('should reject when the feature is disabled', async () => {
+      await expect(sut.resumeUploads(AuthFactory.create(UserFactory.create()))).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.googleDrive.clearErrors).not.toHaveBeenCalled();
+    });
+
+    it('should clear the block and immediately re-queue the pending set', async () => {
+      // Clearing alone is not resuming — without the re-queue the user waits for some future
+      // trigger that may be days away (roadmap review, gap C).
+      const user = UserFactory.create();
+      const assetIds = [newUuid(), newUuid()];
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      mocks.googleDrive.streamPendingUploads.mockImplementation(async function* () {
+        for (const assetId of assetIds) {
+          yield { userId: user.id, assetId };
+        }
+      } as never);
+
+      await sut.resumeUploads(AuthFactory.create(user));
+
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(user.id, [
+        GoogleDriveUploadErrorClass.QuotaExceeded,
+        GoogleDriveUploadErrorClass.FolderMissing,
+      ]);
+      // Scoped to this user, not the global backfill.
+      expect(mocks.googleDrive.streamPendingUploads).toHaveBeenCalledWith(user.id);
+      expect(mocks.job.queueAll).toHaveBeenCalledWith(
+        assetIds.map((assetId) => ({ name: JobName.GoogleDriveUpload, data: { userId: user.id, assetId } })),
+      );
+    });
+  });
+
   describe('getPickerConfig', () => {
     // This endpoint hands a live Drive access token to the browser, so the guards in front of it
     // matter more than usual — each of these is a case where it must refuse rather than mint one.
@@ -302,6 +440,8 @@ describe(GoogleDriveService.name, () => {
         folderId: null,
         folderName: null,
         connectedAt: null,
+        failedCount: 0,
+        blockedReason: null,
       });
     });
 
@@ -318,7 +458,14 @@ describe(GoogleDriveService.name, () => {
 
       const status = await sut.getStatus(userId);
 
-      expect(status).toEqual({ connected: true, folderId: 'folder-id', folderName: 'Folder name', connectedAt });
+      expect(status).toEqual({
+        connected: true,
+        folderId: 'folder-id',
+        folderName: 'Folder name',
+        connectedAt,
+        failedCount: 0,
+        blockedReason: null,
+      });
       // Guard against someone later "simplifying" this into a spread of the credentials row.
       expect(JSON.stringify(status)).not.toContain('super-secret-refresh-token');
     });

@@ -43,6 +43,17 @@ const GoogleDriveStatusResponseSchema = z
     folderId: z.string().nullable().describe('The configured upload destination folder, if any'),
     folderName: z.string().nullable().describe('Display name of that folder, if it was chosen via the picker'),
     connectedAt: isoDatetimeToDate.nullable().describe('When the account was linked, if connected'),
+    // Failure visibility (see google_drive_upload_error): how many uploads are currently failed,
+    // and whether the whole account is blocked. `blockedReason` drives the settings banner —
+    // quota_exceeded pairs with the resume button, folder_missing with the folder picker.
+    failedCount: z.int().describe('Number of uploads currently in a failed state'),
+    // A plain nullable string rather than z.enum(...).nullable(): the OpenAPI generator renders a
+    // nullable enum as an enum containing null, which the TypeScript SDK emits as an initializer-
+    // less `Null` member — broken output. The two possible values are stable and documented here.
+    blockedReason: z
+      .string()
+      .nullable()
+      .describe("Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing'"),
   })
   .meta({ id: 'GoogleDriveStatusResponseDto' });
 

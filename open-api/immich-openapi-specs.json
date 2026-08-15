@@ -6568,6 +6568,44 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/google-drive/resume": {
+      "post": {
+        "description": "Clear the account-level block (e.g. after freeing Drive storage) and immediately re-queue the user's pending uploads.",
+        "operationId": "resumeGoogleDriveUploads",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "The \"resume uploads\" button in Settings — shown when the account is blocked (Drive full).\nClears the block *and* immediately re-queues this user's pending set; see\nGoogleDriveService#resumeUploads for why the re-queue half is not optional.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/status": {
       "get": {
         "description": "Report whether the authenticated user has linked a Google Drive account, when they linked it, and which target folder they selected. Never includes the refresh token.",
@@ -19544,6 +19582,11 @@
       },
       "GoogleDriveStatusResponseDto": {
         "properties": {
+          "blockedReason": {
+            "description": "Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing'",
+            "nullable": true,
+            "type": "string"
+          },
           "connected": {
             "description": "Whether this user has linked a Google Drive account",
             "type": "boolean"
@@ -19555,6 +19598,12 @@
             "nullable": true,
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
             "type": "string"
+          },
+          "failedCount": {
+            "description": "Number of uploads currently in a failed state",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
           },
           "folderId": {
             "description": "The configured upload destination folder, if any",
@@ -19568,8 +19617,10 @@
           }
         },
         "required": [
+          "blockedReason",
           "connected",
           "connectedAt",
+          "failedCount",
           "folderId",
           "folderName"
         ],

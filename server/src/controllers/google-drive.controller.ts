@@ -28,8 +28,9 @@ import { UUIDParamDto } from 'src/validation';
  *   4. GET    /google-drive/picker-config - hands the browser what Google's folder picker needs.
  *   5. POST   /google-drive/folder        - stores whichever folder the picker (or the manual
  *                                           fallback input) produced.
- *   6. POST   /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
- *   7. DELETE /google-drive/link          - "Disconnect" button discards the stored credentials.
+ *   6. POST   /google-drive/resume        - clears an account-level block and re-queues pending uploads.
+ *   7. POST   /google-drive/albums/:id/sync - manual "sync this album now" button on an album page.
+ *   8. DELETE /google-drive/link          - "Disconnect" button discards the stored credentials.
  *
  * Two conventions worth knowing before editing this file:
  *
@@ -232,6 +233,23 @@ export class GoogleDriveController {
   })
   async getGoogleDrivePickerConfig(@Auth() auth: AuthDto): Promise<GoogleDrivePickerConfigResponseDto> {
     return this.googleDriveService.getPickerConfig(auth.user.id);
+  }
+
+  /**
+   * The "resume uploads" button in Settings — shown when the account is blocked (Drive full).
+   * Clears the block *and* immediately re-queues this user's pending set; see
+   * GoogleDriveService#resumeUploads for why the re-queue half is not optional.
+   */
+  @Post('resume')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Resume Google Drive uploads',
+    description:
+      "Clear the account-level block (e.g. after freeing Drive storage) and immediately re-queue the user's pending uploads.",
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async resumeGoogleDriveUploads(@Auth() auth: AuthDto): Promise<void> {
+    await this.googleDriveService.resumeUploads(auth);
   }
 
   @Post('albums/:id/sync')
