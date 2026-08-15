@@ -393,15 +393,26 @@ export class GoogleDriveService extends BaseService {
     folderName: string | null;
     connectedAt: Date | null;
     failedCount: number;
-    blockedReason: (typeof GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES)[number] | null;
+    blockedReason: GoogleDriveUploadErrorClass | null;
   }> {
     const credentials = await this.googleDriveRepository.getCredentials(userId);
     if (!credentials) {
       // Disconnected users still get their failure summary: after an automatic disconnect
       // (revoked grant) the credentials row is gone, but the `revoked` error rows are exactly
-      // what explains to the user *why* they're suddenly disconnected.
+      // what explains to the user *why* they're suddenly disconnected. Revoked wins the report
+      // here — the Wave 1 review caught that the summary alone can never say it (revoked is not
+      // a *blocking* class), which left the cost of these queries paid but the benefit
+      // undelivered: the banner had nothing to branch on.
       const { failedCount, blockedReason } = await this.googleDriveRepository.getErrorSummary(userId);
-      return { connected: false, folderId: null, folderName: null, connectedAt: null, failedCount, blockedReason };
+      const revoked = await this.googleDriveRepository.hasErrorOfClass(userId, GoogleDriveUploadErrorClass.Revoked);
+      return {
+        connected: false,
+        folderId: null,
+        folderName: null,
+        connectedAt: null,
+        failedCount,
+        blockedReason: revoked ? GoogleDriveUploadErrorClass.Revoked : blockedReason,
+      };
     }
 
     const { failedCount, blockedReason } = await this.googleDriveRepository.getErrorSummary(userId);
@@ -746,14 +757,20 @@ export class GoogleDriveService extends BaseService {
       // Every genuine failure lands in the error table before the job dies. This has to happen
       // here, pre-throw: the queue drops failed Drive jobs (removeOnFail, so the dedup jobId
       // frees up for retries), which means this row is the only durable record of the failure.
-      const classification = classifyDriveError(error);
+      const classification = classifyDriveError(error, { hasFolder: !!folderId });
       const { firstOfClass } = await this.googleDriveRepository.upsertError(
         userId,
         assetId,
         classification,
         error instanceof Error ? error.message : String(error),
       );
-      if (firstOfClass && classification === GoogleDriveUploadErrorClass.QuotaExceeded) {
+      if (
+        firstOfClass &&
+        (classification === GoogleDriveUploadErrorClass.QuotaExceeded ||
+          classification === GoogleDriveUploadErrorClass.FolderMissing)
+      ) {
+        // Both blocking classes halt the account as hard as each other; a deleted destination
+        // folder deserves the same one-time heads-up a full Drive gets (Wave 1 review note).
         await this.notifyUploadFailure(userId, classification);
       }
 
@@ -948,15 +965,32 @@ export class GoogleDriveService extends BaseService {
    * page instead — notifying each one would be noise.
    */
   private async notifyUploadFailure(userId: string, classification: GoogleDriveUploadErrorClass): Promise<void> {
-    const isQuota = classification === GoogleDriveUploadErrorClass.QuotaExceeded;
+    const messages: Partial<Record<GoogleDriveUploadErrorClass, { title: string; description: string }>> = {
+      [GoogleDriveUploadErrorClass.QuotaExceeded]: {
+        title: 'Google Drive uploads paused',
+        description: 'Your Google Drive storage is full. Free up space, then resume uploads from Settings.',
+      },
+      [GoogleDriveUploadErrorClass.FolderMissing]: {
+        title: 'Google Drive uploads paused',
+        description:
+          'The destination folder no longer exists or cannot be used. Choose a new folder in Settings to continue.',
+      },
+      [GoogleDriveUploadErrorClass.Revoked]: {
+        title: 'Google Drive disconnected',
+        description: 'Google Drive access was revoked or expired. Reconnect from Settings to continue backing up.',
+      },
+    };
+
+    const message = messages[classification];
+    if (!message) {
+      return; // Non-actionable classes never notify.
+    }
+
     await this.notificationRepository.create({
       userId,
       type: NotificationType.Custom,
       level: NotificationLevel.Warning,
-      title: isQuota ? 'Google Drive uploads paused' : 'Google Drive disconnected',
-      description: isQuota
-        ? 'Your Google Drive storage is full. Free up space, then resume uploads from Settings.'
-        : 'Google Drive access was revoked or expired. Reconnect from Settings to continue backing up.',
+      ...message,
     });
   }
 

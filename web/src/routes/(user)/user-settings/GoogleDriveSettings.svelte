@@ -237,6 +237,12 @@
             <!-- The fix for this one is picking a new folder (which clears the block server-side),
                  and the picker button is already on this page — the banner just explains. -->
             <Alert color="warning" title={$t('google_drive_uploads_blocked_folder')} />
+          {:else if blockedReason === 'revoked'}
+            <!-- Shown in the disconnected state: the server discarded the credentials after Google
+                 rejected the grant, and without this the user just sees "not connected" with no
+                 idea why. The Connect button right below is the fix; reconnecting clears the
+                 underlying records server-side. -->
+            <Alert color="warning" title={$t('google_drive_uploads_blocked_revoked')} />
           {/if}
           {#if failedCount > 0 && !blockedReason}
             <p class="text-sm">{$t('google_drive_failed_count', { values: { count: failedCount } })}</p>

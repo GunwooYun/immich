@@ -19583,7 +19583,7 @@
       "GoogleDriveStatusResponseDto": {
         "properties": {
           "blockedReason": {
-            "description": "Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing'",
+            "description": "Account-level condition currently stopping uploads, if any: 'quota_exceeded', 'folder_missing', or 'revoked' (access was revoked — also why the account shows as disconnected)",
             "nullable": true,
             "type": "string"
           },

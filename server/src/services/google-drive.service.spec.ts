@@ -260,6 +260,64 @@ describe(GoogleDriveService.name, () => {
         expect(mocks.notification.create).toHaveBeenCalledTimes(1);
       });
 
+      it('should block on a notFound 404 when a folder is configured, and notify', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        // Override: this user uploads into a configured folder — the precondition for 404s
+        // meaning anything folder-related at all.
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          userId,
+          refreshToken: 'refresh-token',
+          folderId: 'folder-1',
+          folderName: 'Photos',
+          connectedAt: new Date(),
+        });
+        driveFilesCreate.mockRejectedValue(
+          Object.assign(new Error('File not found: folder-1'), {
+            response: { status: 404, data: { error: { errors: [{ reason: 'notFound' }] } } },
+          }),
+        );
+        mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+        mocks.notification.create.mockResolvedValue({} as never);
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow();
+
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.FolderMissing,
+          expect.any(String),
+        );
+        // A vanished destination folder halts the account as hard as quota — same one-time
+        // notification (Wave 1 review note).
+        expect(mocks.notification.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('should record a bare 404 (expired resumable session) as unknown, not an account block', async () => {
+        // The review's one real correctness risk: a transient session 404 must not masquerade as
+        // "the folder is gone" and freeze every upload for the user.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          userId,
+          refreshToken: 'refresh-token',
+          folderId: 'folder-1',
+          folderName: 'Photos',
+          connectedAt: new Date(),
+        });
+        driveFilesCreate.mockRejectedValue(Object.assign(new Error('Not Found'), { response: { status: 404 } }));
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow();
+
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.Unknown,
+          expect.any(String),
+        );
+        expect(mocks.notification.create).not.toHaveBeenCalled();
+      });
+
       it('should not notify again for subsequent failures of the same class', async () => {
         const userId = newUuid();
         const asset = arrangeReadyToUpload(mocks, userId);
@@ -373,6 +431,26 @@ describe(GoogleDriveService.name, () => {
       await sut.setFolderId(userId, '', 'Holiday photos');
 
       expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, null, null);
+    });
+  });
+
+  describe('getStatus (disconnected)', () => {
+    it('should report revoked as the reason after an automatic disconnect', async () => {
+      // The credentials row is gone (deleted when the grant died); the revoked error rows are the
+      // only remaining evidence of *why*. Without surfacing them the settings page shows a bare
+      // "not connected" — the review caught that the summary alone can never say 'revoked'.
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 3, blockedReason: null });
+      mocks.googleDrive.hasErrorOfClass.mockResolvedValue(true);
+
+      await expect(sut.getStatus(newUuid())).resolves.toEqual({
+        connected: false,
+        folderId: null,
+        folderName: null,
+        connectedAt: null,
+        failedCount: 3,
+        blockedReason: GoogleDriveUploadErrorClass.Revoked,
+      });
     });
   });
 

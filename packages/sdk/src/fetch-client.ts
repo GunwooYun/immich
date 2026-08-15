@@ -1223,7 +1223,7 @@ export type GoogleDrivePickerConfigResponseDto = {
     clientId: string;
 };
 export type GoogleDriveStatusResponseDto = {
-    /** Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing' */
+    /** Account-level condition currently stopping uploads, if any: 'quota_exceeded', 'folder_missing', or 'revoked' (access was revoked — also why the account shows as disconnected) */
     blockedReason: string | null;
     /** Whether this user has linked a Google Drive account */
     connected: boolean;

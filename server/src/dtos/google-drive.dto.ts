@@ -53,7 +53,9 @@ const GoogleDriveStatusResponseSchema = z
     blockedReason: z
       .string()
       .nullable()
-      .describe("Account-level condition currently stopping all uploads, if any: 'quota_exceeded' or 'folder_missing'"),
+      .describe(
+        "Account-level condition currently stopping uploads, if any: 'quota_exceeded', 'folder_missing', or 'revoked' (access was revoked — also why the account shows as disconnected)",
+      ),
   })
   .meta({ id: 'GoogleDriveStatusResponseDto' });
 

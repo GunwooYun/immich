@@ -313,6 +313,7 @@ export const getMocks = () => {
   googleDriveMock.getBlockingError.mockResolvedValue(null);
   googleDriveMock.upsertError.mockResolvedValue({ firstOfClass: false });
   googleDriveMock.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
+  googleDriveMock.hasErrorOfClass.mockResolvedValue(false);
 
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),

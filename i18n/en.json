@@ -1196,6 +1196,7 @@
   "google_drive_sync_subtitle": "Connect and configure Google Drive backups",
   "google_drive_uploads_blocked_folder": "Uploads are failing because the destination folder no longer exists in Google Drive. Choose a new folder to continue.",
   "google_drive_uploads_blocked_quota": "Uploads are paused because your Google Drive storage is full. Free up space, then resume.",
+  "google_drive_uploads_blocked_revoked": "Google Drive access was revoked or expired, so the account was disconnected. Reconnect to continue backing up.",
   "gps": "GPS",
   "gps_missing": "No GPS",
   "grant_permission": "Grant permission",

@@ -330,6 +330,24 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * Whether any failure row of the given class exists for this user. One caller: the
+   * disconnected-status path, which needs to know if an automatic revoked-grant disconnect is
+   * what put the user in the "not connected" state — the credentials row is gone by then, so the
+   * `revoked` error rows are the only remaining evidence.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
+  async hasErrorOfClass(userId: string, error: GoogleDriveUploadErrorClass): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('google_drive_upload_error')
+      .select('assetId')
+      .where('userId', '=', userId)
+      .where('error', '=', error)
+      .limit(1)
+      .executeTakeFirst();
+    return !!row;
+  }
+
+  /**
    * Clears failure rows of the given classes for a user. Three callers, each representing "the
    * condition this class describes has been resolved":
    *   - resume button → blocking classes (user freed Drive space);

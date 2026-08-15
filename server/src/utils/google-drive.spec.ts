@@ -41,32 +41,63 @@ describe('getDriveErrorReason', () => {
 });
 
 describe('classifyDriveError', () => {
+  const withFolder = { hasFolder: true };
+  const noFolder = { hasFolder: false };
+
   it('should classify quota-exceeded 403 as quota, not rate limit', () => {
     // The distinction the whole blocking mechanism rests on: both arrive as 403.
-    expect(classifyDriveError(nestedError(403, 'storageQuotaExceeded'))).toBe(
+    expect(classifyDriveError(nestedError(403, 'storageQuotaExceeded'), withFolder)).toBe(
       GoogleDriveUploadErrorClass.QuotaExceeded,
     );
   });
 
   it('should classify other 403s and 429s as rate-limited', () => {
-    expect(classifyDriveError(nestedError(403, 'userRateLimitExceeded'))).toBe(GoogleDriveUploadErrorClass.RateLimited);
-    expect(classifyDriveError(nestedError(403))).toBe(GoogleDriveUploadErrorClass.RateLimited);
-    expect(classifyDriveError(nestedError(429))).toBe(GoogleDriveUploadErrorClass.RateLimited);
+    expect(classifyDriveError(nestedError(403, 'userRateLimitExceeded'), withFolder)).toBe(
+      GoogleDriveUploadErrorClass.RateLimited,
+    );
+    expect(classifyDriveError(nestedError(403), withFolder)).toBe(GoogleDriveUploadErrorClass.RateLimited);
+    expect(classifyDriveError(nestedError(429), withFolder)).toBe(GoogleDriveUploadErrorClass.RateLimited);
   });
 
-  it('should classify 404 as the destination folder being gone', () => {
-    expect(classifyDriveError(nestedError(404))).toBe(GoogleDriveUploadErrorClass.FolderMissing);
+  it('should classify a notFound 404 as the folder being gone — only when a folder is configured', () => {
+    expect(classifyDriveError(nestedError(404, 'notFound'), withFolder)).toBe(
+      GoogleDriveUploadErrorClass.FolderMissing,
+    );
+    // Uploads without a configured folder go to the Drive root; no 404 can mean "folder gone".
+    expect(classifyDriveError(nestedError(404, 'notFound'), noFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
+  });
+
+  it('should NOT block the account for a bare 404 (expired resumable session)', () => {
+    // The Wave 1 review's one real correctness risk: resumable uploads answer 404 for an
+    // expired/invalid session URI — transient, nothing to do with the folder. Blocking the whole
+    // account off that would be a false positive with the worst blast radius this system has.
+    expect(classifyDriveError(nestedError(404), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
+  });
+
+  it('should classify folder-permission and folder-capacity 403s as folder problems', () => {
+    // Same cure as folder-gone (pick a different folder), so same class. Without the reason
+    // gating these were infinite-retry long-tails: re-attempted every backfill, never resolved.
+    expect(classifyDriveError(nestedError(403, 'insufficientFilePermissions'), withFolder)).toBe(
+      GoogleDriveUploadErrorClass.FolderMissing,
+    );
+    expect(classifyDriveError(nestedError(403, 'numChildrenInNonRootLimitExceeded'), withFolder)).toBe(
+      GoogleDriveUploadErrorClass.FolderMissing,
+    );
+    // With no folder configured they fall back to retryable rather than blocking.
+    expect(classifyDriveError(nestedError(403, 'insufficientFilePermissions'), noFolder)).toBe(
+      GoogleDriveUploadErrorClass.RateLimited,
+    );
   });
 
   it('should classify the dedicated size-mismatch error', () => {
-    expect(classifyDriveError(new GoogleDriveSizeMismatchError('short'))).toBe(
+    expect(classifyDriveError(new GoogleDriveSizeMismatchError('short'), withFolder)).toBe(
       GoogleDriveUploadErrorClass.SizeMismatch,
     );
   });
 
   it('should fall back to unknown', () => {
-    expect(classifyDriveError(new Error('ECONNRESET'))).toBe(GoogleDriveUploadErrorClass.Unknown);
-    expect(classifyDriveError(nestedError(500))).toBe(GoogleDriveUploadErrorClass.Unknown);
+    expect(classifyDriveError(new Error('ECONNRESET'), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
+    expect(classifyDriveError(nestedError(500), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
   });
 });
 
