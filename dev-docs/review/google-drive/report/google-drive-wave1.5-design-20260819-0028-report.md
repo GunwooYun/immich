@@ -8,8 +8,8 @@ photos the user explicitly said must never leave.
 | | |
 |---|---|
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
-| Plan document | `google-drive-wave1.5-plan.md` (this request adds evidence, edge analysis, and the questions) |
-| Prior rounds | requests/reports 1–3; `google-drive-wave1-review.md` (Wave 1, fixes applied in `881969414`) |
+| Plan document | `dev-docs/google-drive/wave1.5-plan.md` (this request adds evidence, edge analysis, and the questions) |
+| Prior rounds | requests/reports 1–3; `dev-docs/review/google-drive/review/google-drive-wave1-20260815-2255-review.md` (Wave 1, fixes applied in `881969414`) |
 | Code under discussion | none yet — `album.service.ts:209-214, 250-305`, `google-drive.service.ts:840-856`, `google-drive.repository.ts#streamPendingUploads` |
 | Live instance | 6,578 photos, 4 albums, 2 users, 1 connected Drive account |
 

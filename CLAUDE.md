@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 `immich-app/immich`의 개인 포크. 업스트림 기능을 개선하고 새 기능을 추가한다.
-현재 진행 중: **Google Drive 앨범 동기화** (`dev-docs/google-drive-*.md`).
+현재 진행 중: **Google Drive 앨범 동기화** (`dev-docs/google-drive/`).
 
 이 파일은 매 세션 컨텍스트에 로드된다. **저장소를 읽으면 알 수 있는 것은 적지 않는다**
 (디렉토리 구조, 언어 비율, 업스트림 문서). 여기 있어야 할 것은 **읽어서는 알 수 없는 것**
@@ -24,18 +24,33 @@
 
 ## 2. 개발 워크플로우
 
-### 문서화
-- 새 기능은 `dev-docs/[기능]-*.md`에 설계를 쓴다. 새 세션에서 문맥을 잡을 수 있도록
+### 문서 배치
+
+```
+dev-docs/
+├── [기능]/                          설계·계획·진행 문서
+│   └── feature-roadmap.md 등
+└── review/[기능]/
+    ├── report/   [기능]-[수정내용]-[YYYYMMDD]-[HHMM]-report.md   ← 내가 쓰는 리뷰 요청서
+    └── review/   [기능]-[수정내용]-[YYYYMMDD]-[HHMM]-review.md   ← 리뷰어가 남기는 결과
+```
+
+요청서와 결과는 **`[수정내용]` 부분을 같게** 지어 짝이 눈에 보이게 한다
+(예: `...-wave1-...-report.md` ↔ `...-wave1-...-review.md`).
+
+- 새 기능은 `dev-docs/[기능]/`에 설계를 쓴다. 새 세션에서 문맥을 잡을 수 있도록
   텍스트 도식(ASCII, 표)을 적극 활용하고, **결정의 근거("왜 이렇게 했는가")를 남긴다.**
 - 문서가 코드와 어긋나면 문서를 고친다. 오래된 진행 문서를 근거로 리뷰가 잘못 나간 적 있다.
 
 ### 리뷰 (코드 변경은 예외 없이)
-1. 변경 후 `dev-docs/[기능]-review-request-N.md`로 리뷰 요청서를 쓴다.
+1. 변경 후 `dev-docs/review/[기능]/report/`에 리뷰 요청서를 쓴다.
    - **무엇을 공격해달라고 할지 명시한다.** 특히 새로 쓴 로직, 전제에 기대는 부분.
    - **검증한 것과 검증하지 못한 것을 구분해 적는다.** ("quota 경로는 mock으로만 테스트됨")
    - 생성물(SDK·OpenAPI·SQL)은 읽지 말라고 알려준다 — 리뷰 시간 낭비.
-2. 리뷰 결과는 `dev-docs/[기능]-*-review.md`로 저장된다.
+2. 리뷰 결과는 `dev-docs/review/[기능]/review/`에 저장된다.
 3. **판정을 원 계획 문서에 되먹인다.** 다음 사람이 같은 것을 다시 발견하지 않도록.
+4. 리뷰가 지적한 것을 고쳤으면, **그 수정 자체도 다음 라운드 리뷰 대상**이다
+   (Wave 1의 R1~R3 수정이 실제로 새 결함을 만들었다).
 
 ### 커밋
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `merge:`).
@@ -133,7 +148,8 @@ cd server && npx sql-tools -u "postgres://postgres:<pw>@localhost:5432/immich" m
 
 ## 8. 도메인 지식 (Google Drive 기능)
 
-설계 근거는 `dev-docs/google-drive-feature-roadmap.md`에 있다. 반복해서 문제가 되는 사실들:
+설계 근거는 `dev-docs/google-drive/feature-roadmap.md`, 실패 처리는 `failure-handling-plan.md`,
+현재 작업은 `wave1.5-plan.md`. 반복해서 문제가 되는 사실들:
 
 - **Drive는 최종 저장소가 아니라 Pixel로 가는 경유지다.** 따라서 Drive에서 파일이 사라지는
   것은 정상 운영이고, 원장(ledger)이 "이미 올렸음"을 기억하는 것이 옳다.

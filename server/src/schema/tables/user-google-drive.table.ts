@@ -19,7 +19,7 @@ import { UserTable } from 'src/schema/tables/user.table';
  * need verifying, never reading back). A Google refresh token has to be readable to be usable, so
  * it would need reversible encryption, which needs a key held outside the database to be worth
  * anything. Introducing that would mean a new mandatory operator-managed key, and losing it would
- * force every user to re-link. See dev-docs/google-drive-album-sync-plan.md §2.5 for the trade-off
+ * force every user to re-link. See dev-docs/google-drive/album-sync-plan.md §2.5 for the trade-off
  * discussion. The row is therefore protected by the same boundary as the rest of the database.
  */
 @Table('user_google_drive')

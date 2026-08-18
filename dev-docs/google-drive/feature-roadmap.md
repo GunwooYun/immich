@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | 브랜치 | `feat/google-drive-album-sync-v3.1.0` 위에 Wave별 커밋 |
-| 선행 문서 | `google-drive-failure-handling-plan.md` (Wave 1의 근거, 2차 리뷰 반영본), `google-drive-review-report-2.md` |
+| 선행 문서 | `dev-docs/google-drive/failure-handling-plan.md` (Wave 1의 근거, 2차 리뷰 반영본), `dev-docs/review/google-drive/review/google-drive-r1r3-fixes-20260814-1744-review.md` |
 | 운영 현황 | 사진 5,752장 / 앨범 3개 / 사용자 2명. 건우카메라 3,878장 업로드 완료, **서희카메라 1,809장 + 인화사진 63장 동기화 대기** |
 | 리뷰 방식 | §8의 열린 질문에 대한 판정 + 각 Wave 설계의 반박 |
 
@@ -296,7 +296,7 @@ Wave 1 서버 작업에 얹는 게 자연스러워 여기로 옮긴다. `Notific
 - **마이그레이션 2개**(Wave 1 error 테이블, Wave 4 autoSync)는 각 Wave에서 독립 적용.
   기존 5개와 마찬가지로 스쿼시하지 않는다.
 
-## 8. 리뷰어에게 물었던 질문 — 판정 완료 (`google-drive-roadmap-review.md`, 2026-08-15)
+## 8. 리뷰어에게 물었던 질문 — 판정 완료 (`dev-docs/review/google-drive/review/google-drive-roadmap-20260815-1511-review.md`, 2026-08-15)
 
 6개 전부 답을 받았고 본문에 반영했다. 요약: ①다운로드 동급+권한 경로 공유(§5.1) ②util 내부 조회 지지(§5.2) ③자연 수렴 충분하되 재개는 재큐잉 필수(§2.2) ④수용, 새로고침 유실 엣지 문서화(§4.2) ⑤소유자 기준 유지+라벨링(§3.1) ⑥전제 성립, 착수 전 실검증(§3.1). 원 질문은 기록으로 유지:
 

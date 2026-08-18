@@ -1,7 +1,7 @@
 # Code Review Report #2 — the R1–R3 Fix Commit + Failure-Handling Plan
 
-Reviewer's response to `google-drive-review-request-2.md` and
-`google-drive-failure-handling-plan.md`, reproduced verbatim (received 2026-08-14).
+Reviewer's response to `dev-docs/review/google-drive/report/google-drive-r1r3-fixes-20260814-1301-report.md` and
+`dev-docs/google-drive/failure-handling-plan.md`, reproduced verbatim (received 2026-08-14).
 Verdict: all three fixes correct, merge as-is; one cross-document seam must be resolved
 before Phase 1 (skip paths bypass the catch, so catch-only error recording misses them).
 The plan document has been amended accordingly — see the commit that added this file.

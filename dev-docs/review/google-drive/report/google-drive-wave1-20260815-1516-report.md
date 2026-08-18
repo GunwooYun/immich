@@ -10,7 +10,7 @@ instead of catastrophic — so correctness here matters more than usual.
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
 | Commit under review | `a8959bd3e` (everything before it already reviewed in rounds 1–3) |
 | Diff | `git show a8959bd3e` — 21 files, +1,304/−60; excluding generated artifacts: 15 files, +1,040/−60 |
-| Design basis | `google-drive-feature-roadmap.md` §2 (gaps A/C/D already folded in), `google-drive-roadmap-review.md` |
+| Design basis | `dev-docs/google-drive/feature-roadmap.md` §2 (gaps A/C/D already folded in), `dev-docs/review/google-drive/review/google-drive-roadmap-20260815-1511-review.md` |
 | Tests | 2,298 server + 518 web pass; 34 new/updated; migration drift check clean |
 
 ## What shipped (short form — the roadmap §2 is the long form)

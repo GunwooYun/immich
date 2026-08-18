@@ -1,6 +1,6 @@
 # Design Review — Wave 1.5: Album-Selection Backup Model
 
-Design review of `google-drive-review-request-4.md` + `google-drive-wave1.5-plan.md`, before code.
+Design review of `dev-docs/review/google-drive/report/google-drive-wave1.5-design-20260819-0028-report.md` + `dev-docs/google-drive/wave1.5-plan.md`, before code.
 Verified against the actual targeting sites (`album.service.ts` queueing paths, `syncAlbum`,
 `streamPendingUploads`) and immich's permission enum.
 
@@ -8,7 +8,7 @@ Verified against the actual targeting sites (`album.service.ts` queueing paths, 
 |---|---|
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
 | Reviewed | 2026-08-19 |
-| Prior | `google-drive-wave1-review.md` (Wave 1, fixes in `881969414`) |
+| Prior | `dev-docs/review/google-drive/review/google-drive-wave1-20260815-2255-review.md` (Wave 1, fixes in `881969414`) |
 
 ## Verdict
 

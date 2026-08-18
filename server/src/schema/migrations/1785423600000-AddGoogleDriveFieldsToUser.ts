@@ -15,7 +15,7 @@ import { Kysely, sql } from 'kysely';
  * column set for a user, even when nothing about Google Drive is relevant to that query. A
  * cleaner design would move these two columns into their own `user_google_drive` table that's
  * only ever queried when Google Drive functionality is actually needed, and encrypt the token at
- * rest rather than storing it as plain text. See dev-docs/google-drive-album-sync-plan.md §2.5
+ * rest rather than storing it as plain text. See dev-docs/google-drive/album-sync-plan.md §2.5
  * for the full write-up — left as a follow-up to keep this change focused on wiring the feature
  * up end-to-end first.
  */

@@ -8,7 +8,7 @@ Wave 2보다 먼저 넣기로 한 기능. 라이브 운영 중 드러난 요구�
 | 브랜치 | `feat/google-drive-album-sync-v3.1.0` |
 | 선행 | Wave 1 (`a8959bd3e` + `881969414`), 라이브 검증 완료 |
 | 로드맵 상 위치 | Wave 1 → **1.5** → 2(드롭다운·용량 게이지) → 3(진행) → 4(선택 업로드·autoSync) |
-| 리뷰 | `google-drive-wave1.5-review.md` (2026-08-19) — 판정 §7, 전부 반영 |
+| 리뷰 | `dev-docs/review/google-drive/review/google-drive-wave1.5-design-20260819-0058-review.md` (2026-08-19) — 판정 §7, 전부 반영 |
 
 ---
 
@@ -229,7 +229,7 @@ DELETE /google-drive/albums/:id/exclude → 제외 해제
 - **권한 등급**: 읽기만 가능한 공유 앨범은 선택·동기화가 거부되는지(`AlbumDownload` 필요)
 - 시딩 후 구독자 집합이 기존 "연결된 소유자" 집합과 정확히 일치하는지 (리뷰 권고)
 
-## 7. 리뷰 판정 (`google-drive-wave1.5-review.md`, 2026-08-19) — 반영 완료
+## 7. 리뷰 판정 (`dev-docs/review/google-drive/review/google-drive-wave1.5-design-20260819-0058-review.md`, 2026-08-19) — 반영 완료
 
 | # | 질문 | 판정 | 반영 |
 |---|---|---|---|

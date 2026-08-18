@@ -1,15 +1,15 @@
 # Roadmap Review — Google Drive Feature Roadmap
 
-Design review of `google-drive-feature-roadmap.md` (Waves 1–4). No code exists yet, so this
+Design review of `dev-docs/google-drive/feature-roadmap.md` (Waves 1–4). No code exists yet, so this
 verifies the **design judgments** and the two load-bearing API premises, then surfaces the seams
 that will bite when the pending 1,809-photo sync actually runs.
 
 | | |
 |---|---|
-| Reviews | `google-drive-feature-roadmap.md` |
+| Reviews | `dev-docs/google-drive/feature-roadmap.md` |
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
 | Reviewed | 2026-08-15 |
-| Prior context | `google-drive-review-report-2.md`, `google-drive-failure-handling-plan.md` |
+| Prior context | `dev-docs/review/google-drive/review/google-drive-r1r3-fixes-20260814-1744-review.md`, `dev-docs/google-drive/failure-handling-plan.md` |
 
 ---
 

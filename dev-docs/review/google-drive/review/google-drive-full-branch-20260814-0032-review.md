@@ -1,7 +1,7 @@
 # Code Review Report — Google Drive Album Sync
 
 Independent verification of the feature branch, cross-checked against the author's own
-briefing (`google-drive-review-request.md`). Every claim in that document was **re-derived
+briefing (`dev-docs/review/google-drive/report/google-drive-full-branch-20260814-0032-report.md`). Every claim in that document was **re-derived
 from the actual code** rather than taken at face value.
 
 | | |

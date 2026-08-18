@@ -1,6 +1,6 @@
 # Code Review Request #2 — Fixes from the First Review
 
-Scoped follow-up. The first review (`google-drive-review-report.md`) confirmed the branch and
+Scoped follow-up. The first review (`dev-docs/review/google-drive/review/google-drive-full-branch-20260814-0032-review.md`) confirmed the branch and
 found three residual issues, R1–R3. This request covers **only the two commits written in
 response** — the code that fixed R1–R3 has itself not been reviewed yet, and R2's size
 verification in particular is new logic, not a tweak.

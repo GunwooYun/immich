@@ -31,7 +31,7 @@ export class GoogleDriveUploadTable {
   // Which Immich asset (photo/video) this row is tracking. Same cascade reasoning as userId: if
   // the underlying asset is permanently deleted from Immich, its upload-history row should go
   // with it (we're not trying to also delete the file from the user's Drive — see the "Non-goals"
-  // section of dev-docs/google-drive-album-sync-plan.md for why deletion sync is out of scope).
+  // section of dev-docs/google-drive/album-sync-plan.md for why deletion sync is out of scope).
   @ForeignKeyColumn(() => AssetTable, { onDelete: 'CASCADE', onUpdate: 'CASCADE', nullable: false, primary: true })
   assetId!: string;
 

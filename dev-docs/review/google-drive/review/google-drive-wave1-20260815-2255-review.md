@@ -9,7 +9,7 @@ end to end (service → DTO → banner).
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
 | Commit | `a8959bd3e` |
 | Reviewed | 2026-08-15 |
-| Request | `google-drive-review-request-3.md` |
+| Request | `dev-docs/review/google-drive/report/google-drive-wave1-20260815-1516-report.md` |
 
 ## Verdict
 
