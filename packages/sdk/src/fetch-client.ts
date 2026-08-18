@@ -1204,6 +1204,22 @@ export type FaceDto = {
     /** Face ID */
     id: string;
 };
+export type GoogleDriveAlbumDto = {
+    /** Album id */
+    albumId: string;
+    /** Album name */
+    albumName: string;
+    /** Number of assets in the album, excluding trashed */
+    assetCount: number;
+    /** Whether the authenticated user owns this album */
+    isOwner: boolean;
+    /** Name of the album owner */
+    ownerName: string;
+    /** Whether this album is backed up to the authenticated user Drive */
+    subscribed: boolean;
+    /** Assets already uploaded to the authenticated user Drive */
+    uploadedCount: number;
+};
 export type GoogleDriveAuthUrlResponseDto = {
     /** Google OAuth consent URL to redirect the browser to */
     url: string;
@@ -4842,6 +4858,42 @@ export function reassignFacesById({ id, faceDto }: {
         method: "PUT",
         body: faceDto
     })));
+}
+/**
+ * The album-selection list for Settings: everything the user can back up, whether they do, and
+ * how far along each one is *for them*.
+ */
+export function getGoogleDriveAlbums(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveAlbumDto[];
+    }>("/google-drive/albums", {
+        ...opts
+    }));
+}
+/**
+ * Stop backing an album up. Files already in Drive are left alone, and the upload ledger is
+ * kept so re-selecting later does not duplicate them.
+ */
+export function unsubscribeGoogleDriveAlbum({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/google-drive/albums/${encodeURIComponent(id)}`, {
+        ...opts,
+        method: "DELETE"
+    }));
+}
+/**
+ * Start backing an album up to *the caller's* Drive — not the album owner's. Requires download
+ * access, since copying a shared album into your own Google account is egress.
+ */
+export function subscribeGoogleDriveAlbum({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/google-drive/albums/${encodeURIComponent(id)}`, {
+        ...opts,
+        method: "PUT"
+    }));
 }
 /**
  * Sync an album to the owner's Google Drive

@@ -95,13 +95,133 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * The users who back this album up to their own Drive *right now*.
+   *
+   * Three conditions, and the third is the one that is easy to forget and expensive to get wrong:
+   *   1. they selected the album,
+   *   2. they have Drive connected (queueing for someone unconnected only creates jobs the worker
+   *      skips),
+   *   3. **they can still see the album** — joined through `album_user`.
+   *
+   * A selection row deliberately outlives an unshare (so re-sharing resumes without re-picking),
+   * which means the row by itself is not evidence of access. Without the membership join, a user
+   * would keep receiving copies of an album they can no longer open, silently and indefinitely.
+   *
+   * Takes an array because `addAssetsToAlbums` touches several albums at once: one query with
+   * `in (...)` rather than one per album in a loop.
+   */
+  @GenerateSql({ params: [[DummyValue.UUID]] })
+  getSubscribers(albumIds: string[]) {
+    return this.db
+      .selectFrom('google_drive_album')
+      .innerJoin('user_google_drive', 'user_google_drive.userId', 'google_drive_album.userId')
+      .innerJoin('album_user', (join) =>
+        join
+          .onRef('album_user.albumId', '=', 'google_drive_album.albumId')
+          .onRef('album_user.userId', '=', 'google_drive_album.userId'),
+      )
+      .where('google_drive_album.albumId', 'in', albumIds)
+      .select(['google_drive_album.albumId as albumId', 'google_drive_album.userId as userId'])
+      .execute();
+  }
+
+  /** Whether this user currently backs up this album. Used to gate the manual sync button. */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async isSubscribed(userId: string, albumId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('google_drive_album')
+      .select('albumId')
+      .where('userId', '=', userId)
+      .where('albumId', '=', albumId)
+      .executeTakeFirst();
+    return !!row;
+  }
+
+  /**
+   * Start backing up an album. Idempotent — pressing it twice is not an error, and re-selecting
+   * an album must not reset `createdAt` in a way that looks like a fresh choice.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  subscribe(userId: string, albumId: string) {
+    return this.db
+      .insertInto('google_drive_album')
+      .values({ userId, albumId })
+      .onConflict((oc) => oc.columns(['userId', 'albumId']).doNothing())
+      .execute();
+  }
+
+  /** Stop backing up an album. Leaves the ledger alone — what's already in Drive stays there. */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  unsubscribe(userId: string, albumId: string) {
+    return this.db
+      .deleteFrom('google_drive_album')
+      .where('userId', '=', userId)
+      .where('albumId', '=', albumId)
+      .execute();
+  }
+
+  /**
+   * The albums this user could back up, with their current selection state and progress.
+   *
+   * Scoped to albums the user is a member of (owned or shared), which is the same access notion
+   * the upload paths use. `uploaded` counts against *this* user's ledger — under the selection
+   * model the honest axis is the viewer's, not the owner's: the same album genuinely has a
+   * different backup state for each person who selected it.
+   */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getSubscribableAlbums(userId: string) {
+    return this.db
+      .selectFrom('album')
+      .innerJoin('album_user', 'album_user.albumId', 'album.id')
+      .innerJoin('album_user as owner_user', (join) =>
+        join.onRef('owner_user.albumId', '=', 'album.id').on('owner_user.role', '=', AlbumUserRole.Owner),
+      )
+      .innerJoin('user as owner', 'owner.id', 'owner_user.userId')
+      .leftJoin('google_drive_album', (join) =>
+        join.onRef('google_drive_album.albumId', '=', 'album.id').on('google_drive_album.userId', '=', userId),
+      )
+      .where('album_user.userId', '=', userId)
+      .where('album.deletedAt', 'is', null)
+      .select((eb) => [
+        'album.id as albumId',
+        'album.albumName as albumName',
+        'owner.name as ownerName',
+        eb('owner_user.userId', '=', userId).as('isOwner'),
+        eb('google_drive_album.albumId', 'is not', null).as('subscribed'),
+        eb
+          .selectFrom('album_asset')
+          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+          .whereRef('album_asset.albumId', '=', 'album.id')
+          .where('asset.deletedAt', 'is', null)
+          .select((inner) => inner.fn.countAll<number>().as('c'))
+          .as('assetCount'),
+        eb
+          .selectFrom('album_asset')
+          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+          .innerJoin('google_drive_upload', (join) =>
+            join
+              .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+              .on('google_drive_upload.userId', '=', userId),
+          )
+          .whereRef('album_asset.albumId', '=', 'album.id')
+          .where('asset.deletedAt', 'is', null)
+          .select((inner) => inner.fn.countAll<number>().as('c'))
+          .as('uploadedCount'),
+      ])
+      .orderBy('album.albumName')
+      .execute();
+  }
+
+  /**
    * Streams every (owner, asset) pair that *should* be in Google Drive but isn't yet — i.e. the
    * backlog the "queue all" admin job works through.
    *
    * An asset qualifies when all of these hold:
-   *   - it sits in an album whose owner has linked Google Drive (uploads always target the album
-   *     owner's account, never a contributor's — see AlbumService#getAlbumOwnerId);
-   *   - the owner has no ledger row for it yet;
+   *   - it sits in an album some user has *selected* for backup (see GoogleDriveAlbumTable — the
+   *     axis used to be album ownership, which couldn't express backing up a shared album or
+   *     declining to back up your own);
+   *   - that user still has access to the album, and has Drive connected;
+   *   - that user has no ledger row for it yet;
    *   - neither the asset nor its album has been soft-deleted.
    *
    * There is deliberately no "force" variant that drops the ledger anti-join. Dropping it would
@@ -124,15 +244,23 @@ export class GoogleDriveRepository {
       this.db
         .selectFrom('album_asset')
         .innerJoin('album', 'album.id', 'album_asset.albumId')
-        .innerJoin('album_user', 'album_user.albumId', 'album.id')
-        .innerJoin('user_google_drive', 'user_google_drive.userId', 'album_user.userId')
+        // The selection is the axis now, not ownership.
+        .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album.id')
+        // …but a selection row survives an unshare on purpose (so re-sharing resumes), which makes
+        // it useless as evidence of access. This join is what stops a user being fed copies of an
+        // album they can no longer open.
+        .innerJoin('album_user', (join) =>
+          join
+            .onRef('album_user.albumId', '=', 'album.id')
+            .onRef('album_user.userId', '=', 'google_drive_album.userId'),
+        )
+        .innerJoin('user_google_drive', 'user_google_drive.userId', 'google_drive_album.userId')
         .innerJoin('asset', 'asset.id', 'album_asset.assetId')
         .leftJoin('google_drive_upload', (join) =>
           join
             .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-            .onRef('google_drive_upload.userId', '=', 'album_user.userId'),
+            .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId'),
         )
-        .where('album_user.role', '=', AlbumUserRole.Owner)
         .where('album.deletedAt', 'is', null)
         .where('asset.deletedAt', 'is', null)
         .where('google_drive_upload.assetId', 'is', null)
@@ -145,15 +273,15 @@ export class GoogleDriveRepository {
             exists(
               selectFrom('google_drive_upload_error')
                 .select(sql`1`.as('one'))
-                .whereRef('google_drive_upload_error.userId', '=', 'album_user.userId')
+                .whereRef('google_drive_upload_error.userId', '=', 'google_drive_album.userId')
                 .where('google_drive_upload_error.error', 'in', [...GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES]),
             ),
           ),
         )
         // The resume path re-queues one user's pending set right after their block is cleared —
         // same query, scoped. Undefined (the backfill) means everyone.
-        .$if(userId !== undefined, (qb) => qb.where('album_user.userId', '=', userId!))
-        .select(['album_user.userId as userId', 'album_asset.assetId as assetId'])
+        .$if(userId !== undefined, (qb) => qb.where('google_drive_album.userId', '=', userId!))
+        .select(['google_drive_album.userId as userId', 'album_asset.assetId as assetId'])
         .distinct()
         .stream()
     );

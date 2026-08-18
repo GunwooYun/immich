@@ -314,6 +314,11 @@ export const getMocks = () => {
   googleDriveMock.upsertError.mockResolvedValue({ firstOfClass: false });
   googleDriveMock.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
   googleDriveMock.hasErrorOfClass.mockResolvedValue(false);
+  // Selection defaults: nobody backs anything up unless a test says so. Album adds therefore
+  // queue nothing by default, which is what most specs want.
+  googleDriveMock.getSubscribers.mockResolvedValue([]);
+  googleDriveMock.isSubscribed.mockResolvedValue(false);
+  googleDriveMock.getSubscribableAlbums.mockResolvedValue([]);
 
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),

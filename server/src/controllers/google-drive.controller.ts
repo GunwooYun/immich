@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
+  GoogleDriveAlbumDto,
   GoogleDriveAuthUrlResponseDto,
   GoogleDrivePickerConfigResponseDto,
   GoogleDriveSetFolderDto,
@@ -250,6 +251,54 @@ export class GoogleDriveController {
   })
   async resumeGoogleDriveUploads(@Auth() auth: AuthDto): Promise<void> {
     await this.googleDriveService.resumeUploads(auth);
+  }
+
+  /**
+   * The album-selection list for Settings: everything the user can back up, whether they do, and
+   * how far along each one is *for them*.
+   */
+  @Get('albums')
+  @Authenticated()
+  @Endpoint({
+    summary: 'List albums available for Google Drive backup',
+    description:
+      'Return every album the authenticated user can see, with whether it is currently backed up to their Drive and how many of its assets have already been uploaded to it. Counts are per-viewer, not per-owner.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDriveAlbums(@Auth() auth: AuthDto): Promise<GoogleDriveAlbumDto[]> {
+    return this.googleDriveService.getSubscribableAlbums(auth);
+  }
+
+  /**
+   * Start backing an album up to *the caller's* Drive — not the album owner's. Requires download
+   * access, since copying a shared album into your own Google account is egress.
+   */
+  @Put('albums/:id')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Back up an album to Google Drive',
+    description:
+      'Add an album to the authenticated user Google Drive backups and immediately queue everything in it that is not already uploaded. Requires download access to the album.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async subscribeGoogleDriveAlbum(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
+    await this.googleDriveService.subscribeAlbum(auth, id);
+  }
+
+  /**
+   * Stop backing an album up. Files already in Drive are left alone, and the upload ledger is
+   * kept so re-selecting later does not duplicate them.
+   */
+  @Delete('albums/:id')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Stop backing up an album to Google Drive',
+    description:
+      'Remove an album from the authenticated user Google Drive backups. Files already uploaded stay in Drive and stay recorded, so re-adding the album later does not re-upload them.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async unsubscribeGoogleDriveAlbum(@Auth() auth: AuthDto, @Param() { id }: UUIDParamDto): Promise<void> {
+    await this.googleDriveService.unsubscribeAlbum(auth, id);
   }
 
   @Post('albums/:id/sync')

@@ -82,6 +82,27 @@ const GoogleDrivePickerConfigResponseSchema = z
   })
   .meta({ id: 'GoogleDrivePickerConfigResponseDto' });
 
+/**
+ * One row of the "which albums do I back up" list.
+ *
+ * Counts are on the *viewer's* axis, not the owner's. Under the selection model the same shared
+ * album has a genuinely different backup state per person — `uploadedCount` means "already in
+ * *your* Drive". `ownerName` is carried so the UI can say whose album it is, which matters when
+ * you are backing up somebody else's.
+ */
+const GoogleDriveAlbumSchema = z
+  .object({
+    albumId: z.string().describe('Album id'),
+    albumName: z.string().describe('Album name'),
+    ownerName: z.string().describe('Name of the album owner'),
+    isOwner: z.boolean().describe('Whether the authenticated user owns this album'),
+    subscribed: z.boolean().describe('Whether this album is backed up to the authenticated user Drive'),
+    assetCount: z.int().describe('Number of assets in the album, excluding trashed'),
+    uploadedCount: z.int().describe('Assets already uploaded to the authenticated user Drive'),
+  })
+  .meta({ id: 'GoogleDriveAlbumDto' });
+
+export class GoogleDriveAlbumDto extends createZodDto(GoogleDriveAlbumSchema) {}
 export class GoogleDriveAuthUrlResponseDto extends createZodDto(GoogleDriveAuthUrlResponseSchema) {}
 export class GoogleDrivePickerConfigResponseDto extends createZodDto(GoogleDrivePickerConfigResponseSchema) {}
 export class GoogleDriveSetFolderDto extends createZodDto(GoogleDriveSetFolderSchema) {}

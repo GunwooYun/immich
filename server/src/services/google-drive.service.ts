@@ -1,10 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { drive_v3, google } from 'googleapis';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
-  AlbumUserRole,
   GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES,
   GoogleDriveUploadErrorClass,
   JobName,
@@ -807,6 +806,71 @@ export class GoogleDriveService extends BaseService {
   }
 
   /**
+   * The albums this user could back up, with selection state and per-user progress.
+   *
+   * Counts are on the *viewer's* axis, not the owner's: under the selection model the same shared
+   * album genuinely has a different backup state for each person who selected it, so "3,878 of
+   * 4,662 uploaded" means "to your Drive".
+   */
+  async getSubscribableAlbums(auth: AuthDto) {
+    const rows = await this.googleDriveRepository.getSubscribableAlbums(auth.user.id);
+    return rows.map((row) => ({
+      albumId: row.albumId,
+      albumName: row.albumName,
+      ownerName: row.ownerName,
+      // Kysely types SQL booleans as `SqlBool` (number | boolean) because drivers differ on how
+      // they hand back `true`. Normalising here keeps the DTO honestly boolean.
+      isOwner: !!row.isOwner,
+      subscribed: !!row.subscribed,
+      assetCount: Number(row.assetCount ?? 0),
+      uploadedCount: Number(row.uploadedCount ?? 0),
+    }));
+  }
+
+  /**
+   * Start backing an album up to the caller's Drive, and immediately queue whatever is already in
+   * it — turning something on and having nothing happen until an unrelated future trigger is not
+   * what the switch appears to promise (the same reasoning as the resume button).
+   *
+   * Gated on download access rather than read access: see syncAlbum for why.
+   */
+  async subscribeAlbum(auth: AuthDto, albumId: string): Promise<void> {
+    if (!(await this.isEnabled())) {
+      throw new BadRequestException('Google Drive sync is not enabled on this server');
+    }
+    await this.requireAccess({ auth, permission: Permission.AlbumDownload, ids: [albumId] });
+
+    const credentials = await this.googleDriveRepository.getCredentials(auth.user.id);
+    if (!credentials) {
+      throw new BadRequestException('Connect Google Drive before choosing albums to back up');
+    }
+
+    await this.googleDriveRepository.subscribe(auth.user.id, albumId);
+
+    const album = await this.albumRepository.getById(albumId, { withAssets: true }, auth.user.id);
+    const assetIds = (album?.assets ?? []).map((asset) => asset.id);
+    await queueGoogleDriveUploads(
+      { googleDrive: this.googleDriveRepository, job: this.jobRepository },
+      auth.user.id,
+      assetIds,
+      true,
+    );
+  }
+
+  /**
+   * Stop backing an album up. Deliberately does *not* touch the ledger — what is already in the
+   * user's Drive stays there, and stays recorded, so re-selecting later doesn't re-upload it.
+   *
+   * Jobs already queued for this album still run: the worker validates the ledger and the
+   * connection, not the subscription, so a few photos may still land. Accepted rather than paying
+   * for a per-job membership join; the window is only ever "selected then immediately unselected".
+   */
+  async unsubscribeAlbum(auth: AuthDto, albumId: string): Promise<void> {
+    await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [albumId] });
+    await this.googleDriveRepository.unsubscribe(auth.user.id, albumId);
+  }
+
+  /**
    * Triggers a manual "sync this whole album to Google Drive" action — this is the fallback
    * button a user can press in the album view (e.g. if some assets failed to auto-upload
    * earlier, or the album existed before Google Drive was connected at all).
@@ -836,25 +900,26 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Google Drive sync is not enabled on this server');
     }
 
-    // Basic read-access check: the caller must at least be able to see this album.
-    await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [albumId] });
+    // Download-level access, not merely read. Copying someone else's shared album into your own
+    // Google account is data egress: if a share is ever restricted to viewing without
+    // downloading, backing it up must be refused for the same reason downloading is. Same
+    // requireAccess call, stronger permission.
+    await this.requireAccess({ auth, permission: Permission.AlbumDownload, ids: [albumId] });
 
     const album = await this.albumRepository.getById(albumId, { withAssets: true }, auth.user.id);
     if (!album) {
       throw new BadRequestException('Album not found');
     }
 
-    // Album ownership in Immich isn't a plain column on the album table — it's expressed as a
-    // row in `album_user` with role = 'owner'. So we look through the album's user list for an
-    // entry that (a) has the Owner role and (b) belongs to the person making this request.
-    const isOwner = album.albumUsers.some(({ role, user }) => role === AlbumUserRole.Owner && user.id === auth.user.id);
-    if (!isOwner) {
-      throw new ForbiddenException('Only the album owner can sync it to Google Drive');
+    // This used to be owner-only, to stop a shared-album editor from pushing files into the
+    // *owner's* personal Drive. That attack no longer exists: uploads now go to the Drive of
+    // whoever selected the album, so the only Drive a caller can ever write to is their own. What
+    // replaces the check is a subscription check — you can sync what you back up.
+    if (!(await this.googleDriveRepository.isSubscribed(auth.user.id, albumId))) {
+      throw new BadRequestException('Add this album to your Google Drive backups before syncing it');
     }
 
-    // From here on, `ownerId` and `auth.user.id` are the same person (we just verified that
-    // above), but naming it `ownerId` makes the intent at each call site below clearer: this is
-    // whose Google Drive the assets are being uploaded to, not just "the caller".
+    // Uploads target the caller, not the album's owner — the whole point of the selection model.
     const ownerId = auth.user.id;
     // album.assets is typed as possibly undefined because Kysely's `.$if(options.withAssets, ...)`
     // can't statically know `withAssets: true` was actually passed at this call site — at runtime
@@ -866,7 +931,7 @@ export class GoogleDriveService extends BaseService {
       return; // Empty album — nothing to sync.
     }
 
-    // Shared with AlbumService's automatic add-to-album path: skip anything already in the owner's
+    // Shared with AlbumService's automatic add-to-album path: skip anything already in the caller's
     // ledger, then bulk-enqueue the rest. Repeated clicks of the "sync" button are therefore cheap
     // and never produce duplicate Drive files. See utils/google-drive.ts for the reasoning.
     // `true` rather than another config read: this method already refused at the top if the

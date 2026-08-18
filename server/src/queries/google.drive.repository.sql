@@ -34,21 +34,99 @@ delete from "user_google_drive"
 where
   "userId" = $1
 
+-- GoogleDriveRepository.getSubscribers
+select
+  "google_drive_album"."albumId" as "albumId",
+  "google_drive_album"."userId" as "userId"
+from
+  "google_drive_album"
+  inner join "user_google_drive" on "user_google_drive"."userId" = "google_drive_album"."userId"
+  inner join "album_user" on "album_user"."albumId" = "google_drive_album"."albumId"
+  and "album_user"."userId" = "google_drive_album"."userId"
+where
+  "google_drive_album"."albumId" in ($1)
+
+-- GoogleDriveRepository.isSubscribed
+select
+  "albumId"
+from
+  "google_drive_album"
+where
+  "userId" = $1
+  and "albumId" = $2
+
+-- GoogleDriveRepository.subscribe
+insert into
+  "google_drive_album" ("userId", "albumId")
+values
+  ($1, $2)
+on conflict ("userId", "albumId") do nothing
+
+-- GoogleDriveRepository.unsubscribe
+delete from "google_drive_album"
+where
+  "userId" = $1
+  and "albumId" = $2
+
+-- GoogleDriveRepository.getSubscribableAlbums
+select
+  "album"."id" as "albumId",
+  "album"."albumName" as "albumName",
+  "owner"."name" as "ownerName",
+  "owner_user"."userId" = $1 as "isOwner",
+  "google_drive_album"."albumId" is not null as "subscribed",
+  (
+    select
+      count(*) as "c"
+    from
+      "album_asset"
+      inner join "asset" on "asset"."id" = "album_asset"."assetId"
+    where
+      "album_asset"."albumId" = "album"."id"
+      and "asset"."deletedAt" is null
+  ) as "assetCount",
+  (
+    select
+      count(*) as "c"
+    from
+      "album_asset"
+      inner join "asset" on "asset"."id" = "album_asset"."assetId"
+      inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
+      and "google_drive_upload"."userId" = $2
+    where
+      "album_asset"."albumId" = "album"."id"
+      and "asset"."deletedAt" is null
+  ) as "uploadedCount"
+from
+  "album"
+  inner join "album_user" on "album_user"."albumId" = "album"."id"
+  inner join "album_user" as "owner_user" on "owner_user"."albumId" = "album"."id"
+  and "owner_user"."role" = $3
+  inner join "user" as "owner" on "owner"."id" = "owner_user"."userId"
+  left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
+  and "google_drive_album"."userId" = $4
+where
+  "album_user"."userId" = $5
+  and "album"."deletedAt" is null
+order by
+  "album"."albumName"
+
 -- GoogleDriveRepository.streamPendingUploads
 select distinct
-  "album_user"."userId" as "userId",
+  "google_drive_album"."userId" as "userId",
   "album_asset"."assetId" as "assetId"
 from
   "album_asset"
   inner join "album" on "album"."id" = "album_asset"."albumId"
+  inner join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
   inner join "album_user" on "album_user"."albumId" = "album"."id"
-  inner join "user_google_drive" on "user_google_drive"."userId" = "album_user"."userId"
+  and "album_user"."userId" = "google_drive_album"."userId"
+  inner join "user_google_drive" on "user_google_drive"."userId" = "google_drive_album"."userId"
   inner join "asset" on "asset"."id" = "album_asset"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
-  and "google_drive_upload"."userId" = "album_user"."userId"
+  and "google_drive_upload"."userId" = "google_drive_album"."userId"
 where
-  "album_user"."role" = $1
-  and "album"."deletedAt" is null
+  "album"."deletedAt" is null
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
   and not exists (
@@ -57,8 +135,8 @@ where
     from
       "google_drive_upload_error"
     where
-      "google_drive_upload_error"."userId" = "album_user"."userId"
-      and "google_drive_upload_error"."error" in ($2, $3)
+      "google_drive_upload_error"."userId" = "google_drive_album"."userId"
+      and "google_drive_upload_error"."error" in ($1, $2)
   )
 
 -- GoogleDriveRepository.getUploadedAssetIds
@@ -150,6 +228,17 @@ order by
   end
 limit
   $5
+
+-- GoogleDriveRepository.hasErrorOfClass
+select
+  "assetId"
+from
+  "google_drive_upload_error"
+where
+  "userId" = $1
+  and "error" = $2
+limit
+  $3
 
 -- GoogleDriveRepository.clearErrors
 delete from "google_drive_upload_error"

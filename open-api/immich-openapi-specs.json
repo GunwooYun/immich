@@ -6280,6 +6280,150 @@
         "x-immich-state": "Stable"
       }
     },
+    "/google-drive/albums": {
+      "get": {
+        "description": "Return every album the authenticated user can see, with whether it is currently backed up to their Drive and how many of its assets have already been uploaded to it. Counts are per-viewer, not per-owner.",
+        "operationId": "getGoogleDriveAlbums",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GoogleDriveAlbumDto"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "The album-selection list for Settings: everything the user can back up, whether they do, and\nhow far along each one is *for them*.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/google-drive/albums/{id}": {
+      "delete": {
+        "description": "Remove an album from the authenticated user Google Drive backups. Files already uploaded stay in Drive and stay recorded, so re-adding the album later does not re-upload them.",
+        "operationId": "unsubscribeGoogleDriveAlbum",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Stop backing an album up. Files already in Drive are left alone, and the upload ledger is\nkept so re-selecting later does not duplicate them.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      },
+      "put": {
+        "description": "Add an album to the authenticated user Google Drive backups and immediately queue everything in it that is not already uploaded. Requires download access to the album.",
+        "operationId": "subscribeGoogleDriveAlbum",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Start backing an album up to *the caller's* Drive — not the album owner's. Requires download\naccess, since copying a shared album into your own Google account is egress.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/albums/{id}/sync": {
       "post": {
         "description": "Queue every not-yet-uploaded asset in the album for upload. Only the album owner may call this, and assets already recorded in the upload ledger are skipped rather than duplicated.",
@@ -19528,6 +19672,52 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "GoogleDriveAlbumDto": {
+        "properties": {
+          "albumId": {
+            "description": "Album id",
+            "type": "string"
+          },
+          "albumName": {
+            "description": "Album name",
+            "type": "string"
+          },
+          "assetCount": {
+            "description": "Number of assets in the album, excluding trashed",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "isOwner": {
+            "description": "Whether the authenticated user owns this album",
+            "type": "boolean"
+          },
+          "ownerName": {
+            "description": "Name of the album owner",
+            "type": "string"
+          },
+          "subscribed": {
+            "description": "Whether this album is backed up to the authenticated user Drive",
+            "type": "boolean"
+          },
+          "uploadedCount": {
+            "description": "Assets already uploaded to the authenticated user Drive",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "albumId",
+          "albumName",
+          "assetCount",
+          "isOwner",
+          "ownerName",
+          "subscribed",
+          "uploadedCount"
+        ],
         "type": "object"
       },
       "GoogleDriveAuthUrlResponseDto": {

@@ -57,6 +57,58 @@ class GoogleDriveApi {
     }
   }
 
+  /// The album-selection list for Settings: everything the user can back up, whether they do, and how far along each one is *for them*.
+  ///
+  /// Return every album the authenticated user can see, with whether it is currently backed up to their Drive and how many of its assets have already been uploaded to it. Counts are per-viewer, not per-owner.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  Future<Response> getGoogleDriveAlbumsWithHttpInfo({ Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/albums';
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'GET',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// The album-selection list for Settings: everything the user can back up, whether they do, and how far along each one is *for them*.
+  ///
+  /// Return every album the authenticated user can see, with whether it is currently backed up to their Drive and how many of its assets have already been uploaded to it. Counts are per-viewer, not per-owner.
+  Future<List<GoogleDriveAlbumDto>?> getGoogleDriveAlbums({ Future<void>? abortTrigger, }) async {
+    final response = await getGoogleDriveAlbumsWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      final responseBody = await _decodeBodyBytes(response);
+      return (await apiClient.deserializeAsync(responseBody, 'List<GoogleDriveAlbumDto>') as List)
+        .cast<GoogleDriveAlbumDto>()
+        .toList(growable: false);
+
+    }
+    return null;
+  }
+
   /// Called by the frontend when the user clicks \"Connect Google Drive\" in Settings. Requires an authenticated Immich session (@Authenticated()) because we need to know which Immich user is asking, so we can embed their userId into the signed `state` token that Google will hand back to us in the callback below.  The frontend simply navigates the browser to the returned `url` — from that point on, the user is interacting with Google's own consent screen, not Immich.
   ///
   /// Return the Google consent-screen URL the browser should navigate to. Also sets a short-lived HttpOnly cookie holding the OAuth `state`, which the callback requires in order to prove the browser finishing the flow is the one that started it.
@@ -361,6 +413,56 @@ class GoogleDriveApi {
     }
   }
 
+  /// Start backing an album up to *the caller's* Drive — not the album owner's. Requires download access, since copying a shared album into your own Google account is egress.
+  ///
+  /// Add an album to the authenticated user Google Drive backups and immediately queue everything in it that is not already uploaded. Requires download access to the album.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<Response> subscribeGoogleDriveAlbumWithHttpInfo(String id, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/albums/{id}'
+      .replaceAll('{id}', id);
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'PUT',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// Start backing an album up to *the caller's* Drive — not the album owner's. Requires download access, since copying a shared album into your own Google account is egress.
+  ///
+  /// Add an album to the authenticated user Google Drive backups and immediately queue everything in it that is not already uploaded. Requires download access to the album.
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<void> subscribeGoogleDriveAlbum(String id, { Future<void>? abortTrigger, }) async {
+    final response = await subscribeGoogleDriveAlbumWithHttpInfo(id, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
+
   /// Sync an album to the owner's Google Drive
   ///
   /// Queue every not-yet-uploaded asset in the album for upload. Only the album owner may call this, and assets already recorded in the upload ledger are skipped rather than duplicated.
@@ -406,6 +508,56 @@ class GoogleDriveApi {
   /// * [String] id (required):
   Future<void> syncAlbumToGoogleDrive(String id, { Future<void>? abortTrigger, }) async {
     final response = await syncAlbumToGoogleDriveWithHttpInfo(id, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
+
+  /// Stop backing an album up. Files already in Drive are left alone, and the upload ledger is kept so re-selecting later does not duplicate them.
+  ///
+  /// Remove an album from the authenticated user Google Drive backups. Files already uploaded stay in Drive and stay recorded, so re-adding the album later does not re-upload them.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<Response> unsubscribeGoogleDriveAlbumWithHttpInfo(String id, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/albums/{id}'
+      .replaceAll('{id}', id);
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'DELETE',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// Stop backing an album up. Files already in Drive are left alone, and the upload ledger is kept so re-selecting later does not duplicate them.
+  ///
+  /// Remove an album from the authenticated user Google Drive backups. Files already uploaded stay in Drive and stay recorded, so re-adding the album later does not re-upload them.
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<void> unsubscribeGoogleDriveAlbum(String id, { Future<void>? abortTrigger, }) async {
+    final response = await unsubscribeGoogleDriveAlbumWithHttpInfo(id, abortTrigger: abortTrigger,);
     if (response.statusCode >= HttpStatus.badRequest) {
       throw ApiException(response.statusCode, await _decodeBodyBytes(response));
     }

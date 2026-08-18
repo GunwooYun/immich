@@ -959,8 +959,12 @@ describe(AlbumService.name, () => {
       expect(mocks.access.album.checkSharedLinkAccess).toHaveBeenCalled();
     });
 
-    it('should queue Google Drive uploads for the album owner, not the user who added the assets', async () => {
+    it('should queue uploads for whoever backs the album up, not its owner or the acting user', async () => {
+      // Three distinct people, so nothing can pass by coincidence: the owner, the editor adding
+      // the photo, and a third user who is the one actually backing this album up. Only the last
+      // one's Drive should be touched — which is the whole point of the selection model.
       const editor = UserFactory.create();
+      const subscriber = UserFactory.create();
       const album = AlbumFactory.from().albumUser({ userId: editor.id, role: AlbumUserRole.Editor }).build();
       const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
       const asset = AssetFactory.create();
@@ -969,15 +973,60 @@ describe(AlbumService.name, () => {
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
       mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getSubscribers.mockResolvedValue([{ albumId: album.id, userId: subscriber.id }]);
 
       await sut.addAssets(AuthFactory.create(editor), album.id, { ids: [asset.id] });
 
-      // Uploads land in the *owner's* Drive, so the job must carry the owner's id. Using the acting
-      // user's id would push a shared album's photos into a contributor's personal Drive instead.
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.GoogleDriveUpload, data: { userId: owner.id, assetId: asset.id } },
+        { name: JobName.GoogleDriveUpload, data: { userId: subscriber.id, assetId: asset.id } },
       ]);
-      expect(owner.id).not.toBe(editor.id);
+      expect(subscriber.id).not.toBe(owner.id);
+      expect(subscriber.id).not.toBe(editor.id);
+    });
+
+    it('should queue for every subscriber of a shared album', async () => {
+      // Two people backing up the same album each get their own copy; the ledger is per-user so
+      // this is not a duplicate, it is two independent backups.
+      const [a, b] = [UserFactory.create(), UserFactory.create()];
+      const album = AlbumFactory.create();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const asset = AssetFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: googleDriveEnabled });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getSubscribers.mockResolvedValue([
+        { albumId: album.id, userId: a.id },
+        { albumId: album.id, userId: b.id },
+      ]);
+
+      await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
+
+      expect(mocks.job.queueAll).toHaveBeenCalledTimes(2);
+      for (const user of [a, b]) {
+        expect(mocks.job.queueAll).toHaveBeenCalledWith([
+          { name: JobName.GoogleDriveUpload, data: { userId: user.id, assetId: asset.id } },
+        ]);
+      }
+    });
+
+    it('should queue nothing when nobody backs the album up', async () => {
+      // The new default. An album that no one selected produces no work at all — not even a
+      // ledger lookup, since there is no user to look it up for.
+      const album = AlbumFactory.create();
+      const { user: owner } = album.albumUsers.find(({ role }) => role === AlbumUserRole.Owner)!;
+      const asset = AssetFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: googleDriveEnabled });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
+
+      expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
 
     it('should not queue Google Drive uploads for assets already in the ledger', async () => {
@@ -989,6 +1038,7 @@ describe(AlbumService.name, () => {
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset1.id, asset2.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
       mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getSubscribers.mockResolvedValue([{ albumId: album.id, userId: owner.id }]);
       mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([asset1.id]));
 
       await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset1.id, asset2.id] });
@@ -1011,12 +1061,14 @@ describe(AlbumService.name, () => {
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
       mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+      mocks.googleDrive.getSubscribers.mockResolvedValue([{ albumId: album.id, userId: owner.id }]);
       mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([asset.id]));
 
       await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
 
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
-      // Proves the ledger is what suppressed the job, rather than the feature being off.
+      // Proves the ledger is what suppressed the job, rather than the feature being off or nobody
+      // subscribing — both of which would also produce "no jobs" for the wrong reason.
       expect(mocks.googleDrive.getUploadedAssetIds).toHaveBeenCalled();
     });
 
@@ -1034,6 +1086,7 @@ describe(AlbumService.name, () => {
 
       await sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] });
 
+      expect(mocks.googleDrive.getSubscribers).not.toHaveBeenCalled();
       expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });

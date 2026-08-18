@@ -19,12 +19,16 @@
   // GoogleDriveController deliberately uses long Drive-specific method names — otherwise this would
   // be importing a bare `getStatus`/`disconnect` and needing an alias on every single line.
   import {
+    type GoogleDriveAlbumDto,
     disconnectGoogleDrive,
+    getGoogleDriveAlbums,
     getGoogleDriveAuthUrl,
     getGoogleDrivePickerConfig,
     getGoogleDriveStatus,
     resumeGoogleDriveUploads,
     setGoogleDriveFolder,
+    subscribeGoogleDriveAlbum,
+    unsubscribeGoogleDriveAlbum,
   } from '@immich/sdk';
   import { Alert, Button, LoadingSpinner, toastManager } from '@immich/ui';
   import { onMount } from 'svelte';
@@ -51,6 +55,13 @@
   let failedCount = $state(0);
   let blockedReason = $state<string | null>(null);
   let resuming = $state(false);
+  // Which albums are backed up to *this* user's Drive. Uploads follow this list, not album
+  // ownership — an album shared with you can be backed up by you, and one you own need not be.
+  // Counts are per-viewer: "uploaded" means "already in your Drive".
+  let albums = $state<GoogleDriveAlbumDto[]>([]);
+  // Guards individual checkboxes so a slow round trip (subscribing also queues the album's
+  // contents) can't be double-fired.
+  let busyAlbumId = $state<string | null>(null);
 
   const loadStatus = async () => {
     const status = await getGoogleDriveStatus();
@@ -60,6 +71,24 @@
     folderName = status.folderName ?? null;
     failedCount = status.failedCount;
     blockedReason = status.blockedReason ?? null;
+    albums = connected ? await getGoogleDriveAlbums() : [];
+  };
+
+  // Toggling is optimistic-free on purpose: subscribing queues the album's pending assets
+  // server-side, so re-reading the list afterwards is what makes the counts honest immediately
+  // rather than after the next visit.
+  const handleToggleAlbum = async (album: GoogleDriveAlbumDto) => {
+    busyAlbumId = album.albumId;
+    try {
+      await (album.subscribed
+        ? unsubscribeGoogleDriveAlbum({ id: album.albumId })
+        : subscribeGoogleDriveAlbum({ id: album.albumId }));
+      albums = await getGoogleDriveAlbums();
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_update_google_drive_albums'));
+    } finally {
+      busyAlbumId = null;
+    }
   };
 
   onMount(async () => {
@@ -289,6 +318,41 @@
               description={$t('google_drive_folder_id_description')}
               bind:value={folderId}
             />
+            <!-- The album list is the heart of the feature: it is what decides whose Drive gets
+                 what. Shared albums name their owner, so backing up someone else's album is a
+                 visible choice rather than an accident. -->
+            <div class="flex flex-col gap-1">
+              <p class="text-sm font-medium">{$t('google_drive_albums')}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{$t('google_drive_albums_description')}</p>
+              {#if albums.length === 0}
+                <p class="text-sm">{$t('google_drive_albums_empty')}</p>
+              {:else}
+                <ul class="mt-1 flex flex-col gap-1">
+                  {#each albums as album (album.albumId)}
+                    <li class="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        id={`gd-album-${album.albumId}`}
+                        checked={album.subscribed}
+                        disabled={busyAlbumId === album.albumId}
+                        onchange={() => handleToggleAlbum(album)}
+                      />
+                      <label for={`gd-album-${album.albumId}`} class="flex-1">
+                        {album.albumName}
+                        {#if !album.isOwner}
+                          <span class="text-xs text-gray-500 dark:text-gray-400">
+                            ({$t('google_drive_album_owned_by', { values: { name: album.ownerName } })})
+                          </span>
+                        {/if}
+                      </label>
+                      <span class="text-xs text-gray-500 dark:text-gray-400">
+                        {album.uploadedCount} / {album.assetCount}
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
             <div class="flex justify-between">
               <Button shape="round" type="button" size="small" color="danger" onclick={handleDisconnect}>
                 {$t('google_drive_disconnect')}

@@ -197,8 +197,10 @@ export class AlbumService extends BaseService {
       await this.eventRepository.emit('AlbumUpdate', { id, userIds, recipientIds });
     }
 
-    // Google Drive integration: mirror each newly added asset to the album *owner's* Drive (not
-    // the acting user's — see queueGoogleDriveUploads/getAlbumOwnerId below for why).
+    // Google Drive integration: mirror each newly added asset to the Drive of every user who has
+    // *selected* this album for backup — which is not the same thing as the album's owner. The
+    // owner may have no Drive connected at all, and someone the album is shared with may be the
+    // one backing it up; see GoogleDriveAlbumTable.
     //
     // Queued last, deliberately. queueAll writes to Redis, which adding to an album never used to
     // depend on; doing it earlier meant an unreachable Redis threw *after* the album_asset rows
@@ -206,12 +208,7 @@ export class AlbumService extends BaseService {
     // AlbumUpdate event unsent — so shared-album members never learned about the new photos. With
     // the queueing last, that failure costs only the Drive upload, which the admin backfill job
     // can pick up later anyway.
-    await queueGoogleDriveUploads(
-      { googleDrive: this.googleDriveRepository, job: this.jobRepository },
-      this.getAlbumOwnerId(album),
-      results.filter((r) => r.success).map((r) => r.id),
-      await this.isGoogleDriveEnabled(),
-    );
+    await this.queueGoogleDriveUploadsForAlbums([id], () => results.filter((r) => r.success).map((r) => r.id));
 
     return results;
   }
@@ -243,11 +240,11 @@ export class AlbumService extends BaseService {
     // Google Drive integration: this endpoint can add assets to *multiple* albums (possibly
     // owned by different people) in one call, so we can't just queue upload jobs as we go the
     // way addAssets() above does — different albums here can have different owners, and we want
-    // to batch all the upload jobs for a given owner into a single queueAll() call at the end
-    // (see the loop right after addAssetIdsToAlbums below) rather than one queue() call per
-    // asset. This map accumulates "which assets need uploading, grouped by whose Drive they go
-    // to" as we walk through each album.
-    const pendingUploadsByOwner = new Map<string, Set<string>>();
+    // to batch all the upload jobs into as few queueAll() calls as possible at the end rather than
+    // one queue() call per asset. This map accumulates "which assets were added to which album";
+    // *whose* Drive each one goes to is resolved once at the end, in a single subscriber query
+    // across every album touched, instead of one query per album inside this loop.
+    const addedAssetsByAlbum = new Map<string, Set<string>>();
     for (const albumId of allowedAlbumIds) {
       const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...allowedAssetIds]);
       const notPresentAssetIds = [...allowedAssetIds.difference(existingAssetIds)];
@@ -262,15 +259,13 @@ export class AlbumService extends BaseService {
         albumAssetValues.push({ albumId, assetId });
       }
 
-      // Record these assets against the *album's owner* (not necessarily the person making this
-      // request — someone with edit access to a shared album can add assets too). We only decide
-      // whether to actually queue an upload job later, after checking the dedup ledger.
-      const ownerId = this.getAlbumOwnerId(album);
-      const pending = pendingUploadsByOwner.get(ownerId) ?? new Set<string>();
+      // Remember what landed where. Which users back this album up (and therefore whose Drive
+      // these go to) is looked up after the loop — see queueGoogleDriveUploadsForAlbums.
+      const added = addedAssetsByAlbum.get(albumId) ?? new Set<string>();
       for (const assetId of notPresentAssetIds) {
-        pending.add(assetId);
+        added.add(assetId);
       }
-      pendingUploadsByOwner.set(ownerId, pending);
+      addedAssetsByAlbum.set(albumId, added);
 
       await this.albumRepository.update(
         albumId,
@@ -295,18 +290,10 @@ export class AlbumService extends BaseService {
 
     // Queued after both the album_asset write and the AlbumUpdate events, for the same reason as
     // addAssets above: queueAll depends on Redis, which this endpoint never used to need, so a
-    // Redis outage must not cost shared-album members their update notifications. One queueAll per
-    // distinct owner, batching that owner's pending assets together. The enabled check is resolved
-    // once here rather than per owner — it's the same server-wide answer for every iteration.
-    const driveEnabled = await this.isGoogleDriveEnabled();
-    for (const [ownerId, assetIds] of pendingUploadsByOwner) {
-      await queueGoogleDriveUploads(
-        { googleDrive: this.googleDriveRepository, job: this.jobRepository },
-        ownerId,
-        [...assetIds],
-        driveEnabled,
-      );
-    }
+    // Redis outage must not cost shared-album members their update notifications.
+    await this.queueGoogleDriveUploadsForAlbums(addedAssetsByAlbum.keys().toArray(), (albumId) => [
+      ...(addedAssetsByAlbum.get(albumId) ?? []),
+    ]);
 
     return results;
   }
@@ -319,6 +306,59 @@ export class AlbumService extends BaseService {
    * different notion of "enabled" here would mean queueing work the worker discards, or skipping
    * work it would have done.
    */
+  /**
+   * Queues Drive uploads for assets just added to `albumIds`, to the Drive of every user who backs
+   * those albums up.
+   *
+   * `getAssetIds` is a callback rather than a map so both callers can keep their own shape:
+   * `addAssets` has one album and a result list, `addAssetsToAlbums` has a map it built while
+   * looping.
+   *
+   * The subscriber lookup is one query for *all* the albums touched, not one per album. It is also
+   * the only place that decides whose Drive is involved — and it resolves that through current
+   * album membership, so a user who selected an album but has since lost access to it gets
+   * nothing (see GoogleDriveRepository#getSubscribers).
+   *
+   * Assets are accumulated per subscriber before queueing, because one user may back up several of
+   * the albums in a single `addAssetsToAlbums` call and should get one batched queue write rather
+   * than one per album. The Set also collapses an asset added to two of their albums at once.
+   */
+  private async queueGoogleDriveUploadsForAlbums(
+    albumIds: string[],
+    getAssetIds: (albumId: string) => string[],
+  ): Promise<void> {
+    if (albumIds.length === 0 || !(await this.isGoogleDriveEnabled())) {
+      return;
+    }
+
+    const subscriptions = await this.googleDriveRepository.getSubscribers(albumIds);
+    if (subscriptions.length === 0) {
+      return;
+    }
+
+    const assetsByUser = new Map<string, Set<string>>();
+    for (const { userId, albumId } of subscriptions) {
+      const assetIds = getAssetIds(albumId);
+      if (assetIds.length === 0) {
+        continue;
+      }
+      const pending = assetsByUser.get(userId) ?? new Set<string>();
+      for (const assetId of assetIds) {
+        pending.add(assetId);
+      }
+      assetsByUser.set(userId, pending);
+    }
+
+    for (const [userId, assetIds] of assetsByUser) {
+      await queueGoogleDriveUploads(
+        { googleDrive: this.googleDriveRepository, job: this.jobRepository },
+        userId,
+        [...assetIds],
+        true, // already checked above; re-reading the cached config per user would only repeat it
+      );
+    }
+  }
+
   private async isGoogleDriveEnabled(): Promise<boolean> {
     const { googleDrive } = await this.getConfig({ withCache: true });
     return isGoogleDriveEnabled(googleDrive);

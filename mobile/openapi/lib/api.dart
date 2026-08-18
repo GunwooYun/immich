@@ -174,6 +174,7 @@ part 'model/face_dto.dart';
 part 'model/facial_recognition_config.dart';
 part 'model/folders_response.dart';
 part 'model/folders_update.dart';
+part 'model/google_drive_album_dto.dart';
 part 'model/google_drive_auth_url_response_dto.dart';
 part 'model/google_drive_picker_config_response_dto.dart';
 part 'model/google_drive_set_folder_dto.dart';

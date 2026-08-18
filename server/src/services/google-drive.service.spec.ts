@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { AlbumUserRole, GoogleDriveUploadErrorClass, JobName, JobStatus } from 'src/enum';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { AlbumFactory } from 'test/factories/album.factory';
@@ -53,6 +53,15 @@ const enabledConfig = {
 
 // Drives every test below to the same point: connected user, asset present, nothing in the
 // ledger, a readable 1024-byte original. Only the size Drive reports back then varies.
+// A connected-Drive credentials row, for tests that only need "this user is linked".
+const connected = (userId: string) => ({
+  userId,
+  refreshToken: 'refresh-token',
+  folderId: null,
+  folderName: null,
+  connectedAt: new Date(),
+});
+
 const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
   const asset = AssetFactory.create();
   mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
@@ -454,6 +463,94 @@ describe(GoogleDriveService.name, () => {
     });
   });
 
+  describe('album subscriptions', () => {
+    it('should refuse to subscribe when Drive is not connected', async () => {
+      // Selecting albums before connecting would silently accumulate work with nowhere to send it.
+      const user = UserFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set(['album-1']));
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+
+      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
+    });
+
+    it('should subscribe and immediately queue the album contents', async () => {
+      // Turning a switch on and having nothing happen until some unrelated later trigger is not
+      // what the switch appears to promise — same reasoning as the resume button.
+      const user = UserFactory.create();
+      const album = AlbumFactory.from()
+        .asset({}, (builder) => builder.exif())
+        .asset({}, (builder) => builder.exif())
+        .build();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(user.id));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+
+      await sut.subscribeAlbum(AuthFactory.create(user), album.id);
+
+      expect(mocks.googleDrive.subscribe).toHaveBeenCalledWith(user.id, album.id);
+      expect(mocks.job.queueAll).toHaveBeenCalledWith(
+        album.assets.map((asset) => ({
+          name: JobName.GoogleDriveUpload,
+          data: { userId: user.id, assetId: asset.id },
+        })),
+      );
+    });
+
+    it('should gate subscribing on download access, not merely read access', async () => {
+      // Copying a shared album into your own Google account is egress; if a share is ever
+      // restricted to viewing, backing it up must be refused for the same reason downloading is.
+      const user = UserFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      // No access grant stubbed → requireAccess rejects.
+      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toBeDefined();
+      expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
+    });
+
+    it('should unsubscribe without touching the ledger', async () => {
+      // What is already in the user's Drive stays there and stays recorded, so re-selecting the
+      // album later does not re-upload it.
+      const user = UserFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set(['album-1']));
+
+      await sut.unsubscribeAlbum(AuthFactory.create(user), 'album-1');
+
+      expect(mocks.googleDrive.unsubscribe).toHaveBeenCalledWith(user.id, 'album-1');
+      expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+    });
+
+    it('should normalise SQL booleans when listing albums', async () => {
+      // Kysely types SQL booleans as number | boolean because drivers disagree; the DTO promises
+      // a real boolean.
+      const user = UserFactory.create();
+      mocks.googleDrive.getSubscribableAlbums.mockResolvedValue([
+        {
+          albumId: 'a1',
+          albumName: 'Album',
+          ownerName: 'Owner',
+          isOwner: 1 as never,
+          subscribed: 0 as never,
+          assetCount: 10,
+          uploadedCount: 4,
+        },
+      ]);
+
+      await expect(sut.getSubscribableAlbums(AuthFactory.create(user))).resolves.toEqual([
+        {
+          albumId: 'a1',
+          albumName: 'Album',
+          ownerName: 'Owner',
+          isOwner: true,
+          subscribed: false,
+          assetCount: 10,
+          uploadedCount: 4,
+        },
+      ]);
+    });
+  });
+
   describe('resumeUploads', () => {
     it('should reject when the feature is disabled', async () => {
       await expect(sut.resumeUploads(AuthFactory.create(UserFactory.create()))).rejects.toBeInstanceOf(
@@ -580,19 +677,38 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
 
-    it('should reject a non-owner even when they can read the album', async () => {
-      const editor = UserFactory.create();
-      const album = AlbumFactory.from().albumUser({ userId: editor.id, role: AlbumUserRole.Editor }).build();
-      // AlbumRead is satisfied via shared access, not ownership — exactly the case this guard exists
-      // for: the caller legitimately passes the permission check but still must not trigger a sync.
-      mocks.access.album.checkSharedAlbumAccess.mockResolvedValue(new Set([album.id]));
+    it('should reject an album the caller has not chosen to back up', async () => {
+      // Ownership is no longer the gate — subscription is. Syncing an album you can see but do not
+      // back up would be asking for work with nowhere to put it.
+      const user = UserFactory.create();
+      const album = AlbumFactory.from().build();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.googleDrive.isSubscribed.mockResolvedValue(false);
 
-      // Uploads go to the *owner's* Drive, so anyone but the owner triggering this would be writing
-      // into someone else's cloud storage on their behalf.
-      await expect(sut.syncAlbum(AuthFactory.create(editor), album.id)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(sut.syncAlbum(AuthFactory.create(user), album.id)).rejects.toBeInstanceOf(BadRequestException);
 
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
+    it('should let a non-owner sync a shared album they back up, into their own Drive', async () => {
+      // The case the old owner-only rule made impossible, and the reason this wave exists: the
+      // album's owner may have no Drive at all. Note the queued userId is the *editor's* — uploads
+      // can now only ever reach the caller's own Drive, which is what made relaxing the rule safe.
+      const editor = UserFactory.create();
+      const album = AlbumFactory.from()
+        .albumUser({ userId: editor.id, role: AlbumUserRole.Editor })
+        .asset({}, (builder) => builder.exif())
+        .build();
+      mocks.access.album.checkSharedAlbumAccess.mockResolvedValue(new Set([album.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.googleDrive.isSubscribed.mockResolvedValue(true);
+
+      await sut.syncAlbum(AuthFactory.create(editor), album.id);
+
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.GoogleDriveUpload, data: { userId: editor.id, assetId: album.assets[0].id } },
+      ]);
     });
 
     it('should queue only assets missing from the ledger, in one batch, for the owner', async () => {
@@ -606,6 +722,7 @@ describe(GoogleDriveService.name, () => {
 
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.googleDrive.isSubscribed.mockResolvedValue(true);
       mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([alreadySynced.id]));
 
       await sut.syncAlbum(AuthFactory.create(owner), album.id);
@@ -628,6 +745,7 @@ describe(GoogleDriveService.name, () => {
 
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.googleDrive.isSubscribed.mockResolvedValue(true);
       mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set(album.assets.map(({ id }) => id)));
 
       await sut.syncAlbum(AuthFactory.create(owner), album.id);
@@ -641,6 +759,7 @@ describe(GoogleDriveService.name, () => {
 
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.googleDrive.isSubscribed.mockResolvedValue(true);
 
       await sut.syncAlbum(AuthFactory.create(owner), album.id);
 
