@@ -29,10 +29,13 @@ type PickerView = {
   setIncludeFolders: (include: boolean) => PickerView;
   setSelectFolderEnabled: (enabled: boolean) => PickerView;
   setMimeTypes: (mimeTypes: string) => PickerView;
+  setParent: (folderId: string) => PickerView;
+  setMode: (mode: string) => PickerView;
 };
 
 type PickerBuilder = {
   addView: (view: PickerView) => PickerBuilder;
+  enableFeature: (feature: string) => PickerBuilder;
   setOAuthToken: (token: string) => PickerBuilder;
   setDeveloperKey: (key: string) => PickerBuilder;
   setAppId: (appId: string) => PickerBuilder;
@@ -45,6 +48,8 @@ type GooglePicker = {
   DocsView: new (viewId: string) => PickerView;
   PickerBuilder: new () => PickerBuilder;
   ViewId: { FOLDERS: string };
+  DocsViewMode: { LIST: string; GRID: string };
+  Feature: { SUPPORT_DRIVES: string };
   Action: { PICKED: string; CANCEL: string };
 };
 
@@ -133,7 +138,7 @@ const loadPickerModule = (): Promise<GooglePicker> =>
  * skipped: it is an optional hint, and the picker works without it.
  */
 const getAppId = (clientId: string): string | undefined => {
-  const [projectNumber] = clientId.split('-');
+  const [projectNumber] = clientId.split('-', 1);
   return /^\d+$/.test(projectNumber) ? projectNumber : undefined;
 };
 
@@ -165,13 +170,27 @@ export const pickGoogleDriveFolder = async (
     // view shows folders only as navigation and the "select" button stays disabled until a *file*
     // is highlighted. Restricting mime types to folders keeps the list free of the user's files,
     // which are noise here — they can't be chosen anyway.
+    //
+    // setParent('root') is what turns this from a flat dump into a file-explorer. Without it the
+    // FOLDERS view lists *every* folder in the account at once, in no hierarchy — unusable once
+    // you have more than a couple dozen. Anchored at My Drive's root ('root' is Drive's documented
+    // alias for it), the picker opens at the top level and the user walks down through
+    // subfolders, with a breadcrumb, the way they already know their own Drive.
+    //
+    // LIST mode over the default grid: folders have no meaningful thumbnail, so the grid wastes
+    // most of the dialog on identical icons and shows far fewer names per screen.
     const view = new picker.DocsView(picker.ViewId.FOLDERS)
       .setIncludeFolders(true)
       .setSelectFolderEnabled(true)
-      .setMimeTypes(FOLDER_MIME_TYPE);
+      .setMimeTypes(FOLDER_MIME_TYPE)
+      .setParent('root')
+      .setMode(picker.DocsViewMode.LIST);
 
     const builder = new picker.PickerBuilder()
       .addView(view)
+      // Lets the picker show shared drives too, for accounts that have them. Harmless when there
+      // are none — the section simply doesn't appear.
+      .enableFeature(picker.Feature.SUPPORT_DRIVES)
       .setOAuthToken(accessToken)
       .setDeveloperKey(apiKey)
       .setTitle(title)
