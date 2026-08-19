@@ -6,18 +6,20 @@ Wave 2 built for exactly this.
 | | |
 |---|---|
 | Branch | `feat/google-drive-album-sync-v3.1.0` |
-| Commit | `316165fb3` |
+| Code under review | `316165fb3` (Wave 3) |
+| Branch HEAD | `074a73abb` — adds the test hub and CLAUDE.md procedure only, no feature code |
 | Design | `dev-docs/google-drive/feature-roadmap.md` §4 |
 | Prior review | `../review/google-drive-wave2-20260820-1030-review.md` (all verdicts applied in `5c6435e82`) |
 
 ## Unit test results
 
-`./dev-test/google-drive/run.sh --medium` — full output archived at
-`dev-test/google-drive/results/20260820-0737.txt`.
+`./dev-test/google-drive/run.sh --medium`, run at branch HEAD so the evidence matches what a
+checkout of this branch produces. Full output archived at
+`dev-test/google-drive/results/20260820-0827.txt`.
 
 ```
-date:   2026-08-20T07:37:05+09:00
-commit: 316165fb3 (feat/google-drive-album-sync-v3.1.0)
+date:   2026-08-20T08:27:07+09:00
+commit: 074a73abb (feat/google-drive-album-sync-v3.1.0)
 
 ── server (unit) ──────────────────────────────────
       Tests  197 passed (197)
