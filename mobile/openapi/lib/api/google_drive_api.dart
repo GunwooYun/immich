@@ -57,6 +57,64 @@ class GoogleDriveApi {
     }
   }
 
+  /// One album's backup state, for the album menu and the progress display. Read access is enough — unlike selecting, reading a count is not egress.
+  ///
+  /// Return whether this album is backed up to the authenticated user Drive, how many of its assets are already there, and whether access to it has been lost.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<Response> getGoogleDriveAlbumStatusWithHttpInfo(String id, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/albums/{id}/status'
+      .replaceAll('{id}', id);
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'GET',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// One album's backup state, for the album menu and the progress display. Read access is enough — unlike selecting, reading a count is not egress.
+  ///
+  /// Return whether this album is backed up to the authenticated user Drive, how many of its assets are already there, and whether access to it has been lost.
+  ///
+  /// Parameters:
+  ///
+  /// * [String] id (required):
+  Future<GoogleDriveAlbumStatusDto?> getGoogleDriveAlbumStatus(String id, { Future<void>? abortTrigger, }) async {
+    final response = await getGoogleDriveAlbumStatusWithHttpInfo(id, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveAlbumStatusDto',) as GoogleDriveAlbumStatusDto;
+    
+    }
+    return null;
+  }
+
   /// The album-selection list for Settings: everything the user can back up, whether they do, and how far along each one is *for them*.
   ///
   /// Return every album the authenticated user can see, with whether it is currently backed up to their Drive and how many of its assets have already been uploaded to it. Counts are per-viewer, not per-owner.

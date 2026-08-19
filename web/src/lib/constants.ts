@@ -63,6 +63,7 @@ export enum SessionStorageKey {
 // TODO split into user settings vs system settings
 export enum OpenQueryParam {
   OAUTH = 'oauth',
+  GOOGLE_DRIVE_SYNC = 'google-drive-sync',
   JOB = 'job',
   STORAGE_TEMPLATE = 'storage-template',
   NOTIFICATIONS = 'notifications',

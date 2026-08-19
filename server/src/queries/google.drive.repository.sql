@@ -119,6 +119,49 @@ where
 order by
   "album"."albumName"
 
+-- GoogleDriveRepository.getAlbumBackupStatus
+select
+  "google_drive_album"."albumId" is not null as "subscribed",
+  (
+    "google_drive_album"."albumId" is not null
+    and "album_user"."userId" is null
+  ) as "accessLost",
+  (
+    select
+      count(*) as "c"
+    from
+      "album_asset"
+      inner join "asset" on "asset"."id" = "album_asset"."assetId"
+    where
+      "album_asset"."albumId" = "album"."id"
+      and "asset"."deletedAt" is null
+  ) as "assetCount",
+  (
+    select
+      count(*) as "c"
+    from
+      "album_asset"
+      inner join "asset" on "asset"."id" = "album_asset"."assetId"
+      inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
+      and "google_drive_upload"."userId" = $1
+    where
+      "album_asset"."albumId" = "album"."id"
+      and "asset"."deletedAt" is null
+  ) as "uploadedCount"
+from
+  "album"
+  left join "album_user" on "album_user"."albumId" = "album"."id"
+  and "album_user"."userId" = $2
+  left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
+  and "google_drive_album"."userId" = $3
+where
+  "album"."id" = $4
+  and "album"."deletedAt" is null
+  and (
+    "album_user"."userId" is not null
+    or "google_drive_album"."userId" is not null
+  )
+
 -- GoogleDriveRepository.countPendingUploads
 select
   count(distinct ("album_asset"."assetId")) as "count"

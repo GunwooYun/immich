@@ -25,7 +25,7 @@
   import TagAction from '$lib/components/timeline/actions/TagAction.svelte';
   import AssetSelectControlBar from '$lib/components/timeline/AssetSelectControlBar.svelte';
   import Timeline from '$lib/components/timeline/Timeline.svelte';
-  import { AlbumPageViewMode } from '$lib/constants';
+  import { AlbumPageViewMode, OpenQueryParam } from '$lib/constants';
   import { activityManager } from '$lib/managers/activity-manager.svelte';
   import { assetMultiSelectManager, AssetMultiSelectManager } from '$lib/managers/asset-multi-select-manager.svelte';
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
@@ -53,7 +53,7 @@
     AlbumUserRole,
     AssetVisibility,
     getAlbumInfo,
-    getGoogleDriveAlbums,
+    getGoogleDriveAlbumStatus,
     getGoogleDriveStatus,
     getGoogleDriveStorage,
     subscribeGoogleDriveAlbum,
@@ -355,25 +355,38 @@
   let driveBackedUp = $state(false);
   let driveUploaded = $state(0);
   let driveTotal = $state(0);
-  let driveStorage = $state<{ limitBytes: number | null; usageBytes: number } | null>(null);
+  let driveStorage = $state<{
+    limitBytes: number | null;
+    usageBytes: number;
+    usageInDriveTrashBytes: number;
+  } | null>(null);
   let driveFolderId = $state<string | null>(null);
   let driveMenuLoading = $state(false);
   let driveTogglePending = $state(false);
+  let driveConnected = $state(false);
 
   const loadGoogleDriveMenu = async () => {
     driveMenuLoading = true;
     try {
-      const [albums, storage, status] = await Promise.all([
-        getGoogleDriveAlbums(),
+      // allSettled, not all. The menu renders for every album member — correct, since anyone can
+      // back an album up to *their own* Drive — but a member who hasn't connected one gets a 400
+      // from the storage call. Under Promise.all that single rejection would sink the whole batch,
+      // throwing away the album and status data that did come back and showing an error toast for
+      // a state that is simply "not connected yet".
+      const [albumStatus, storage, status] = await Promise.allSettled([
+        getGoogleDriveAlbumStatus({ id: album.id }),
         getGoogleDriveStorage(),
         getGoogleDriveStatus(),
       ]);
-      const entry = albums.find(({ albumId }) => albumId === album.id);
-      driveBackedUp = entry?.subscribed ?? false;
-      driveUploaded = entry?.uploadedCount ?? 0;
-      driveTotal = entry?.assetCount ?? 0;
-      driveStorage = storage;
-      driveFolderId = status.folderId;
+
+      driveConnected = status.status === 'fulfilled' && status.value.connected;
+      driveFolderId = status.status === 'fulfilled' ? status.value.folderId : null;
+      driveBackedUp = albumStatus.status === 'fulfilled' && albumStatus.value.subscribed;
+      driveUploaded = albumStatus.status === 'fulfilled' ? albumStatus.value.uploadedCount : 0;
+      driveTotal = albumStatus.status === 'fulfilled' ? albumStatus.value.assetCount : 0;
+      // Absent rather than zeroed when unavailable — a gauge reading 0 would be a lie, where a
+      // missing gauge is just a missing gauge.
+      driveStorage = storage.status === 'fulfilled' ? storage.value : null;
     } catch (error) {
       handleError(error, $t('errors.unable_to_load_google_drive_status'));
     } finally {
@@ -396,6 +409,36 @@
       driveTogglePending = false;
     }
   };
+
+  // Usage as a fraction, or null on unlimited accounts where there is nothing to be a fraction of.
+  const driveStorageRatio = $derived(
+    driveStorage?.limitBytes ? driveStorage.usageBytes / driveStorage.limitBytes : null,
+  );
+  // 80% warns, 95% alarms — the same thresholds the quota block uses server-side, so the gauge
+  // turns red before uploads start failing rather than after.
+  const driveStorageColor = $derived(
+    driveStorageRatio === null
+      ? undefined
+      : driveStorageRatio >= 0.95
+        ? 'text-red-500'
+        : driveStorageRatio >= 0.8
+          ? 'text-yellow-500'
+          : undefined,
+  );
+  const driveStorageSubtitle = $derived.by(() => {
+    if (!driveStorage) {
+      return '';
+    }
+    const used = getByteUnitString(driveStorage.usageBytes, $locale ?? undefined, 1);
+    const base = driveStorage.limitBytes
+      ? `${used} / ${getByteUnitString(driveStorage.limitBytes, $locale ?? undefined, 1)}`
+      : used;
+    // Trash occupies quota but is one click from being reclaimed, so it is worth naming whenever
+    // it is a meaningful share — on a transit-folder Drive it is routinely most of the usage.
+    return driveStorage.usageInDriveTrashBytes > driveStorage.usageBytes * 0.1
+      ? `${base} · ${$t('google_drive_storage_trash', { values: { size: getByteUnitString(driveStorage.usageInDriveTrashBytes, $locale ?? undefined, 1) } })}`
+      : base;
+  });
 
   // Opens the configured destination folder, or the Drive root when none is set. New tab, since
   // this is a hand-off to another app rather than navigation within immich.
@@ -672,6 +715,16 @@
                 >
                   {#if driveMenuLoading}
                     <MenuOption icon={mdiCloudSyncOutline} text={$t('loading')} onClick={() => {}} />
+                  {:else if !driveConnected}
+                    <!-- Every album member sees this menu, but only a connected one can do
+                         anything in it. Offering the way to connect is the whole content of the
+                         menu in that state — the alternative is a menu of controls that all fail. -->
+                    <MenuOption
+                      icon={mdiCloudOffOutline}
+                      text={$t('google_drive_connect')}
+                      subtitle={$t('google_drive_not_connected_short')}
+                      onClick={() => goto(Route.userSettings({ isOpen: OpenQueryParam.GOOGLE_DRIVE_SYNC }))}
+                    />
                   {:else}
                     <MenuOption
                       icon={driveBackedUp ? mdiCloudCheckOutline : mdiCloudOffOutline}
@@ -695,12 +748,14 @@
                       />
                     {/if}
                     {#if driveStorage}
+                      <!-- The colour is the point, not decoration: this deployment uses Drive as a
+                           buffer that a Pixel drains, so the useful signal is "clean it out before
+                           it fills". Text alone makes the reader do the division. -->
                       <MenuOption
                         icon={mdiChartArc}
                         text={$t('google_drive_storage')}
-                        subtitle={driveStorage.limitBytes
-                          ? `${getByteUnitString(driveStorage.usageBytes, $locale ?? undefined, 1)} / ${getByteUnitString(driveStorage.limitBytes, $locale ?? undefined, 1)}`
-                          : getByteUnitString(driveStorage.usageBytes, $locale ?? undefined, 1)}
+                        textColor={driveStorageColor}
+                        subtitle={driveStorageSubtitle}
                         onClick={() => openGoogleDriveFolder(null)}
                       />
                     {/if}

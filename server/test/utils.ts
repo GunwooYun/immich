@@ -319,6 +319,7 @@ export const getMocks = () => {
   googleDriveMock.getSubscribers.mockResolvedValue([]);
   googleDriveMock.isSubscribed.mockResolvedValue(false);
   googleDriveMock.getSubscribableAlbums.mockResolvedValue([]);
+  googleDriveMock.countPendingUploads.mockResolvedValue(0);
 
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),

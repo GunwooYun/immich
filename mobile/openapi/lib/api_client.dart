@@ -393,6 +393,8 @@ class ApiClient {
           return FoldersUpdate.fromJson(value);
         case 'GoogleDriveAlbumDto':
           return GoogleDriveAlbumDto.fromJson(value);
+        case 'GoogleDriveAlbumStatusDto':
+          return GoogleDriveAlbumStatusDto.fromJson(value);
         case 'GoogleDriveAuthUrlResponseDto':
           return GoogleDriveAuthUrlResponseDto.fromJson(value);
         case 'GoogleDriveMyStatusDto':

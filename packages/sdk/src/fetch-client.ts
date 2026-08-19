@@ -1222,6 +1222,16 @@ export type GoogleDriveAlbumDto = {
     /** Assets already uploaded to the authenticated user Drive */
     uploadedCount: number;
 };
+export type GoogleDriveAlbumStatusDto = {
+    /** Selected but no longer shared with this user, so uploads have stopped */
+    accessLost: boolean;
+    /** Assets in the album, excluding trashed */
+    assetCount: number;
+    /** Whether this album is backed up to the authenticated user Drive */
+    subscribed: boolean;
+    /** Of those, how many are already in this user Drive */
+    uploadedCount: number;
+};
 export type GoogleDriveAuthUrlResponseDto = {
     /** Google OAuth consent URL to redirect the browser to */
     url: string;
@@ -1233,6 +1243,8 @@ export type GoogleDriveSetFolderDto = {
     folderName?: string;
 };
 export type GoogleDriveMyStatusDto = {
+    /** Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing' */
+    blockedReason: string | null;
     /** Assets whose last upload attempt failed */
     failed: number;
     /** Assets selected for backup that are not yet in this user Drive */
@@ -4911,6 +4923,20 @@ export function subscribeGoogleDriveAlbum({ id }: {
     return oazapfts.ok(oazapfts.fetchText(`/google-drive/albums/${encodeURIComponent(id)}`, {
         ...opts,
         method: "PUT"
+    }));
+}
+/**
+ * One album's backup state, for the album menu and the progress display. Read access is enough —
+ * unlike selecting, reading a count is not egress.
+ */
+export function getGoogleDriveAlbumStatus({ id }: {
+    id: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveAlbumStatusDto;
+    }>(`/google-drive/albums/${encodeURIComponent(id)}/status`, {
+        ...opts
     }));
 }
 /**

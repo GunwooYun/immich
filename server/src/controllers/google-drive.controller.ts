@@ -5,6 +5,7 @@ import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   GoogleDriveAlbumDto,
+  GoogleDriveAlbumStatusDto,
   GoogleDriveAuthUrlResponseDto,
   GoogleDriveMyStatusDto,
   GoogleDrivePickerConfigResponseDto,
@@ -302,6 +303,25 @@ export class GoogleDriveController {
   })
   async getGoogleDriveAlbums(@Auth() auth: AuthDto): Promise<GoogleDriveAlbumDto[]> {
     return this.googleDriveService.getSubscribableAlbums(auth);
+  }
+
+  /**
+   * One album's backup state, for the album menu and the progress display. Read access is enough —
+   * unlike selecting, reading a count is not egress.
+   */
+  @Get('albums/:id/status')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Get one album Google Drive backup status',
+    description:
+      'Return whether this album is backed up to the authenticated user Drive, how many of its assets are already there, and whether access to it has been lost.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDriveAlbumStatus(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+  ): Promise<GoogleDriveAlbumStatusDto> {
+    return this.googleDriveService.getAlbumBackupStatus(auth, id);
   }
 
   /**

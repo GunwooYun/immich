@@ -610,9 +610,9 @@ describe(GoogleDriveService.name, () => {
 
   describe('getStorage', () => {
     beforeEach(() => {
+      // No cache clearing needed: it's an instance field, and newTestService builds a fresh
+      // service per test.
       driveAboutGet.mockReset();
-      // The cache is static, so it survives between tests unless cleared.
-      (GoogleDriveService as unknown as { storageCache: Map<string, unknown> }).storageCache.clear();
     });
 
     it('should convert Google string byte counts to numbers', async () => {
@@ -662,6 +662,20 @@ describe(GoogleDriveService.name, () => {
       await expect(sut.getStorage(b)).resolves.toMatchObject({ usageBytes: 42 });
     });
 
+    it('should stop serving cached numbers once the account is disconnected', async () => {
+      // Credentials are checked before the cache. The other order would keep reporting storage for
+      // up to a minute after a disconnect — numbers for an account that is no longer linked.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockResolvedValue(quota());
+
+      await sut.getStorage(userId);
+
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+      await expect(sut.getStorage(userId)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
     it('should report a revoked grant as disconnected, not as a server error', async () => {
       // The settings page reads this; a 500 there would look like the feature is broken rather
       // than merely unlinked.
@@ -682,7 +696,59 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.countPendingUploads.mockResolvedValue(17);
       mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 3, blockedReason: null });
 
-      await expect(sut.getMyStatus(userId)).resolves.toEqual({ pending: 17, failed: 3 });
+      await expect(sut.getMyStatus(userId)).resolves.toEqual({ pending: 17, failed: 3, blockedReason: null });
+    });
+
+    it('should carry the block alongside the count, not in a separate endpoint', async () => {
+      // Pending deliberately counts a blocked account's outstanding work — reporting zero would
+      // read as "done". But a progress display polling only the number would show it ticking
+      // nowhere and look stalled rather than paused, so the reason travels with it.
+      const userId = newUuid();
+      mocks.googleDrive.countPendingUploads.mockResolvedValue(1800);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({
+        failedCount: 1,
+        blockedReason: GoogleDriveUploadErrorClass.QuotaExceeded,
+      });
+
+      await expect(sut.getMyStatus(userId)).resolves.toEqual({
+        pending: 1800,
+        failed: 1,
+        blockedReason: GoogleDriveUploadErrorClass.QuotaExceeded,
+      });
+    });
+  });
+
+  describe('getAlbumBackupStatus', () => {
+    it('should report a single album without fetching every album the user can see', async () => {
+      const user = UserFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set(['a1']));
+      mocks.googleDrive.getAlbumBackupStatus.mockResolvedValue({
+        subscribed: 1 as never,
+        accessLost: 0 as never,
+        assetCount: 40,
+        uploadedCount: 12,
+      });
+
+      await expect(sut.getAlbumBackupStatus(AuthFactory.create(user), 'a1')).resolves.toEqual({
+        subscribed: true,
+        accessLost: false,
+        assetCount: 40,
+        uploadedCount: 12,
+      });
+      expect(mocks.googleDrive.getSubscribableAlbums).not.toHaveBeenCalled();
+    });
+
+    it('should return zeroes rather than throwing for an album with no row', async () => {
+      const user = UserFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set(['a1']));
+      mocks.googleDrive.getAlbumBackupStatus.mockResolvedValue(void 0);
+
+      await expect(sut.getAlbumBackupStatus(AuthFactory.create(user), 'a1')).resolves.toEqual({
+        subscribed: false,
+        accessLost: false,
+        assetCount: 0,
+        uploadedCount: 0,
+      });
     });
   });
 

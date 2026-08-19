@@ -443,7 +443,7 @@ export class GoogleDriveService extends BaseService {
    * Deliberately in-process rather than Redis: the value is cheap to recompute, has no
    * correctness role, and a per-replica cache being independently warm is fine.
    */
-  private static storageCache = new Map<string, { at: number; value: GoogleDriveStorage }>();
+  private storageCache = new Map<string, { at: number; value: GoogleDriveStorage }>();
   private static readonly STORAGE_CACHE_MS = 60_000;
 
   /**
@@ -460,14 +460,16 @@ export class GoogleDriveService extends BaseService {
    * often mostly trash that emptying would reclaim.
    */
   async getStorage(userId: string): Promise<GoogleDriveStorage> {
-    const cached = GoogleDriveService.storageCache.get(userId);
-    if (cached && Date.now() - cached.at < GoogleDriveService.STORAGE_CACHE_MS) {
-      return cached.value;
-    }
-
+    // Credentials first, cache second. The other order would keep answering with numbers for up
+    // to a minute after a disconnect — reporting storage for an account that is no longer linked.
     const credentials = await this.googleDriveRepository.getCredentials(userId);
     if (!credentials) {
       throw new BadRequestException('Google Drive is not connected');
+    }
+
+    const cached = this.storageCache.get(userId);
+    if (cached && Date.now() - cached.at < GoogleDriveService.STORAGE_CACHE_MS) {
+      return cached.value;
     }
 
     const oauth2Client = await this.getOAuth2Client();
@@ -495,7 +497,7 @@ export class GoogleDriveService extends BaseService {
       usageInDriveTrashBytes: toByteCount(quota?.usageInDriveTrash) ?? 0,
     };
 
-    GoogleDriveService.storageCache.set(userId, { at: Date.now(), value });
+    this.storageCache.set(userId, { at: Date.now(), value });
     return value;
   }
 
@@ -507,12 +509,20 @@ export class GoogleDriveService extends BaseService {
    * user-scoped source from the start means the progress UI has one honest thing to poll rather
    * than a per-album endpoint that later needs retrofitting.
    */
-  async getMyStatus(userId: string): Promise<{ pending: number; failed: number }> {
-    const [pending, { failedCount }] = await Promise.all([
+  async getMyStatus(userId: string): Promise<{
+    pending: number;
+    failed: number;
+    blockedReason: GoogleDriveUploadErrorClass | null;
+  }> {
+    const [pending, { failedCount, blockedReason }] = await Promise.all([
       this.googleDriveRepository.countPendingUploads(userId),
       this.googleDriveRepository.getErrorSummary(userId),
     ]);
-    return { pending, failed: failedCount };
+    // `pending` counts blocked users' work too — it *is* outstanding, and reporting zero would
+    // read as "done". But a progress bar polling only that number would tick nowhere forever on a
+    // quota-blocked account, looking stalled rather than paused. So the block travels with the
+    // count instead of living in a different endpoint the poller would have to know to also call.
+    return { pending, failed: failedCount, blockedReason };
   }
 
   /**
@@ -916,6 +926,22 @@ export class GoogleDriveService extends BaseService {
       assetCount: Number(row.assetCount ?? 0),
       uploadedCount: Number(row.uploadedCount ?? 0),
     }));
+  }
+
+  /**
+   * One album's backup state for the caller. Read-only, so it gates on album read access rather
+   * than the download access selecting requires — looking at a number is not egress.
+   */
+  async getAlbumBackupStatus(auth: AuthDto, albumId: string) {
+    await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [albumId] });
+
+    const row = await this.googleDriveRepository.getAlbumBackupStatus(auth.user.id, albumId);
+    return {
+      subscribed: !!row?.subscribed,
+      accessLost: !!row?.accessLost,
+      assetCount: Number(row?.assetCount ?? 0),
+      uploadedCount: Number(row?.uploadedCount ?? 0),
+    };
   }
 
   /**

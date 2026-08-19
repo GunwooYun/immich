@@ -130,10 +130,27 @@ const GoogleDriveMyStatusSchema = z
   .object({
     pending: z.int().describe('Assets selected for backup that are not yet in this user Drive'),
     failed: z.int().describe('Assets whose last upload attempt failed'),
+    // Travels with the count on purpose: a progress display polling `pending` alone would show a
+    // quota-blocked account ticking nowhere and read as stalled rather than paused.
+    blockedReason: z
+      .string()
+      .nullable()
+      .describe("Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing'"),
   })
   .meta({ id: 'GoogleDriveMyStatusDto' });
 
+/** One album's backup state for the viewing user — what the album menu and Wave 3 poll. */
+const GoogleDriveAlbumStatusSchema = z
+  .object({
+    subscribed: z.boolean().describe('Whether this album is backed up to the authenticated user Drive'),
+    accessLost: z.boolean().describe('Selected but no longer shared with this user, so uploads have stopped'),
+    assetCount: z.int().describe('Assets in the album, excluding trashed'),
+    uploadedCount: z.int().describe('Of those, how many are already in this user Drive'),
+  })
+  .meta({ id: 'GoogleDriveAlbumStatusDto' });
+
 export class GoogleDriveAlbumDto extends createZodDto(GoogleDriveAlbumSchema) {}
+export class GoogleDriveAlbumStatusDto extends createZodDto(GoogleDriveAlbumStatusSchema) {}
 export class GoogleDriveMyStatusDto extends createZodDto(GoogleDriveMyStatusSchema) {}
 export class GoogleDriveStorageDto extends createZodDto(GoogleDriveStorageSchema) {}
 export class GoogleDriveAuthUrlResponseDto extends createZodDto(GoogleDriveAuthUrlResponseSchema) {}

@@ -6424,6 +6424,62 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/google-drive/albums/{id}/status": {
+      "get": {
+        "description": "Return whether this album is backed up to the authenticated user Drive, how many of its assets are already there, and whether access to it has been lost.",
+        "operationId": "getGoogleDriveAlbumStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveAlbumStatusDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "One album's backup state, for the album menu and the progress display. Read access is enough —\nunlike selecting, reading a count is not egress.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/albums/{id}/sync": {
       "post": {
         "description": "Queue every not-yet-uploaded asset in the album for upload. Only the album owner may call this, and assets already recorded in the upload ledger are skipped rather than duplicated.",
@@ -19815,6 +19871,37 @@
         ],
         "type": "object"
       },
+      "GoogleDriveAlbumStatusDto": {
+        "properties": {
+          "accessLost": {
+            "description": "Selected but no longer shared with this user, so uploads have stopped",
+            "type": "boolean"
+          },
+          "assetCount": {
+            "description": "Assets in the album, excluding trashed",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "subscribed": {
+            "description": "Whether this album is backed up to the authenticated user Drive",
+            "type": "boolean"
+          },
+          "uploadedCount": {
+            "description": "Of those, how many are already in this user Drive",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accessLost",
+          "assetCount",
+          "subscribed",
+          "uploadedCount"
+        ],
+        "type": "object"
+      },
       "GoogleDriveAuthUrlResponseDto": {
         "properties": {
           "url": {
@@ -19829,6 +19916,11 @@
       },
       "GoogleDriveMyStatusDto": {
         "properties": {
+          "blockedReason": {
+            "description": "Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing'",
+            "nullable": true,
+            "type": "string"
+          },
           "failed": {
             "description": "Assets whose last upload attempt failed",
             "maximum": 9007199254740991,
@@ -19843,6 +19935,7 @@
           }
         },
         "required": [
+          "blockedReason",
           "failed",
           "pending"
         ],

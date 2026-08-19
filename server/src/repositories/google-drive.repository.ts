@@ -228,6 +228,57 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * One album's backup state for one viewer: is it selected, and how far along is it.
+   *
+   * The album menu used to derive this by fetching *every* album the user can see and finding one
+   * row — two correlated subqueries per album to render a single album's state. Wave 3 will poll
+   * this, so it gets its own query.
+   *
+   * Returns undefined when the user cannot see the album at all and has no selection pointing at
+   * it, which the caller turns into a 404-ish "nothing to show".
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  getAlbumBackupStatus(userId: string, albumId: string) {
+    return this.db
+      .selectFrom('album')
+      .leftJoin('album_user', (join) =>
+        join.onRef('album_user.albumId', '=', 'album.id').on('album_user.userId', '=', userId),
+      )
+      .leftJoin('google_drive_album', (join) =>
+        join.onRef('google_drive_album.albumId', '=', 'album.id').on('google_drive_album.userId', '=', userId),
+      )
+      .where('album.id', '=', albumId)
+      .where('album.deletedAt', 'is', null)
+      .where((eb) => eb.or([eb('album_user.userId', 'is not', null), eb('google_drive_album.userId', 'is not', null)]))
+      .select((eb) => [
+        eb('google_drive_album.albumId', 'is not', null).as('subscribed'),
+        eb
+          .and([eb('google_drive_album.albumId', 'is not', null), eb('album_user.userId', 'is', null)])
+          .as('accessLost'),
+        eb
+          .selectFrom('album_asset')
+          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+          .whereRef('album_asset.albumId', '=', 'album.id')
+          .where('asset.deletedAt', 'is', null)
+          .select((inner) => inner.fn.countAll<number>().as('c'))
+          .as('assetCount'),
+        eb
+          .selectFrom('album_asset')
+          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+          .innerJoin('google_drive_upload', (join) =>
+            join
+              .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+              .on('google_drive_upload.userId', '=', userId),
+          )
+          .whereRef('album_asset.albumId', '=', 'album.id')
+          .where('asset.deletedAt', 'is', null)
+          .select((inner) => inner.fn.countAll<number>().as('c'))
+          .as('uploadedCount'),
+      ])
+      .executeTakeFirst();
+  }
+
+  /**
    * How many assets are still waiting to go to this user's Drive.
    *
    * Deliberately the same predicate as `streamPendingUploads`, scoped to one user and counted

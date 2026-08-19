@@ -173,6 +173,7 @@ Class | Method | HTTP request | Description
 *FacesApi* | [**getFaces**](doc//FacesApi.md#getfaces) | **GET** /faces | Retrieve faces for asset
 *FacesApi* | [**reassignFacesById**](doc//FacesApi.md#reassignfacesbyid) | **PUT** /faces/{id} | Re-assign a face to another person
 *GoogleDriveApi* | [**disconnectGoogleDrive**](doc//GoogleDriveApi.md#disconnectgoogledrive) | **DELETE** /google-drive/link | \"Disconnect\" button in settings — discards the stored Google credentials for this user.  Does not touch anything already uploaded to their Drive (this is a one-way sync; deleting the user's own cloud files because they unlinked an integration would be a destructive surprise), and keeps the upload ledger so that reconnecting later doesn't re-upload everything as duplicates.
+*GoogleDriveApi* | [**getGoogleDriveAlbumStatus**](doc//GoogleDriveApi.md#getgoogledrivealbumstatus) | **GET** /google-drive/albums/{id}/status | One album's backup state, for the album menu and the progress display. Read access is enough — unlike selecting, reading a count is not egress.
 *GoogleDriveApi* | [**getGoogleDriveAlbums**](doc//GoogleDriveApi.md#getgoogledrivealbums) | **GET** /google-drive/albums | The album-selection list for Settings: everything the user can back up, whether they do, and how far along each one is *for them*.
 *GoogleDriveApi* | [**getGoogleDriveAuthUrl**](doc//GoogleDriveApi.md#getgoogledriveauthurl) | **GET** /google-drive/auth-url | Called by the frontend when the user clicks \"Connect Google Drive\" in Settings. Requires an authenticated Immich session (@Authenticated()) because we need to know which Immich user is asking, so we can embed their userId into the signed `state` token that Google will hand back to us in the callback below.  The frontend simply navigates the browser to the returned `url` — from that point on, the user is interacting with Google's own consent screen, not Immich.
 *GoogleDriveApi* | [**getGoogleDrivePickerConfig**](doc//GoogleDriveApi.md#getgoogledrivepickerconfig) | **GET** /google-drive/picker-config | Get configuration for the Google Drive folder picker
@@ -466,6 +467,7 @@ Class | Method | HTTP request | Description
  - [FoldersResponse](doc//FoldersResponse.md)
  - [FoldersUpdate](doc//FoldersUpdate.md)
  - [GoogleDriveAlbumDto](doc//GoogleDriveAlbumDto.md)
+ - [GoogleDriveAlbumStatusDto](doc//GoogleDriveAlbumStatusDto.md)
  - [GoogleDriveAuthUrlResponseDto](doc//GoogleDriveAuthUrlResponseDto.md)
  - [GoogleDriveMyStatusDto](doc//GoogleDriveMyStatusDto.md)
  - [GoogleDrivePickerConfigResponseDto](doc//GoogleDrivePickerConfigResponseDto.md)
