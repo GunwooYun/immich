@@ -42,8 +42,33 @@ dev-docs/
   텍스트 도식(ASCII, 표)을 적극 활용하고, **결정의 근거("왜 이렇게 했는가")를 남긴다.**
 - 문서가 코드와 어긋나면 문서를 고친다. 오래된 진행 문서를 근거로 리뷰가 잘못 나간 적 있다.
 
+### 유닛테스트 (코드 변경마다 — 예외 없음)
+
+**순서를 지킨다: 코드 변경 → 테스트 작성/보강 → 실행 → 통과 → 그 다음에야 커밋·리뷰 요청.**
+통과하지 않은 변경은 커밋하지 않고 배포하지 않는다.
+
+```bash
+./dev-test/[기능]/run.sh            # 서버 + 웹 유닛테스트, results/ 에 결과 저장
+./dev-test/[기능]/run.sh --medium   # 실제 DB를 쓰는 통합 테스트까지
+```
+
+- **스펙 파일은 코드 옆에 둔다** (`src/services/foo.service.spec.ts`). vitest와
+  `mise //server:ci-unit`이 거기만 보기 때문에, `dev-test/`로 옮기면 CI가 테스트를 실행하지
+  않게 되어 이 규칙이 무력화된다. `dev-test/[기능]/`은 **실행·목록·증거 보관**을 맡는다:
+  `run.sh`, 무엇을 어디서 테스트하는지 적은 `README.md`, 그리고 `results/`.
+- 새 기능·수정에는 **일반 경로와 엣지·코너 케이스를 함께** 넣는다. 필요한 테스트가 보이면
+  그때그때 추가한다.
+- 테스트가 "무엇을 하지 않는다"를 단언할 때는 **의도한 이유로 통과하는지** 함께 못박는다
+  (§4 마지막 줄 — 기능이 꺼져 있어 공허하게 통과한 사례가 두 번 있었다).
+- 새 리포지토리 메서드를 추가하면 `test/utils.ts`에 **기본 mock 값**도 함께 넣는다.
+- 모듈 싱글톤을 테스트할 때는 정리(타이머·구독 해제)를 `afterEach`에 둔다. 테스트 본문 끝에
+  두면 단언 실패 시 건너뛰어 다음 테스트를 오염시킨다 — 실제로 두 번 겪었다.
+
 ### 리뷰 (코드 변경은 예외 없이)
 1. 변경 후 `dev-docs/review/[기능]/report/`에 리뷰 요청서를 쓴다.
+   - **유닛테스트 결과를 반드시 첨부한다.** `run.sh`가 남긴 `results/` 파일의 요약(실행 시각,
+     커밋, 스위트별 통과 수, PASS/FAIL)을 리포트 본문에 붙인다. "N개 통과"라고 쓰기만 하면
+     리뷰어가 검증할 수 없다.
    - **무엇을 공격해달라고 할지 명시한다.** 특히 새로 쓴 로직, 전제에 기대는 부분.
    - **검증한 것과 검증하지 못한 것을 구분해 적는다.** ("quota 경로는 mock으로만 테스트됨")
    - 생성물(SDK·OpenAPI·SQL)은 읽지 말라고 알려준다 — 리뷰 시간 낭비.
@@ -61,17 +86,22 @@ dev-docs/
 
 ## 3. 반드시 지켜야 할 검증 절차
 
-코드 변경 후, 커밋 전:
+코드 변경 후, 커밋 전. **순서대로 전부 통과해야 커밋한다.**
 
 ```bash
 export PATH="$HOME/.local/share/mise/shims:$PATH"
 
-cd server && npx tsc --noEmit -p tsconfig.json          # 타입
-npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0 # 린트 (경고도 0이어야 함)
-npx vitest run --config test/vitest.config.mjs           # 유닛 (기본 `vitest`는 medium까지 물어 실패함)
+# 1) 기능 유닛테스트 — 결과가 results/ 에 남고, 리뷰 리포트에 첨부한다
+./dev-test/[기능]/run.sh
 
+# 2) 타입 · 린트
+cd server && npx tsc --noEmit -p tsconfig.json
+npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0   # 경고도 0이어야 함
+cd ../web && npx eslint <바꾼파일> --max-warnings 0
+
+# 3) 회귀 확인 — 전체 스위트
+cd ../server && npx vitest run --config test/vitest.config.mjs  # 기본 `vitest`는 medium까지 물어 실패함
 cd ../web && npx vitest run
-npx eslint <바꾼파일> --max-warnings 0
 ```
 
 ### 생성물 재생성 (해당 변경이 있으면 필수)
@@ -98,14 +128,25 @@ cd server && npx sql-tools -u "postgres://postgres:<pw>@localhost:5432/immich" m
 | 테스트가 통과하는데 아무것도 검증 안 함 | 기본 설정에서 기능이 **꺼져** 있어 첫 관문에서 빠져나간 것. "안 했다"를 단언하는 테스트는 **의도한 이유로 통과하는지** 반드시 확인 (예: ledger 조회가 실제로 일어났는지 함께 단언) |
 | 병합 커밋에 생성물이 누락됨 | 충돌 해결로 `git add` 한 **뒤에** 재생성을 돌려서 스테이징본이 낡음. 재생성은 `git add` **전에** |
 
-## 5. 테스트 규칙
+## 5. 테스트 배치
 
-- 새 기능·수정에는 **반드시** 유닛 테스트. 엣지·코너 케이스를 적극 포함한다.
-- **테스트는 위치가 정해져 있다**: 소스 옆 `*.spec.ts` (`src/services/foo.service.spec.ts`).
-  별도 `tests/` 디렉토리를 만들지 않는다 — 업스트림 관례를 따른다.
-- Mock은 `test/utils.ts`의 `newTestService` + `automock`. 새 리포지토리 메서드를 추가하면
-  **기본 mock 값**도 함께 추가한다(안 하면 `undefined`가 흘러 다른 스펙이 깨진다).
-- 테스트가 "무엇을 하지 않는다"를 단언할 때는 **그 이유까지 고정**한다(§4 마지막 줄 참조).
+규칙과 절차는 §2 "유닛테스트"에 있다. 여기는 **어디에 무엇을 두는가**만.
+
+```
+dev-test/[기능]/
+├── run.sh        기능 전체 테스트 한 번에 실행 → results/ 에 기록
+├── README.md     무엇을 어느 스펙에서 테스트하는지, 일부러 안 덮은 곳
+└── results/      실행 결과 (리뷰 리포트에 첨부하는 증거)
+
+server/src/**/*.spec.ts          유닛 — 소스 옆
+server/test/medium/specs/**      실DB 통합 — 쿼리·조인이 correctness 경계일 때
+web/src/**/*.spec.ts             웹 유닛
+```
+
+- Mock은 `test/utils.ts`의 `newTestService` + `automock`.
+- 실DB 통합 테스트는 **SQL 자체가 정확성을 결정할 때** 쓴다. 유닛 테스트는 "쿼리 빌더가
+  호출됐다"까지만 말할 수 있다 — 공유 해제 시 업로드 중단 같은 성질은 Postgres에서 확인해야
+  하고, 실제로 그렇게 해서 첫 구현의 오류를 잡았다.
 
 ## 6. 코딩 컨벤션
 
