@@ -19676,6 +19676,10 @@
       },
       "GoogleDriveAlbumDto": {
         "properties": {
+          "accessLost": {
+            "description": "Selected for backup but the album is no longer shared with this user: uploads have stopped and the selection can only be removed",
+            "type": "boolean"
+          },
           "albumId": {
             "description": "Album id",
             "type": "string"
@@ -19710,6 +19714,7 @@
           }
         },
         "required": [
+          "accessLost",
           "albumId",
           "albumName",
           "assetCount",

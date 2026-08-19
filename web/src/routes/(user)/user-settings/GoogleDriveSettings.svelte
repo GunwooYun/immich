@@ -344,6 +344,12 @@
                             ({$t('google_drive_album_owned_by', { values: { name: album.ownerName } })})
                           </span>
                         {/if}
+                        {#if album.accessLost}
+                          <!-- Uploads have already stopped server-side; showing the row is what
+                               keeps that from being a silent stall. Unchecking is the only cure
+                               the user controls (the other is the owner re-sharing). -->
+                          <span class="text-xs text-warning">— {$t('google_drive_album_access_lost')}</span>
+                        {/if}
                       </label>
                       <span class="text-xs text-gray-500 dark:text-gray-400">
                         {album.uploadedCount} / {album.assetCount}

@@ -76,6 +76,10 @@ select
   "owner_user"."userId" = $1 as "isOwner",
   "google_drive_album"."albumId" is not null as "subscribed",
   (
+    "google_drive_album"."albumId" is not null
+    and "album_user"."userId" is null
+  ) as "accessLost",
+  (
     select
       count(*) as "c"
     from
@@ -99,14 +103,18 @@ select
   ) as "uploadedCount"
 from
   "album"
-  inner join "album_user" on "album_user"."albumId" = "album"."id"
+  left join "album_user" on "album_user"."albumId" = "album"."id"
+  and "album_user"."userId" = $3
   inner join "album_user" as "owner_user" on "owner_user"."albumId" = "album"."id"
-  and "owner_user"."role" = $3
+  and "owner_user"."role" = $4
   inner join "user" as "owner" on "owner"."id" = "owner_user"."userId"
   left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
-  and "google_drive_album"."userId" = $4
+  and "google_drive_album"."userId" = $5
 where
-  "album_user"."userId" = $5
+  (
+    "album_user"."userId" is not null
+    or "google_drive_album"."userId" is not null
+  )
   and "album"."deletedAt" is null
 order by
   "album"."albumName"

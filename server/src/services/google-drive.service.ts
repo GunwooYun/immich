@@ -822,6 +822,7 @@ export class GoogleDriveService extends BaseService {
       // they hand back `true`. Normalising here keeps the DTO honestly boolean.
       isOwner: !!row.isOwner,
       subscribed: !!row.subscribed,
+      accessLost: !!row.accessLost,
       assetCount: Number(row.assetCount ?? 0),
       uploadedCount: Number(row.uploadedCount ?? 0),
     }));
@@ -866,7 +867,12 @@ export class GoogleDriveService extends BaseService {
    * for a per-job membership join; the window is only ever "selected then immediately unselected".
    */
   async unsubscribeAlbum(auth: AuthDto, albumId: string): Promise<void> {
-    await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [albumId] });
+    // Deliberately no access check. The delete is already scoped to the caller's own
+    // (userId, albumId) row, so requiring access adds no safety — but it does add a failure: the
+    // one moment you most need to remove a selection is after losing access to the album it points
+    // at, and an AlbumRead check throws exactly then. Combined with the row being invisible in the
+    // listing, it would be both unremovable and unseeable. Turning off your own backup preference
+    // must never depend on still being able to see what it referred to.
     await this.googleDriveRepository.unsubscribe(auth.user.id, albumId);
   }
 

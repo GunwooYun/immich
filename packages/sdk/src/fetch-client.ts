@@ -1205,6 +1205,8 @@ export type FaceDto = {
     id: string;
 };
 export type GoogleDriveAlbumDto = {
+    /** Selected for backup but the album is no longer shared with this user: uploads have stopped and the selection can only be removed */
+    accessLost: boolean;
     /** Album id */
     albumId: string;
     /** Album name */

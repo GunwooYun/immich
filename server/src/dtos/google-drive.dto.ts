@@ -97,6 +97,11 @@ const GoogleDriveAlbumSchema = z
     ownerName: z.string().describe('Name of the album owner'),
     isOwner: z.boolean().describe('Whether the authenticated user owns this album'),
     subscribed: z.boolean().describe('Whether this album is backed up to the authenticated user Drive'),
+    accessLost: z
+      .boolean()
+      .describe(
+        'Selected for backup but the album is no longer shared with this user: uploads have stopped and the selection can only be removed',
+      ),
     assetCount: z.int().describe('Number of assets in the album, excluding trashed'),
     uploadedCount: z.int().describe('Assets already uploaded to the authenticated user Drive'),
   })

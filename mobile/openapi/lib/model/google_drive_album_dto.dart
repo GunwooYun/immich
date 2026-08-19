@@ -13,6 +13,7 @@ part of openapi.api;
 class GoogleDriveAlbumDto {
   /// Returns a new [GoogleDriveAlbumDto] instance.
   GoogleDriveAlbumDto({
+    required this.accessLost,
     required this.albumId,
     required this.albumName,
     required this.assetCount,
@@ -21,6 +22,9 @@ class GoogleDriveAlbumDto {
     required this.subscribed,
     required this.uploadedCount,
   });
+
+  /// Selected for backup but the album is no longer shared with this user: uploads have stopped and the selection can only be removed
+  bool accessLost;
 
   /// Album id
   String albumId;
@@ -51,6 +55,7 @@ class GoogleDriveAlbumDto {
 
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveAlbumDto &&
+    other.accessLost == accessLost &&
     other.albumId == albumId &&
     other.albumName == albumName &&
     other.assetCount == assetCount &&
@@ -62,6 +67,7 @@ class GoogleDriveAlbumDto {
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
+    (accessLost.hashCode) +
     (albumId.hashCode) +
     (albumName.hashCode) +
     (assetCount.hashCode) +
@@ -71,10 +77,11 @@ class GoogleDriveAlbumDto {
     (uploadedCount.hashCode);
 
   @override
-  String toString() => 'GoogleDriveAlbumDto[albumId=$albumId, albumName=$albumName, assetCount=$assetCount, isOwner=$isOwner, ownerName=$ownerName, subscribed=$subscribed, uploadedCount=$uploadedCount]';
+  String toString() => 'GoogleDriveAlbumDto[accessLost=$accessLost, albumId=$albumId, albumName=$albumName, assetCount=$assetCount, isOwner=$isOwner, ownerName=$ownerName, subscribed=$subscribed, uploadedCount=$uploadedCount]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
+      json[r'accessLost'] = this.accessLost;
       json[r'albumId'] = this.albumId;
       json[r'albumName'] = this.albumName;
       json[r'assetCount'] = this.assetCount;
@@ -94,6 +101,7 @@ class GoogleDriveAlbumDto {
       final json = value.cast<String, dynamic>();
 
       return GoogleDriveAlbumDto(
+        accessLost: mapValueOfType<bool>(json, r'accessLost')!,
         albumId: mapValueOfType<String>(json, r'albumId')!,
         albumName: mapValueOfType<String>(json, r'albumName')!,
         assetCount: mapValueOfType<int>(json, r'assetCount')!,
@@ -148,6 +156,7 @@ class GoogleDriveAlbumDto {
 
   /// The list of required keys that must be present in a JSON.
   static const requiredKeys = <String>{
+    'accessLost',
     'albumId',
     'albumName',
     'assetCount',

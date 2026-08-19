@@ -170,46 +170,61 @@ export class GoogleDriveRepository {
    */
   @GenerateSql({ params: [DummyValue.UUID] })
   getSubscribableAlbums(userId: string) {
-    return this.db
-      .selectFrom('album')
-      .innerJoin('album_user', 'album_user.albumId', 'album.id')
-      .innerJoin('album_user as owner_user', (join) =>
-        join.onRef('owner_user.albumId', '=', 'album.id').on('owner_user.role', '=', AlbumUserRole.Owner),
-      )
-      .innerJoin('user as owner', 'owner.id', 'owner_user.userId')
-      .leftJoin('google_drive_album', (join) =>
-        join.onRef('google_drive_album.albumId', '=', 'album.id').on('google_drive_album.userId', '=', userId),
-      )
-      .where('album_user.userId', '=', userId)
-      .where('album.deletedAt', 'is', null)
-      .select((eb) => [
-        'album.id as albumId',
-        'album.albumName as albumName',
-        'owner.name as ownerName',
-        eb('owner_user.userId', '=', userId).as('isOwner'),
-        eb('google_drive_album.albumId', 'is not', null).as('subscribed'),
-        eb
-          .selectFrom('album_asset')
-          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
-          .whereRef('album_asset.albumId', '=', 'album.id')
-          .where('asset.deletedAt', 'is', null)
-          .select((inner) => inner.fn.countAll<number>().as('c'))
-          .as('assetCount'),
-        eb
-          .selectFrom('album_asset')
-          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
-          .innerJoin('google_drive_upload', (join) =>
-            join
-              .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-              .on('google_drive_upload.userId', '=', userId),
-          )
-          .whereRef('album_asset.albumId', '=', 'album.id')
-          .where('asset.deletedAt', 'is', null)
-          .select((inner) => inner.fn.countAll<number>().as('c'))
-          .as('uploadedCount'),
-      ])
-      .orderBy('album.albumName')
-      .execute();
+    return (
+      this.db
+        .selectFrom('album')
+        // LEFT, not INNER: a user who was unshared must still see the selection they need to remove.
+        // Making this an inner join would hide the row, turning "uploads stopped" into a silent
+        // stall — the failure pattern this whole feature keeps working to eliminate.
+        .leftJoin('album_user', (join) =>
+          join.onRef('album_user.albumId', '=', 'album.id').on('album_user.userId', '=', userId),
+        )
+        .innerJoin('album_user as owner_user', (join) =>
+          join.onRef('owner_user.albumId', '=', 'album.id').on('owner_user.role', '=', AlbumUserRole.Owner),
+        )
+        .innerJoin('user as owner', 'owner.id', 'owner_user.userId')
+        .leftJoin('google_drive_album', (join) =>
+          join.onRef('google_drive_album.albumId', '=', 'album.id').on('google_drive_album.userId', '=', userId),
+        )
+        // Either a current member, or a non-member with a selection still pointing here.
+        .where((eb) =>
+          eb.or([eb('album_user.userId', 'is not', null), eb('google_drive_album.userId', 'is not', null)]),
+        )
+        .where('album.deletedAt', 'is', null)
+        .select((eb) => [
+          'album.id as albumId',
+          'album.albumName as albumName',
+          'owner.name as ownerName',
+          eb('owner_user.userId', '=', userId).as('isOwner'),
+          eb('google_drive_album.albumId', 'is not', null).as('subscribed'),
+          // Selected, but no longer a member: uploads have stopped and the only cure is removing
+          // the selection (or the owner re-sharing).
+          eb
+            .and([eb('google_drive_album.albumId', 'is not', null), eb('album_user.userId', 'is', null)])
+            .as('accessLost'),
+          eb
+            .selectFrom('album_asset')
+            .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+            .whereRef('album_asset.albumId', '=', 'album.id')
+            .where('asset.deletedAt', 'is', null)
+            .select((inner) => inner.fn.countAll<number>().as('c'))
+            .as('assetCount'),
+          eb
+            .selectFrom('album_asset')
+            .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+            .innerJoin('google_drive_upload', (join) =>
+              join
+                .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+                .on('google_drive_upload.userId', '=', userId),
+            )
+            .whereRef('album_asset.albumId', '=', 'album.id')
+            .where('asset.deletedAt', 'is', null)
+            .select((inner) => inner.fn.countAll<number>().as('c'))
+            .as('uploadedCount'),
+        ])
+        .orderBy('album.albumName')
+        .execute()
+    );
   }
 
   /**

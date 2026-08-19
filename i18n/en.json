@@ -1176,6 +1176,7 @@
   "go_back": "Go back",
   "go_to_folder": "Go to folder",
   "go_to_search": "Go to search",
+  "google_drive_album_access_lost": "no longer shared with you; backups stopped",
   "google_drive_album_owned_by": "shared by {name}",
   "google_drive_albums": "Albums to back up",
   "google_drive_albums_description": "Choose which albums are copied to your Google Drive. Photos in more than one album are backed up if any of those albums is selected.",

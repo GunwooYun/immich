@@ -521,6 +521,43 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
     });
 
+    it('should let a user remove a selection for an album they can no longer see', async () => {
+      // The one moment you most need to turn a backup off is after losing access to what it
+      // pointed at. An access check here would throw exactly then, leaving a row that is both
+      // invisible in the listing and unremovable through the API.
+      const user = UserFactory.create();
+
+      await sut.unsubscribeAlbum(AuthFactory.create(user), 'album-gone');
+
+      expect(mocks.googleDrive.unsubscribe).toHaveBeenCalledWith(user.id, 'album-gone');
+      expect(mocks.access.album.checkOwnerAccess).not.toHaveBeenCalled();
+      expect(mocks.access.album.checkSharedAlbumAccess).not.toHaveBeenCalled();
+    });
+
+    it('should surface a selection whose album is no longer shared, rather than dropping it', async () => {
+      // Uploads stop correctly on unshare (the membership join), but if the listing also hid the
+      // row the backup would end with nothing anywhere saying so — the silent stall this wave
+      // exists to eliminate, recreated at the unshare boundary.
+      const user = UserFactory.create();
+      mocks.googleDrive.getSubscribableAlbums.mockResolvedValue([
+        {
+          albumId: 'a1',
+          albumName: 'Shared album',
+          ownerName: 'Someone',
+          isOwner: false as never,
+          subscribed: true as never,
+          accessLost: true as never,
+          assetCount: 20,
+          uploadedCount: 5,
+        },
+      ]);
+
+      const [album] = await sut.getSubscribableAlbums(AuthFactory.create(user));
+
+      expect(album.accessLost).toBe(true);
+      expect(album.subscribed).toBe(true);
+    });
+
     it('should normalise SQL booleans when listing albums', async () => {
       // Kysely types SQL booleans as number | boolean because drivers disagree; the DTO promises
       // a real boolean.
@@ -532,6 +569,7 @@ describe(GoogleDriveService.name, () => {
           ownerName: 'Owner',
           isOwner: 1 as never,
           subscribed: 0 as never,
+          accessLost: 0 as never,
           assetCount: 10,
           uploadedCount: 4,
         },
@@ -544,6 +582,7 @@ describe(GoogleDriveService.name, () => {
           ownerName: 'Owner',
           isOwner: true,
           subscribed: false,
+          accessLost: false,
           assetCount: 10,
           uploadedCount: 4,
         },
