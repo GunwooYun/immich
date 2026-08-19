@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { getPagesProvider, getSettingsProvider } from '$lib/commands';
   import DownloadPanel from './DownloadPanel.svelte';
+  import GoogleDriveProgressPanel from './GoogleDriveProgressPanel.svelte';
   import ErrorLayout from './ErrorLayout.svelte';
   import OnEvents from '$lib/components/OnEvents.svelte';
   import NavigationLoadingBar from './NavigationLoadingBar.svelte';
@@ -268,6 +269,7 @@
   {/if}
 
   <DownloadPanel />
+  <GoogleDriveProgressPanel />
   <UploadPanel />
   <ScreencastOverlay />
 

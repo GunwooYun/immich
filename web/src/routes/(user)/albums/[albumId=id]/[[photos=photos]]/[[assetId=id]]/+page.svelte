@@ -32,6 +32,7 @@
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { eventManager } from '$lib/managers/event-manager.svelte';
   import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
+  import { googleDriveProgressManager } from '$lib/managers/google-drive-progress-manager.svelte';
   import { TimelineManager } from '$lib/managers/timeline-manager/timeline-manager.svelte';
   import type { TimelineAsset } from '$lib/managers/timeline-manager/types';
   import AlbumOptionsModal from '$lib/modals/AlbumOptionsModal.svelte';
@@ -365,7 +366,13 @@
   let driveTogglePending = $state(false);
   let driveConnected = $state(false);
 
+  // Watch while the menu's data is on screen so the row above stays live. The manager
+  // reference-counts subscribers, so this costs nothing when the corner card is already watching.
+  let driveUnwatch: (() => void) | null = null;
+  onDestroy(() => driveUnwatch?.());
+
   const loadGoogleDriveMenu = async () => {
+    driveUnwatch ??= googleDriveProgressManager.watch();
     driveMenuLoading = true;
     try {
       // allSettled, not all. The menu renders for every album member — correct, since anyone can
@@ -399,9 +406,15 @@
   const handleToggleGoogleDriveBackup = async () => {
     driveTogglePending = true;
     try {
+      const wasOff = !driveBackedUp;
       await (driveBackedUp
         ? unsubscribeGoogleDriveAlbum({ id: album.id })
         : subscribeGoogleDriveAlbum({ id: album.id }));
+      // Turning backup *on* queues the album server-side, so it counts as work the user started.
+      // Turning it off starts nothing.
+      if (wasOff) {
+        googleDriveProgressManager.markUserInitiated();
+      }
       await loadGoogleDriveMenu();
     } catch (error) {
       handleError(error, $t('errors.unable_to_update_google_drive_albums'));
@@ -460,6 +473,9 @@
       // The generated SDK client throws on any non-2xx response, so a 403/500 lands in the catch
       // below — no hand-rolled `response.ok` check needed like the raw-fetch version had.
       await syncAlbumToGoogleDrive({ id: album.id });
+      // Tell the progress card this was asked for, so it shows itself; it stays quiet for the
+      // background uploads that follow an ordinary add-to-album.
+      googleDriveProgressManager.markUserInitiated();
       toastManager.primary($t('google_drive_sync_started'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_start_google_drive_sync'));
@@ -738,11 +754,20 @@
                       activeColor={driveTogglePending ? 'bg-gray-300' : undefined}
                     />
                     {#if driveBackedUp && driveTotal > driveUploaded}
+                      <!-- While a sync is genuinely moving, this row reports live progress from
+                           the shared poller instead of the snapshot taken when the menu opened —
+                           otherwise the count would sit frozen while uploads ran behind it. -->
                       <MenuOption
                         icon={mdiCloudSyncOutline}
-                        text={$t('google_drive_sync_album')}
+                        text={googleDriveProgressManager.active
+                          ? $t('google_drive_syncing')
+                          : $t('google_drive_sync_album')}
                         subtitle={$t('google_drive_pending_count', {
-                          values: { count: driveTotal - driveUploaded },
+                          values: {
+                            count: googleDriveProgressManager.active
+                              ? googleDriveProgressManager.pending
+                              : driveTotal - driveUploaded,
+                          },
                         })}
                         onClick={handleGoogleDriveSync}
                       />
