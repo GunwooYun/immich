@@ -107,7 +107,35 @@ const GoogleDriveAlbumSchema = z
   })
   .meta({ id: 'GoogleDriveAlbumDto' });
 
+/**
+ * Drive storage, for the gauge in the album menu.
+ *
+ * `limitBytes` is null on unlimited accounts — a real state, not a failure: the UI then shows a
+ * usage figure with no bar. Trash is separate because on a transit-folder deployment it is often
+ * the actionable number: a Drive that looks nearly full is frequently mostly reclaimable.
+ */
+const GoogleDriveStorageSchema = z
+  .object({
+    limitBytes: z.int().nullable().describe('Total quota in bytes, or null when the account is unlimited'),
+    usageBytes: z.int().describe('Bytes used across the whole Google account'),
+    usageInDriveBytes: z.int().describe('Bytes used by Drive specifically'),
+    usageInDriveTrashBytes: z.int().describe('Bytes held by files in the Drive trash, reclaimable by emptying it'),
+  })
+  .meta({ id: 'GoogleDriveStorageDto' });
+
+/**
+ * Per-user backup progress, independent of any album — what the progress UI polls.
+ */
+const GoogleDriveMyStatusSchema = z
+  .object({
+    pending: z.int().describe('Assets selected for backup that are not yet in this user Drive'),
+    failed: z.int().describe('Assets whose last upload attempt failed'),
+  })
+  .meta({ id: 'GoogleDriveMyStatusDto' });
+
 export class GoogleDriveAlbumDto extends createZodDto(GoogleDriveAlbumSchema) {}
+export class GoogleDriveMyStatusDto extends createZodDto(GoogleDriveMyStatusSchema) {}
+export class GoogleDriveStorageDto extends createZodDto(GoogleDriveStorageSchema) {}
 export class GoogleDriveAuthUrlResponseDto extends createZodDto(GoogleDriveAuthUrlResponseSchema) {}
 export class GoogleDrivePickerConfigResponseDto extends createZodDto(GoogleDrivePickerConfigResponseSchema) {}
 export class GoogleDriveSetFolderDto extends createZodDto(GoogleDriveSetFolderSchema) {}

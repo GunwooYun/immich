@@ -228,6 +228,43 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * How many assets are still waiting to go to this user's Drive.
+   *
+   * Deliberately the same predicate as `streamPendingUploads`, scoped to one user and counted
+   * instead of streamed: selection ⋈ live membership ⋈ connection, minus what's already in the
+   * ledger, minus soft-deleted albums and assets. Two different notions of "pending" between the
+   * progress display and the thing that actually queues work would be worse than none.
+   *
+   * Blocked users are *not* excluded here, unlike the stream: an account paused on quota still
+   * has that work outstanding, and reporting it as zero would suggest it had somehow been done.
+   */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  async countPendingUploads(userId: string): Promise<number> {
+    const row = await this.db
+      .selectFrom('album_asset')
+      .innerJoin('album', 'album.id', 'album_asset.albumId')
+      .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album.id')
+      .innerJoin('album_user', (join) =>
+        join.onRef('album_user.albumId', '=', 'album.id').onRef('album_user.userId', '=', 'google_drive_album.userId'),
+      )
+      .innerJoin('user_google_drive', 'user_google_drive.userId', 'google_drive_album.userId')
+      .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+      .leftJoin('google_drive_upload', (join) =>
+        join
+          .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+          .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId'),
+      )
+      .where('google_drive_album.userId', '=', userId)
+      .where('album.deletedAt', 'is', null)
+      .where('asset.deletedAt', 'is', null)
+      .where('google_drive_upload.assetId', 'is', null)
+      .select((eb) => eb.fn.count<number>(eb.fn('distinct', ['album_asset.assetId'])).as('count'))
+      .executeTakeFirst();
+
+    return Number(row?.count ?? 0);
+  }
+
+  /**
    * Streams every (owner, asset) pair that *should* be in Google Drive but isn't yet — i.e. the
    * backlog the "queue all" admin job works through.
    *

@@ -395,12 +395,16 @@ class ApiClient {
           return GoogleDriveAlbumDto.fromJson(value);
         case 'GoogleDriveAuthUrlResponseDto':
           return GoogleDriveAuthUrlResponseDto.fromJson(value);
+        case 'GoogleDriveMyStatusDto':
+          return GoogleDriveMyStatusDto.fromJson(value);
         case 'GoogleDrivePickerConfigResponseDto':
           return GoogleDrivePickerConfigResponseDto.fromJson(value);
         case 'GoogleDriveSetFolderDto':
           return GoogleDriveSetFolderDto.fromJson(value);
         case 'GoogleDriveStatusResponseDto':
           return GoogleDriveStatusResponseDto.fromJson(value);
+        case 'GoogleDriveStorageDto':
+          return GoogleDriveStorageDto.fromJson(value);
         case 'HlsVideoResolution':
           return HlsVideoResolutionTypeTransformer().decode(value);
         case 'ImageFormat':

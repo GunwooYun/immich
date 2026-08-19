@@ -158,7 +158,7 @@ class GoogleDriveApi {
     return null;
   }
 
-  /// Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was connected, or an earlier automatic upload failed).  Note there's no request body here beyond the `:id` in the URL — unlike the old prototype version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the URL path parameter means normal Immich route-level access checks and Swagger typing apply, and it matches the REST convention used by the rest of the album-related endpoints (`/albums/:id/...`).  All the actual permission enforcement (must the caller be the album owner? has this asset already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method just authenticates the caller and forwards the album id.
+  /// Get configuration for the Google Drive folder picker
   ///
   /// Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.
   ///
@@ -189,7 +189,7 @@ class GoogleDriveApi {
     );
   }
 
-  /// Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was connected, or an earlier automatic upload failed).  Note there's no request body here beyond the `:id` in the URL — unlike the old prototype version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the URL path parameter means normal Immich route-level access checks and Swagger typing apply, and it matches the REST convention used by the rest of the album-related endpoints (`/albums/:id/...`).  All the actual permission enforcement (must the caller be the album owner? has this asset already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method just authenticates the caller and forwards the album id.
+  /// Get configuration for the Google Drive folder picker
   ///
   /// Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.
   Future<GoogleDrivePickerConfigResponseDto?> getGoogleDrivePickerConfig({ Future<void>? abortTrigger, }) async {
@@ -251,6 +251,104 @@ class GoogleDriveApi {
     // FormatException when trying to decode an empty string.
     if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
       return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveStatusResponseDto',) as GoogleDriveStatusResponseDto;
+    
+    }
+    return null;
+  }
+
+  /// Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was connected, or an earlier automatic upload failed).  Note there's no request body here beyond the `:id` in the URL — unlike the old prototype version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the URL path parameter means normal Immich route-level access checks and Swagger typing apply, and it matches the REST convention used by the rest of the album-related endpoints (`/albums/:id/...`).  All the actual permission enforcement (must the caller be the album owner? has this asset already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method just authenticates the caller and forwards the album id.
+  ///
+  /// Report how full the authenticated user Google Drive is, including how much is held by trash. Requires a connected account; a revoked grant is reported as disconnected rather than as a server error.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  Future<Response> getGoogleDriveStorageWithHttpInfo({ Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/storage';
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'GET',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was connected, or an earlier automatic upload failed).  Note there's no request body here beyond the `:id` in the URL — unlike the old prototype version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the URL path parameter means normal Immich route-level access checks and Swagger typing apply, and it matches the REST convention used by the rest of the album-related endpoints (`/albums/:id/...`).  All the actual permission enforcement (must the caller be the album owner? has this asset already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method just authenticates the caller and forwards the album id.
+  ///
+  /// Report how full the authenticated user Google Drive is, including how much is held by trash. Requires a connected account; a revoked grant is reported as disconnected rather than as a server error.
+  Future<GoogleDriveStorageDto?> getGoogleDriveStorage({ Future<void>? abortTrigger, }) async {
+    final response = await getGoogleDriveStorageWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveStorageDto',) as GoogleDriveStorageDto;
+    
+    }
+    return null;
+  }
+
+  /// Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads are queued per (user, asset), so any album-scoped figure would be unable to describe work that spans albums.
+  ///
+  /// Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  Future<Response> getMyGoogleDriveStatusWithHttpInfo({ Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/me/status';
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'GET',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads are queued per (user, asset), so any album-scoped figure would be unable to describe work that spans albums.
+  ///
+  /// Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.
+  Future<GoogleDriveMyStatusDto?> getMyGoogleDriveStatus({ Future<void>? abortTrigger, }) async {
+    final response = await getMyGoogleDriveStatusWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveMyStatusDto',) as GoogleDriveMyStatusDto;
     
     }
     return null;

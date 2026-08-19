@@ -656,3 +656,18 @@ export type JSONSchemaProperty = {
 export interface ClassConstructor<T = any> extends Function {
   new (...args: any[]): T;
 }
+
+/**
+ * A user's Google Drive storage picture, as reported by `about.get(storageQuota)`.
+ *
+ * `limitBytes` is null for unlimited accounts, which is a real state rather than an error —
+ * the UI shows a usage figure instead of a gauge. Trash is broken out because a Drive used as a
+ * transit buffer tends to accumulate deleted files that still occupy quota, so "how full am I"
+ * and "how much could I reclaim right now" are different, both useful numbers.
+ */
+export type GoogleDriveStorage = {
+  limitBytes: number | null;
+  usageBytes: number;
+  usageInDriveBytes: number;
+  usageInDriveTrashBytes: number;
+};

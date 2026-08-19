@@ -15,7 +15,7 @@ import {
   SystemMetadataKey,
 } from 'src/enum';
 import { BaseService } from 'src/services/base.service';
-import { JobItem } from 'src/types';
+import { GoogleDriveStorage, JobItem } from 'src/types';
 import {
   classifyDriveError,
   GoogleDriveSizeMismatchError,
@@ -34,6 +34,13 @@ import { isGoogleDriveEnabled } from 'src/utils/misc';
 type GoogleDriveStateClaims = {
   userId: string;
 };
+
+/**
+ * Drive reports quota figures as strings, because they can exceed 2^53 on very large accounts.
+ * Number() is safe for anything real — 5 TB is ~5e12, well inside Number.MAX_SAFE_INTEGER (~9e15).
+ */
+const toByteCount = (value: string | null | undefined) =>
+  value === null || value === undefined ? null : Number(value);
 
 /**
  * GoogleDriveService owns everything related to the "sync album to Google Drive" feature:
@@ -423,6 +430,89 @@ export class GoogleDriveService extends BaseService {
       failedCount,
       blockedReason,
     };
+  }
+
+  /**
+   * Per-user cache of the last storage reading, keyed by user id.
+   *
+   * The gauge is fetched whenever the album menu opens, which is often, and the underlying call
+   * goes out to Google — an uncached implementation would hit their API every time someone
+   * glanced at the menu. A minute is short enough that the number is never meaningfully stale
+   * (Drive usage moves slowly) and long enough to collapse a burst of menu toggling into one call.
+   *
+   * Deliberately in-process rather than Redis: the value is cheap to recompute, has no
+   * correctness role, and a per-replica cache being independently warm is fine.
+   */
+  private static storageCache = new Map<string, { at: number; value: GoogleDriveStorage }>();
+  private static readonly STORAGE_CACHE_MS = 60_000;
+
+  /**
+   * How full the user's Drive is.
+   *
+   * Verified empirically before building this: `about.get` is reachable under the `drive.file`
+   * scope this integration already has, because `storageQuota` is *account* metadata rather than
+   * file data — the scope restricts which files we can see, not whether we can ask how much room
+   * is left. Had that been wrong, the feature would have required re-consent from every user.
+   *
+   * `limit` is absent for unlimited (Workspace) accounts, hence nullable: the UI shows a plain
+   * usage figure instead of a gauge. `usageInDriveTrash` is reported separately because on a
+   * transit-folder deployment it is usually the actionable number — a Drive that looks full is
+   * often mostly trash that emptying would reclaim.
+   */
+  async getStorage(userId: string): Promise<GoogleDriveStorage> {
+    const cached = GoogleDriveService.storageCache.get(userId);
+    if (cached && Date.now() - cached.at < GoogleDriveService.STORAGE_CACHE_MS) {
+      return cached.value;
+    }
+
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
+      throw new BadRequestException('Google Drive is not connected');
+    }
+
+    const oauth2Client = await this.getOAuth2Client();
+    oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
+
+    let quota;
+    try {
+      ({
+        data: { storageQuota: quota },
+      } = await google.drive({ version: 'v3', auth: oauth2Client }).about.get({ fields: 'storageQuota' }));
+    } catch (error) {
+      // A revoked grant must read as "disconnected", not as a server fault: the settings page
+      // polls this, and a 500 there would look like the feature is broken rather than unlinked.
+      if (this.isInvalidGrant(error)) {
+        this.logger.warn(`Google Drive access for user ${userId} was revoked; storage is unavailable`);
+        throw new BadRequestException('Google Drive access was revoked. Please reconnect your account.');
+      }
+      throw error;
+    }
+
+    const value: GoogleDriveStorage = {
+      limitBytes: toByteCount(quota?.limit),
+      usageBytes: toByteCount(quota?.usage) ?? 0,
+      usageInDriveBytes: toByteCount(quota?.usageInDrive) ?? 0,
+      usageInDriveTrashBytes: toByteCount(quota?.usageInDriveTrash) ?? 0,
+    };
+
+    GoogleDriveService.storageCache.set(userId, { at: Date.now(), value });
+    return value;
+  }
+
+  /**
+   * The per-user backup counts, independent of any album.
+   *
+   * Wave 2's album status is album-scoped, which cannot describe progress for work that isn't —
+   * an upload triggered from a multi-album selection, or the eventual per-asset upload. Having a
+   * user-scoped source from the start means the progress UI has one honest thing to poll rather
+   * than a per-album endpoint that later needs retrofitting.
+   */
+  async getMyStatus(userId: string): Promise<{ pending: number; failed: number }> {
+    const [pending, { failedCount }] = await Promise.all([
+      this.googleDriveRepository.countPendingUploads(userId),
+      this.googleDriveRepository.getErrorSummary(userId),
+    ]);
+    return { pending, failed: failedCount };
   }
 
   /**

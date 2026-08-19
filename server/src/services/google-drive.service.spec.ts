@@ -16,9 +16,10 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
-const { driveFilesCreate, driveFilesDelete } = vi.hoisted(() => ({
+const { driveFilesCreate, driveFilesDelete, driveAboutGet } = vi.hoisted(() => ({
   driveFilesCreate: vi.fn(),
   driveFilesDelete: vi.fn(),
+  driveAboutGet: vi.fn(),
 }));
 
 vi.mock('googleapis', () => ({
@@ -31,7 +32,10 @@ vi.mock('googleapis', () => ({
         }
       },
     },
-    drive: () => ({ files: { create: driveFilesCreate, delete: driveFilesDelete } }),
+    drive: () => ({
+      files: { create: driveFilesCreate, delete: driveFilesDelete },
+      about: { get: driveAboutGet },
+    }),
   },
 }));
 
@@ -53,6 +57,20 @@ const enabledConfig = {
 
 // Drives every test below to the same point: connected user, asset present, nothing in the
 // ledger, a readable 1024-byte original. Only the size Drive reports back then varies.
+// A plausible about.get(storageQuota) response — the real numbers from the live account, so the
+// string-to-number conversion is exercised at realistic magnitudes.
+const quota = (over: Record<string, string> = {}) => ({
+  data: {
+    storageQuota: {
+      limit: '5499705622528',
+      usage: '128243802559',
+      usageInDrive: '123498526848',
+      usageInDriveTrash: '115171945473',
+      ...over,
+    },
+  },
+});
+
 // A connected-Drive credentials row, for tests that only need "this user is linked".
 const connected = (userId: string) => ({
   userId,
@@ -587,6 +605,84 @@ describe(GoogleDriveService.name, () => {
           uploadedCount: 4,
         },
       ]);
+    });
+  });
+
+  describe('getStorage', () => {
+    beforeEach(() => {
+      driveAboutGet.mockReset();
+      // The cache is static, so it survives between tests unless cleared.
+      (GoogleDriveService as unknown as { storageCache: Map<string, unknown> }).storageCache.clear();
+    });
+
+    it('should convert Google string byte counts to numbers', async () => {
+      // Google returns these as strings because they can exceed 2^53 on large accounts; every
+      // real quota is comfortably inside Number's safe range.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockResolvedValue(quota());
+
+      await expect(sut.getStorage(userId)).resolves.toEqual({
+        limitBytes: 5_499_705_622_528,
+        usageBytes: 128_243_802_559,
+        usageInDriveBytes: 123_498_526_848,
+        usageInDriveTrashBytes: 115_171_945_473,
+      });
+    });
+
+    it('should report an unlimited account as a null limit rather than failing', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockResolvedValue({ data: { storageQuota: { usage: '1', usageInDrive: '1' } } });
+
+      await expect(sut.getStorage(userId)).resolves.toMatchObject({ limitBytes: null, usageBytes: 1 });
+    });
+
+    it('should serve a second call from cache rather than calling Google again', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockResolvedValue(quota());
+
+      await sut.getStorage(userId);
+      await sut.getStorage(userId);
+
+      expect(driveAboutGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not serve one user cached values belonging to another', async () => {
+      const [a, b] = [newUuid(), newUuid()];
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockImplementation((id: string) => Promise.resolve(connected(id)) as never);
+      driveAboutGet.mockResolvedValueOnce(quota()).mockResolvedValueOnce(quota({ usage: '42' }));
+
+      await expect(sut.getStorage(a)).resolves.toMatchObject({ usageBytes: 128_243_802_559 });
+      await expect(sut.getStorage(b)).resolves.toMatchObject({ usageBytes: 42 });
+    });
+
+    it('should report a revoked grant as disconnected, not as a server error', async () => {
+      // The settings page reads this; a 500 there would look like the feature is broken rather
+      // than merely unlinked.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockRejectedValue(
+        Object.assign(new Error('x'), { response: { data: { error: 'invalid_grant' } } }),
+      );
+
+      await expect(sut.getStorage(userId)).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('getMyStatus', () => {
+    it('should combine the pending count with the failure summary', async () => {
+      const userId = newUuid();
+      mocks.googleDrive.countPendingUploads.mockResolvedValue(17);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 3, blockedReason: null });
+
+      await expect(sut.getMyStatus(userId)).resolves.toEqual({ pending: 17, failed: 3 });
     });
   });
 

@@ -119,6 +119,25 @@ where
 order by
   "album"."albumName"
 
+-- GoogleDriveRepository.countPendingUploads
+select
+  count(distinct ("album_asset"."assetId")) as "count"
+from
+  "album_asset"
+  inner join "album" on "album"."id" = "album_asset"."albumId"
+  inner join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
+  inner join "album_user" on "album_user"."albumId" = "album"."id"
+  and "album_user"."userId" = "google_drive_album"."userId"
+  inner join "user_google_drive" on "user_google_drive"."userId" = "google_drive_album"."userId"
+  inner join "asset" on "asset"."id" = "album_asset"."assetId"
+  left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
+  and "google_drive_upload"."userId" = "google_drive_album"."userId"
+where
+  "google_drive_album"."userId" = $1
+  and "album"."deletedAt" is null
+  and "asset"."deletedAt" is null
+  and "google_drive_upload"."assetId" is null
+
 -- GoogleDriveRepository.streamPendingUploads
 select distinct
   "google_drive_album"."userId" as "userId",

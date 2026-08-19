@@ -34,6 +34,11 @@
      */
     buttonClass?: string | undefined;
     hideContent?: boolean;
+    /**
+     * Called when the menu opens. Lets a caller defer loading whatever the menu displays until
+     * someone actually looks at it, instead of paying for it on every page render.
+     */
+    onOpen?: () => void;
     children?: Snippet;
     offset?: {
       x: number;
@@ -51,6 +56,7 @@
     variant = 'ghost',
     buttonClass = undefined,
     hideContent = false,
+    onOpen,
     children,
     offset,
     ...restProps
@@ -77,6 +83,7 @@
     contextMenuPosition = getContextMenuPositionFromEvent(event, layoutAlign);
     isOpen = true;
     menuContainer?.focus();
+    onOpen?.();
   };
 
   const handleClick = (event: MouseEvent) => {

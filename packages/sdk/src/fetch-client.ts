@@ -1232,6 +1232,12 @@ export type GoogleDriveSetFolderDto = {
     /** Display name of the folder, if known */
     folderName?: string;
 };
+export type GoogleDriveMyStatusDto = {
+    /** Assets whose last upload attempt failed */
+    failed: number;
+    /** Assets selected for backup that are not yet in this user Drive */
+    pending: number;
+};
 export type GoogleDrivePickerConfigResponseDto = {
     /** Short-lived OAuth access token for the Picker to use */
     accessToken: string;
@@ -1253,6 +1259,16 @@ export type GoogleDriveStatusResponseDto = {
     folderId: string | null;
     /** Display name of that folder, if it was chosen via the picker */
     folderName: string | null;
+};
+export type GoogleDriveStorageDto = {
+    /** Total quota in bytes, or null when the account is unlimited */
+    limitBytes: number | null;
+    /** Bytes used across the whole Google account */
+    usageBytes: number;
+    /** Bytes used by Drive specifically */
+    usageInDriveBytes: number;
+    /** Bytes held by files in the Drive trash, reclaimable by emptying it */
+    usageInDriveTrashBytes: number;
 };
 export type QueueStatisticsDto = {
     /** Number of active jobs */
@@ -4990,19 +5006,20 @@ export function disconnectGoogleDrive(opts?: Oazapfts.RequestOpts) {
     }));
 }
 /**
- * Manual "sync this album to Google Drive now" trigger — the fallback button shown on an
- * album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was
- * connected, or an earlier automatic upload failed).
- *
- * Note there's no request body here beyond the `:id` in the URL — unlike the old prototype
- * version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the
- * URL path parameter means normal Immich route-level access checks and Swagger typing apply,
- * and it matches the REST convention used by the rest of the album-related endpoints
- * (`/albums/:id/...`).
- *
- * All the actual permission enforcement (must the caller be the album owner? has this asset
- * already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method
- * just authenticates the caller and forwards the album id.
+ * Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads
+ * are queued per (user, asset), so any album-scoped figure would be unable to describe work
+ * that spans albums.
+ */
+export function getMyGoogleDriveStatus(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveMyStatusDto;
+    }>("/google-drive/me/status", {
+        ...opts
+    }));
+}
+/**
+ * Get configuration for the Google Drive folder picker
  */
 export function getGoogleDrivePickerConfig(opts?: Oazapfts.RequestOpts) {
     return oazapfts.ok(oazapfts.fetchJson<{
@@ -5035,6 +5052,29 @@ export function getGoogleDriveStatus(opts?: Oazapfts.RequestOpts) {
         status: 200;
         data: GoogleDriveStatusResponseDto;
     }>("/google-drive/status", {
+        ...opts
+    }));
+}
+/**
+ * Manual "sync this album to Google Drive now" trigger — the fallback button shown on an
+ * album's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was
+ * connected, or an earlier automatic upload failed).
+ *
+ * Note there's no request body here beyond the `:id` in the URL — unlike the old prototype
+ * version of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the
+ * URL path parameter means normal Immich route-level access checks and Swagger typing apply,
+ * and it matches the REST convention used by the rest of the album-related endpoints
+ * (`/albums/:id/...`).
+ *
+ * All the actual permission enforcement (must the caller be the album owner? has this asset
+ * already been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method
+ * just authenticates the caller and forwards the album id.
+ */
+export function getGoogleDriveStorage(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveStorageDto;
+    }>("/google-drive/storage", {
         ...opts
     }));
 }

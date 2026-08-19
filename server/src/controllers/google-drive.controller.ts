@@ -6,9 +6,11 @@ import { AuthDto } from 'src/dtos/auth.dto';
 import {
   GoogleDriveAlbumDto,
   GoogleDriveAuthUrlResponseDto,
+  GoogleDriveMyStatusDto,
   GoogleDrivePickerConfigResponseDto,
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
+  GoogleDriveStorageDto,
 } from 'src/dtos/google-drive.dto';
 import { ApiTag, ImmichCookie } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
@@ -224,6 +226,39 @@ export class GoogleDriveController {
    * everything else here — see GoogleDrivePickerConfigResponseDto for what that token can and
    * cannot do.
    */
+  /**
+   * Drive storage for the gauge. Cached briefly server-side — the menu can be opened repeatedly
+   * and each open should not cost a round trip to Google.
+   */
+  @Get('storage')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Get Google Drive storage usage',
+    description:
+      'Report how full the authenticated user Google Drive is, including how much is held by trash. Requires a connected account; a revoked grant is reported as disconnected rather than as a server error.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getGoogleDriveStorage(@Auth() auth: AuthDto): Promise<GoogleDriveStorageDto> {
+    return this.googleDriveService.getStorage(auth.user.id);
+  }
+
+  /**
+   * Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads
+   * are queued per (user, asset), so any album-scoped figure would be unable to describe work
+   * that spans albums.
+   */
+  @Get('me/status')
+  @Authenticated()
+  @Endpoint({
+    summary: 'Get the authenticated user Google Drive backup progress',
+    description:
+      'Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getMyGoogleDriveStatus(@Auth() auth: AuthDto): Promise<GoogleDriveMyStatusDto> {
+    return this.googleDriveService.getMyStatus(auth.user.id);
+  }
+
   @Get('picker-config')
   @Authenticated()
   @Endpoint({

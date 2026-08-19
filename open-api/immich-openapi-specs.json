@@ -6667,6 +6667,51 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/google-drive/me/status": {
+      "get": {
+        "description": "Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.",
+        "operationId": "getMyGoogleDriveStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveMyStatusDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads\nare queued per (user, asset), so any album-scoped figure would be unable to describe work\nthat spans albums.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/picker-config": {
       "get": {
         "description": "Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.",
@@ -6695,7 +6740,7 @@
             "api_key": []
           }
         ],
-        "summary": "Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an\nalbum's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was\nconnected, or an earlier automatic upload failed).\n\nNote there's no request body here beyond the `:id` in the URL — unlike the old prototype\nversion of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the\nURL path parameter means normal Immich route-level access checks and Swagger typing apply,\nand it matches the REST convention used by the rest of the album-related endpoints\n(`/albums/:id/...`).\n\nAll the actual permission enforcement (must the caller be the album owner? has this asset\nalready been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method\njust authenticates the caller and forwards the album id.",
+        "summary": "Get configuration for the Google Drive folder picker",
         "tags": [
           "Google Drive"
         ],
@@ -6779,6 +6824,51 @@
           }
         ],
         "summary": "Tells the settings page whether this user has Google Drive connected, and if so which folder\nthey picked and when they linked it. Without this the settings form had no way to show current\nstate — it always rendered as if nobody was connected and with an empty folder field.\n\nNever includes the refresh token; the frontend has no use for it.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/google-drive/storage": {
+      "get": {
+        "description": "Report how full the authenticated user Google Drive is, including how much is held by trash. Requires a connected account; a revoked grant is reported as disconnected rather than as a server error.",
+        "operationId": "getGoogleDriveStorage",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveStorageDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Manual \"sync this album to Google Drive now\" trigger — the fallback button shown on an\nalbum's page for assets that weren't auto-uploaded (e.g. the album existed before Drive was\nconnected, or an earlier automatic upload failed).\n\nNote there's no request body here beyond the `:id` in the URL — unlike the old prototype\nversion of this endpoint, we don't accept a free-form `albumId` in the JSON body. Using the\nURL path parameter means normal Immich route-level access checks and Swagger typing apply,\nand it matches the REST convention used by the rest of the album-related endpoints\n(`/albums/:id/...`).\n\nAll the actual permission enforcement (must the caller be the album owner? has this asset\nalready been uploaded?) happens inside GoogleDriveService#syncAlbum — this controller method\njust authenticates the caller and forwards the album id.",
         "tags": [
           "Google Drive"
         ],
@@ -19737,6 +19827,27 @@
         ],
         "type": "object"
       },
+      "GoogleDriveMyStatusDto": {
+        "properties": {
+          "failed": {
+            "description": "Assets whose last upload attempt failed",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "pending": {
+            "description": "Assets selected for backup that are not yet in this user Drive",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "failed",
+          "pending"
+        ],
+        "type": "object"
+      },
       "GoogleDrivePickerConfigResponseDto": {
         "properties": {
           "accessToken": {
@@ -19818,6 +19929,42 @@
           "failedCount",
           "folderId",
           "folderName"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveStorageDto": {
+        "properties": {
+          "limitBytes": {
+            "description": "Total quota in bytes, or null when the account is unlimited",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "nullable": true,
+            "type": "integer"
+          },
+          "usageBytes": {
+            "description": "Bytes used across the whole Google account",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "usageInDriveBytes": {
+            "description": "Bytes used by Drive specifically",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "usageInDriveTrashBytes": {
+            "description": "Bytes held by files in the Drive trash, reclaimable by emptying it",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limitBytes",
+          "usageBytes",
+          "usageInDriveBytes",
+          "usageInDriveTrashBytes"
         ],
         "type": "object"
       },
