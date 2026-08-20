@@ -1,0 +1,44 @@
+Google Drive — unit test run
+date:   2026-08-20T09:15:20+09:00
+commit: e642de962 (feat/google-drive-album-sync-v3.1.0)
+
+── server (unit) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+ ✓ |server:unit| src/utils/google-drive.spec.ts (16 tests) 9ms
+(node:34338) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:34337) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:34345) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:34351) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:34344) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:unit| src/services/server.service.spec.ts (14 tests) 325ms
+ ✓ |server:unit| src/services/queue.service.spec.ts (18 tests) 392ms
+ ✓ |server:unit| src/services/system-config.service.spec.ts (28 tests) 812ms
+ ✓ |server:unit| src/services/google-drive.service.spec.ts (51 tests) 1023ms
+ ✓ |server:unit| src/services/album.service.spec.ts (70 tests) 1211ms
+
+ Test Files  6 passed (6)
+      Tests  197 passed (197)
+   Start at  09:15:21
+   Duration  7.43s (transform 2.68s, setup 0ms, collect 27.61s, tests 3.77s, environment 1ms, prepare 1.31s)
+
+
+── web (unit) ──────────────────────────────────────────────
+
+ RUN  v4.1.10 /home/gwyun/workspace/immich/web
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  09:15:30
+   Duration  1.41s (transform 628ms, setup 407ms, import 405ms, tests 270ms, environment 217ms)
+
+
+════════════════════════════════════════════════════════════
+RESULT: PASS

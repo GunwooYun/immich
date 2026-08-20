@@ -32,8 +32,18 @@ class GoogleDriveProgressManager {
    */
   userInitiated = $state(false);
 
-  /** True while there is genuinely work moving — pending, and not paused. */
-  active = $derived(this.pending > 0 && !this.blockedReason);
+  /**
+   * One value describing what is happening, so a consumer picks a branch rather than assembling
+   * the answer from `pending` and `blockedReason` — and gets it wrong the way the album menu once
+   * did. `pending` deliberately counts a paused account's outstanding work (Wave 2), which makes
+   * "pending > 0" a trap on its own.
+   */
+  status = $derived<'idle' | 'syncing' | 'paused'>(
+    this.blockedReason ? 'paused' : this.pending > 0 ? 'syncing' : 'idle',
+  );
+
+  /** Shorthand for the common check. Equivalent to `status === 'syncing'`. */
+  active = $derived(this.status === 'syncing');
 
   #watchers = 0;
   #timer: ReturnType<typeof setTimeout> | null = null;

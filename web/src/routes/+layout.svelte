@@ -11,6 +11,7 @@
   import VersionAnnouncement from './VersionAnnouncement.svelte';
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { eventManager } from '$lib/managers/event-manager.svelte';
+  import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
   import { serverConfigManager } from '$lib/managers/server-config-manager.svelte';
   import ServerRestartingModal from '$lib/modals/ServerRestartingModal.svelte';
   import { Route } from '$lib/route';
@@ -269,7 +270,9 @@
   {/if}
 
   <DownloadPanel />
-  <GoogleDriveProgressPanel />
+  {#if featureFlagsManager.value.googleDrive}
+    <GoogleDriveProgressPanel />
+  {/if}
   <UploadPanel />
   <ScreencastOverlay />
 

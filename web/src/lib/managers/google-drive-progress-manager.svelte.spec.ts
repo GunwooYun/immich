@@ -115,17 +115,28 @@ describe('googleDriveProgressManager', () => {
     expect(googleDriveProgressManager.userInitiated).toBe(false);
   });
 
-  it('should treat a blocked account as not active even with work outstanding', async () => {
-    // pending counts a paused account's work on purpose, so `active` is what tells a progress bar
-    // apart from a stalled one.
+  it('should report a blocked account as paused, not syncing', async () => {
+    // pending counts a paused account's work on purpose (Wave 2), which makes "pending > 0" a trap
+    // for consumers. `status` is the single value they should branch on instead.
     mocked.mockResolvedValue(status(1800, { blockedReason: 'quota_exceeded' }) as never);
 
-    const unwatch = startWatching();
+    startWatching();
     await vi.waitFor(() => expect(googleDriveProgressManager.loaded).toBe(true));
 
     expect(googleDriveProgressManager.pending).toBe(1800);
+    expect(googleDriveProgressManager.status).toBe('paused');
     expect(googleDriveProgressManager.active).toBe(false);
-    unwatch();
+  });
+
+  it('should distinguish idle from syncing', async () => {
+    mocked.mockResolvedValue(status(0) as never);
+    startWatching();
+    await vi.waitFor(() => expect(googleDriveProgressManager.loaded).toBe(true));
+    expect(googleDriveProgressManager.status).toBe('idle');
+
+    mocked.mockResolvedValue(status(12) as never);
+    await googleDriveProgressManager.refresh();
+    expect(googleDriveProgressManager.status).toBe('syncing');
   });
 
   it('should keep the last known numbers when a poll fails', async () => {

@@ -14,31 +14,24 @@
   import { Route } from '$lib/route';
   import { Heading, IconButton } from '@immich/ui';
   import { mdiClose } from '@mdi/js';
-  import { onMount } from 'svelte';
   import { t } from 'svelte-i18n';
   import { fly } from 'svelte/transition';
 
   let dismissed = $state(false);
 
-  onMount(() => googleDriveProgressManager.watch());
-
   const manager = googleDriveProgressManager;
 
-  // Total is only known while work is outstanding, so the bar is drawn from what's left rather
-  // than a percentage of a total the client never learns. Peak pending is remembered for the
-  // session so the bar fills rather than jumping around as the denominator shrinks.
-  let peak = $state(0);
+  // Poll only while there is something to watch. This used to subscribe on mount, and since the
+  // panel lives in the root layout — which never unmounts — that meant every logged-in user ran a
+  // me/status query every few seconds for their entire session, on every instance, including ones
+  // where Google Drive is switched off entirely. The card doesn't need a background poll to
+  // appear: markUserInitiated() pushes the first value itself, and the watch starts from there.
   $effect(() => {
-    if (manager.pending > peak) {
-      peak = manager.pending;
+    if (!manager.userInitiated) {
+      return;
     }
-    if (manager.pending === 0) {
-      peak = 0;
-    }
+    return manager.watch();
   });
-
-  const done = $derived(peak > 0 ? peak - manager.pending : 0);
-  const percentage = $derived(peak > 0 ? Math.min(Math.floor((done / peak) * 100), 100) : 0);
 
   const visible = $derived(
     !dismissed && manager.userInitiated && manager.loaded && (manager.pending > 0 || !!manager.blockedReason),
@@ -85,12 +78,14 @@
         {$t('go_to_settings')}
       </button>
     {:else}
-      <div class="mt-2 flex place-items-center gap-2 text-sm">
-        <div class="h-2.5 w-full rounded-full bg-neutral-200 dark:bg-neutral-600">
-          <div class="h-2.5 rounded-full bg-primary" style={`width: ${percentage}%`}></div>
-        </div>
-        <p class="min-w-20 text-right text-xs whitespace-nowrap">{done} / {peak}</p>
-      </div>
+      <!-- A count, not a bar. The client is never told a total — only how many are left — so a bar
+           needs an invented denominator, and the obvious one (highest pending seen this session)
+           lies in this pipeline's ordinary flow: sync one album to halfway, add photos to another,
+           and the bar snaps backwards to zero. A number that only counts down is honest about
+           what is actually known. -->
+      <p class="mt-2 text-sm">
+        {$t('google_drive_pending_count', { values: { count: manager.pending } })}
+      </p>
       {#if manager.failed > 0}
         <p class="mt-2 text-xs text-warning">
           {$t('google_drive_failed_count', { values: { count: manager.failed } })}
