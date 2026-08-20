@@ -178,12 +178,34 @@ web/src/**/*.spec.ts             웹 유닛
   ```
   compose에서 우리가 바꾸는 것은 `immich-server`의 `image:` **한 줄뿐**이다. 나머지 3개
   컨테이너(postgres/redis/ML)는 공식 이미지를 그대로 쓴다.
-- **구글 OAuth 연결(재연결)에는 SSH 터널이 필요하다.** 구글이 리디렉션 대상으로 사설 IP를
-  거부하고 `localhost`만 받기 때문:
+- **데스크탑에서 랩탑 immich에 붙으려면 SSH 터널이 필요하다.** 두 경우에 쓴다:
+  ① 구글 OAuth 연결·재연결 (구글이 리디렉션 대상으로 사설 IP를 거부하고 `localhost`만 받음),
+  ② 데스크탑 브라우저로 운영 화면을 확인할 때.
+
   ```bash
   ssh -N -L 2283:localhost:2283 gwyun@192.168.50.211   # 이후 브라우저는 localhost:2283
   ```
-  **연결이 끝나면 터널은 불필요하다** — 업로드는 랩탑이 구글과 직접 통신한다.
+
+  PuTTY로 할 경우 — Session에 `192.168.50.211`(포트 22)을 넣고,
+  **Connection → SSH → Tunnels**에서 Source `2283` / Destination `localhost:2283` /
+  **Local** 선택 후 **Add**. 목록에 `L2283  localhost:2283`이 떠야 걸린 것이다. 그 다음 Open,
+  **창은 열어둔다**.
+
+  **⚠ 터널을 쓰기 전에 Dev Container를 끈다.** Dev Container가 데스크탑의 2283을 차지하고
+  있으면 브라우저가 랩탑이 아니라 그 컨테이너에 붙어 `ERR_EMPTY_RESPONSE`가 난다(실제로
+  두 번 겪었고, 원인을 찾는 데 시간을 썼다). 확인:
+  ```bash
+  ss -tln | grep :2283          # 비어 있어야 한다
+  docker ps | grep immich_server # 데스크탑에 떠 있으면 docker stop
+  ```
+  VS Code에서 immich-dev 창을 열면 컨테이너가 되살아나 다시 뺏으므로, 터널을 쓰는 동안은
+  그 창을 닫아둔다.
+
+  **PuTTY의 Open이 아무 반응 없을 때**는 Tunnels 화면에서 바로 Open을 눌러 Session의
+  Host Name이 비어 있는 경우다. Session 화면으로 돌아가 주소를 확인하고 다시 Open한다.
+
+  **OAuth 연결이 끝나면 터널은 불필요하다** — 업로드는 랩탑이 구글과 직접 통신한다.
+  평소 사용은 `http://192.168.50.211:2283`으로 한다.
 - 랩탑에서 테스트를 직접 구동할 때는 API 키를 쓴다(`x-api-key`). 브라우저 클릭을 사용자에게
   시키기 전에, 직접 할 수 있는지 먼저 검토한다.
 
