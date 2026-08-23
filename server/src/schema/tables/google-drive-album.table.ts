@@ -20,7 +20,8 @@ import { UserTable } from 'src/schema/tables/user.table';
  * the membership row (`album_user`) that made the selection possible. That means a selection
  * survives an unshare, which is what lets a later re-share resume backups without the user
  * re-picking. The cost is that a selection row alone is *not* evidence of access, so every read
- * path that turns a selection into an upload — `getSubscribers`, `streamPendingUploads` — must
+ * path that turns a selection into an upload — `getSubscribers`, `streamPendingUploads`, and
+ * the per-job worker gate `isAssetInSubscribedAlbum` — must
  * join through current membership as well. Skipping that join would keep feeding a user's Drive
  * from an album they can no longer open, silently and indefinitely: precisely the leak this whole
  * model exists to prevent.

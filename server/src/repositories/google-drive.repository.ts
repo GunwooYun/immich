@@ -429,15 +429,28 @@ export class GoogleDriveRepository {
    * album off can still leak the whole album (subscribeAlbum queues it all up front).
    *
    * "*Any* selected album", not this specific one: an asset in albums A and B with only A
-   * deselected must keep uploading for B. Same shape as countPendingUploads/streamPendingUploads —
-   * and, like them, it joins live `album_user` membership, because a selection row deliberately
-   * outlives an unshare (so re-sharing resumes). That makes this a second enforcement point for
-   * "no uploads from an album you can no longer open", now at execution time.
+   * deselected must keep uploading for B. Like them, it joins live `album_user` membership,
+   * because a selection row deliberately outlives an unshare (so re-sharing resumes). That makes
+   * this a second enforcement point for "no uploads from an album you can no longer open", now at
+   * execution time.
+   *
+   * The album-level predicate must stay identical to `countPendingUploads`/`streamPendingUploads`,
+   * or the three disagree about what "pending" means. That is why `album` is joined and
+   * `album.deletedAt is null` is filtered here too: `UserAdminService#delete` soft-deletes every
+   * album a departing user owned (`albumRepository.softDeleteAll`) without cascading to
+   * `album_asset`, `album_user`, or `google_drive_album`. A guest's selection row and membership
+   * therefore survive their host's deletion, and without this filter their already-queued jobs
+   * would keep writing into their Drive an album the card reports as empty and the settings list
+   * no longer even shows — the exact invisible-egress shape this gate exists to close.
+   *
+   * `asset.deletedAt` is deliberately *not* checked here — `uploadAsset` gate 5 loads the asset row
+   * and skips trashed/deleted ones, so filtering it twice would be duplication, not safety.
    */
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
   async isAssetInSubscribedAlbum(userId: string, assetId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom('album_asset')
+      .innerJoin('album', 'album.id', 'album_asset.albumId')
       .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album_asset.albumId')
       .innerJoin('album_user', (join) =>
         join
@@ -446,6 +459,7 @@ export class GoogleDriveRepository {
       )
       .where('album_asset.assetId', '=', assetId)
       .where('google_drive_album.userId', '=', userId)
+      .where('album.deletedAt', 'is', null)
       .select('album_asset.assetId')
       .limit(1)
       .executeTakeFirst();

@@ -677,7 +677,11 @@ export class GoogleDriveService extends BaseService {
     //    failing job writes the blocking row, and every job behind it in the queue lands here.
     //    Deliberately *no* error row per skipped asset — these assets stay pending (no ledger
     //    row), which is exactly what lets the resume path re-queue them later. Last among the
-    //    gates because it need only be asked for assets we're actually about to send to Drive.
+    //    gates because it need only be asked for assets we're actually about to send to Drive —
+    //    no longer literally first, but still ahead of the one expensive thing (the Drive API
+    //    call), which is what this early-out is really for. streamPendingUploads already excludes
+    //    blocked users from being queued at all, so the only population reaching here is the
+    //    backlog queued before the block landed.
     const blockingError = await this.googleDriveRepository.getBlockingError(userId);
     if (blockingError) {
       this.logger.debug(
@@ -686,7 +690,7 @@ export class GoogleDriveService extends BaseService {
       return 'skipped';
     }
 
-    // 3) Load the actual asset row so we know where the original file lives on disk and what
+    // 5) Load the actual asset row so we know where the original file lives on disk and what
     //    its original filename was (used both for the Drive upload's display name and for
     //    guessing its MIME type below).
     //
@@ -996,9 +1000,12 @@ export class GoogleDriveService extends BaseService {
    * Stop backing an album up. Deliberately does *not* touch the ledger — what is already in the
    * user's Drive stays there, and stays recorded, so re-selecting later doesn't re-upload it.
    *
-   * Jobs already queued for this album still run: the worker validates the ledger and the
-   * connection, not the subscription, so a few photos may still land. Accepted rather than paying
-   * for a per-job membership join; the window is only ever "selected then immediately unselected".
+   * Jobs already queued for this album are now stopped at execution too: `uploadAsset` gate 3
+   * (`isAssetInSubscribedAlbum`) re-checks selection + live membership per job, so deselecting
+   * drains the queued backlog instead of letting it finish. This closed the window the old comment
+   * here accepted — it used to say "a few photos may still land", but a freshly-enabled album
+   * queues its whole contents up front, so the leak was album-sized, not a few photos. The per-job
+   * membership join it called too expensive is the one that gate now pays, deliberately.
    */
   async unsubscribeAlbum(auth: AuthDto, albumId: string): Promise<void> {
     // Deliberately no access check. The delete is already scoped to the caller's own

@@ -179,5 +179,34 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // …and the selection row is still there, so a re-share resumes without re-picking.
       await expect(sut.isSubscribed(guest.id, album.id)).resolves.toBe(true);
     });
+
+    it('should be false once the album is soft-deleted, matching the stream predicate', async () => {
+      // The gap S1 closed: deleting a user (UserAdminService#delete → albumRepository.softDeleteAll)
+      // soft-deletes every album they own, but does not cascade to album_asset, album_user, or
+      // google_drive_album. A guest's selection and membership survive, so without the album join +
+      // deletedAt filter the gate would still say "true" and drain the guest's queued backlog into
+      // their Drive — an album the card (countPendingUploads) already reports as empty and the
+      // settings list (getSubscribableAlbums) no longer shows. Prove the gate now agrees with them.
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: guest } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: owner.id });
+      const { album } = await ctx.newAlbum({ ownerId: owner.id }, [asset.id]);
+      await ctx.newAlbumUser({ albumId: album.id, userId: guest.id });
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+      await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(true);
+
+      // Exactly what softDeleteAll does: stamp album.deletedAt, nothing else.
+      await ctx.database
+        .updateTable('album')
+        .set({ deletedAt: new Date() })
+        .where('id', '=', album.id)
+        .execute();
+
+      await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(false);
+      // The selection row still exists — the leak was that the gate ignored the album's deletion,
+      // not that the row was cleaned up.
+      await expect(sut.isSubscribed(guest.id, album.id)).resolves.toBe(true);
+    });
   });
 });
