@@ -133,6 +133,16 @@
       return;
     }
 
+    // Clicks *inside* the menu body must not close it here. MenuOption already closes the menu
+    // itself, via optionClickCallbackStore in its own onclick — so this document-level handler was
+    // never what closed a normal menu item, and skipping it for in-menu clicks leaves that path
+    // untouched. What it does fix: menu bodies that aren't made of MenuOptions (e.g. a toggle
+    // switch, an inline control) no longer vanish the instant you interact with them, which
+    // destroyed the very feedback the control exists to give. Outside clicks still close.
+    if (menuContainer?.contains(target)) {
+      return;
+    }
+
     closeDropdown();
   };
 

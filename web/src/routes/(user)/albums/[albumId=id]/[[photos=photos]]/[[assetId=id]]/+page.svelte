@@ -676,6 +676,7 @@
                   title={$t('google_drive_sync')}
                   color="secondary"
                   offset={{ x: 175, y: 25 }}
+                  hideContent
                   onOpen={loadGoogleDriveMenu}
                 >
                   <GoogleDriveAlbumMenu
