@@ -281,3 +281,61 @@ W1/W2/W3의 증거가 아니었다. **수정:** 두 spec + 테스트 하네스 �
 - 스키마/컨트롤러 변경 없음 → SQL·SDK 재생성, 마이그레이션 드리프트 검사 불필요.
 - **미검증(코드 결함 아님, 배포 후 확인):** 실제 브라우저 렌더링(막대 색 전환·비활성 동기화·
   미연결 멤버 행) — jsdom은 구조·포커스·콜백만 봄; 실 BullMQ 큐 e2e.
+
+---
+
+## 8. 수정 리뷰 라운드 3 (2026-08-23, `google-drive-wave5-fixes2-...-review.md`)
+
+리뷰 판정: **F1/F2/F3 모두 정확히 수정됐고 비공허성도 리뷰어가 독립 재현(가드 4개를 각각
+무력화 → 해당 테스트만 실패).** 데이터 안전 이슈 아님. R1(공유 코드, 배포 전 수정) + R2/R3
+(빌드 청결) + R4/R5(커버리지). 모두 코드 대조 후 반영.
+
+### R1 — F1의 지연 포커스가 닫힘 뒤에 실행될 수 있음 (18개 비-hideContent 메뉴에만 영향)
+`void tick().then(() => menuContainer?.focus())`가 무가드라, 닫힘이 microtask 배수 전에 일어나면
+`closeDropdown`의 `focusButton()`을 덮어써 **접힌(max-height:0) `<ul>`에 포커스가 갇힘**. Drive
+메뉴는 `hideContent`로 `<ul>`이 언마운트돼 안전 — 즉 새 주석의 "Harmless without hideContent"는
+**정반대**. 브라우저 실경로 재현은 못 함(마이크로태스크 1개 창)이나 공유 코드라 수정.
+**수정:** `if (isOpen) menuContainer?.focus()`. `!wasOpen` 가드 **밖**에 유지(화살표 시 재포커스로
+포커스 이탈 복구). 주석도 정정. R1 회귀 테스트 추가(무가드 시 실패 확인).
+
+### R2 — `svelte-check` 에러 7→14 (전부 신규 spec의 타입 에러)
+`tsc`/`eslint`는 Svelte 호출부를 타입체크 안 함 — `svelte-check`만 함. **수정:** `mode`를
+`as const`로, mock을 `vi.fn<() => void>()`로, `closeCallback` 선언 타입도 좁힘. 7로 복귀(전부
+기존/무관 파일). **`run.sh`에 svelte-check 단계 추가** — 기능 소유 파일의 에러만 게이트(프로젝트
+전역 기존 에러와 분리).
+
+### R3 — 토글 행 `<li role="menuitemcheckbox">` a11y 경고 (매 실행/빌드마다 출력)
+라운드 1에 유입, 두 리포트 모두 놓침. role은 정확·불가결(nav가 `<li>` 필요, 체크박스 의미 필요).
+**수정:** `<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->` + 이유 주석
+(element/role 바꾸면 W2 재파손). 경고 소거 확인.
+
+### R4 — 두 절반을 함께 테스트하는 것이 없었음
+W1/W2/W3는 **합성**(실 Drive 메뉴 ⊂ 실 ButtonContextMenu, hideContent)에서 발견됐는데 그 합성은
+미검증(stub은 ButtonContextMenu의 콜백 등록 변화를 못 잡음). **수정:** `DriveMenuHarness.svelte` +
+합성 테스트(열림→`<ul>` 포커스 F1, 화살표→aria-activedescendant 전진 W2, 토글→onToggle 1회+메뉴
+유지 W1, 동기화→닫힘). 실 `optionClickCallbackStore` 사용.
+
+### R5 — F2 테스트가 나중에 공허해질 수 있음
+화살표가 `moveSelection`에 안 닿게 되면 "onOpen 여전히 1"이 잘못된 이유로 통과. **수정:** 네비게이션이
+실제로 돌았음을 `aria-activedescendant` 전진으로 못박음(§4 — 소프트삭제 테스트의 "true-before"와
+같은 원리).
+
+### 리뷰 affirmation (되먹임)
+- 6번째 medium(과다제거 방지)은 정확히 요청한 형태 — 두 테스트가 두 방향, 둘 다 필요.
+- `handleDocumentClick` 의무 주석·storage id load-bearing 주석 위치/내용 정확.
+- **비낙관적 토글**: `pointer-events-none` 표시전용은 jsdom이 pointer-events 미구현이라 **테스트
+  불가** — 그러나 `onCheckedChange` 없음으로 **구성상 안전**(최악이 bits-ui 내부 상태의 표시상
+  desync, 잘못된 동작 아님). "tested"가 아니라 "safe by construction"으로 기록.
+- W4 색 임계: spec이 클래스는 커버(위험 대부분), 경계값 80.0/95.0(`>=`) it.each 행 추가함. 실제
+  색 전환 렌더링만 브라우저 필요.
+
+### 검증 (라운드 3)
+- 기능: 서버 유닛 199 / 웹 유닛 **29** / medium 10 / **svelte-check(기능 파일) 0 에러** PASS
+  (`dev-test/google-drive/results/20260823-1255.txt`).
+- 회귀: 웹 전체 **547** pass(2 skip). 서버 미변경(2325 유지). eslint clean. svelte-check 7(기존).
+- 비공허성: R1 가드 무력화 시 R1 테스트만 실패 확인 후 복원.
+- **남은 미검증(코드 결함 아님):** 실제 브라우저 색 전환/비활성 동기화/미연결 멤버 행,
+  실 BullMQ 큐 e2e. → **배포 후 확인 항목.**
+
+**리뷰어 결론: "Fix R1 before deploy, R2/R3 same commit — then this is done."** 모두 반영 완료.
+다음 라운드가 깨끗하면 배포 단계로.
