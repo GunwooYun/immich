@@ -231,3 +231,53 @@ Wave 1.5 리뷰가 "enqueue 시점에 인가됨"으로 수용했던 "공유 해�
 - 생성물: `//:sql` 재생성(dist 재빌드 후 — 스테일 dist 주의), 마이그레이션 드리프트 "No changes".
 - **미검증(다음 라운드 리뷰 대상):** 실제 브라우저 렌더링(막대 색 전환, 비활성 "지금 동기화",
   미연결 멤버 행), 실제 BullMQ 큐를 통한 게이트 end-to-end.
+
+---
+
+## 7. 수정 리뷰 라운드 2 (2026-08-23, `google-drive-wave5-fixes-...-review.md`)
+
+리뷰 판정: **7개 원 지적 모두 실제로 해결됨, 수정 자체도 안 깨짐. 서버는 배포 준비 완료.**
+`hideContent`(W3) 수정이 드러낸 새 이슈 2개 + 테스트 공백 1개 — 모두 코드로 대조 후 반영.
+
+### F1 — `hideContent`가 열림 시 포커스를 조용히 없앰 (a11y 회귀)
+`openDropdown`이 `isOpen=true` 직후 `menuContainer?.focus()`를 **동기**로 호출하는데,
+`hideContent`면 그 시점에 `<ul>`(= `menuContainer`)이 아직 렌더 전이라 undefined → no-op. 포커스가
+트리거 버튼에 남아, `aria-activedescendant`(=W2가 복원한 키보드 하이라이트)를 보조기술이 못 봄.
+**수정:** `void tick().then(() => menuContainer?.focus())`로 렌더 후 포커스. `tick` import 추가.
+
+### F2 — 화살표 키마다 `onOpen`(=`loadGoogleDriveMenu`) 재실행 → Google API 난사
+`contextMenuNavigation.moveSelection`은 이동 전에 매번 `openDropdown`을 부르고, `openDropdown`은
+`onOpen`을 무조건 호출했다. 클릭 1 + 화살표 5 = onOpen 6회 = HTTP 18회(그중 6회가 Google
+`drive.about.get`). W2 이전엔 이 메뉴에서 화살표를 아무도 안 눌러 잠복해 있던 비용.
+**수정:** `openDropdown`에 `wasOpen` 가드 — 닫힘→열림 전이에서만 `onOpen` 발화(프롭 계약과도 일치).
+
+### F3 — 수정에 테스트가 없고, 스위트가 수정을 못 봄
+`GoogleDriveAlbumMenu`/`ButtonContextMenu` 닫힘 경로를 아무 spec도 안 건드려, "526 pass"는
+W1/W2/W3의 증거가 아니었다. **수정:** 두 spec + 테스트 하네스 추가.
+- `GoogleDriveAlbumMenu.spec.ts`(직접 렌더): 행이 id+role 가진 `<li>`인지, 토글이 onToggle 1회만
+  발화하고 닫기 콜백은 안 부르는지(W1·이중발화 없음), 액션 행은 콜백 부르는지, 대기 0/진행중
+  가드, 막대 색 임계(W4), 미연결/로딩 상태.
+- `ButtonContextMenu.spec.ts`(실 컴포넌트+하네스): MenuOption 클릭은 닫고 비-MenuOption 본문
+  클릭은 안 닫음(W1 가드), 바깥 클릭은 닫음, `hideContent` 닫힘 시 본문·탭스톱 제거(W3),
+  `hideContent` 열림 후 포커스가 `<ul>`에(F1), 화살표에도 onOpen 1회(F2).
+- **공허통과 검증(§4):** W1 가드·F1 tick·F2 wasOpen을 각각 임시로 제거하니 해당 테스트만
+  정확히 실패함을 확인 후 되돌림.
+
+### 리뷰가 확인해준 것 (되먹임)
+- **공유 컴포넌트 변경(W1)은 안전 — 19개 `ButtonContextMenu` 본문 전수 조사로 확인.** 전부
+  `MenuOption` 기반(또는 콜백 직접 호출)이라, 문서 클릭 핸들러 가드가 어떤 메뉴도 안 깬다.
+  단 **새 의무**가 생김: 앞으로 MenuOption이 아닌 메뉴 본문은 `optionClickCallbackStore`를 직접
+  불러야 닫힌다 → `handleDocumentClick` 주석에 명시함. (dual-mode 액션 59곳 모두 `menuItem` 전달
+  확인 — 하나라도 빠지면 안 닫히는 메뉴가 됐을 것.)
+- **S1 조인 정확성**: FK가 NOT NULL이라 inner join은 `deletedAt`로만 거른다(과다 제거 없음).
+  리뷰가 실DB 뮤테이션 매트릭스 7종으로 게이트=`countPendingUploads` 일치 확인, `EXPLAIN`으로
+  인덱스 구동 확인. "라이브+소프트삭제 둘 다 선택" 6번째 medium 테스트로 과다제거 방지 고정.
+- **낙관적 토글 스레드 종결**: 표시 전용 Switch, 상태는 `backedUp`의 순수 함수, 되돌림 로직 불필요.
+
+### 검증 (라운드 2)
+- 기능: 서버 유닛 199 / 웹 유닛 **25**(신규 2 spec) / medium **10**(신규 과다제거 테스트) PASS
+  (`dev-test/google-drive/results/20260823-1200.txt`).
+- 회귀: 웹 전체 **543** pass(2 skip), 서버 전체 2325 pass(2 skip). tsc·eslint(서버/웹) clean.
+- 스키마/컨트롤러 변경 없음 → SQL·SDK 재생성, 마이그레이션 드리프트 검사 불필요.
+- **미검증(코드 결함 아님, 배포 후 확인):** 실제 브라우저 렌더링(막대 색 전환·비활성 동기화·
+  미연결 멤버 행) — jsdom은 구조·포커스·콜백만 봄; 실 BullMQ 큐 e2e.
