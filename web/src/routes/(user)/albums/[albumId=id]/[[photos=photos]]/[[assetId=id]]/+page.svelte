@@ -3,6 +3,7 @@
   import { scrollMemoryClearer } from '$lib/actions/scroll-memory';
   import AlbumMap from '$lib/components/album-page/AlbumMap.svelte';
   import AlbumSummary from '$lib/components/album-page/AlbumSummary.svelte';
+  import GoogleDriveAlbumMenu from '$lib/components/album-page/GoogleDriveAlbumMenu.svelte';
   import ActivityStatus from '$lib/components/asset-viewer/ActivityStatus.svelte';
   import ActivityViewer from '$lib/components/asset-viewer/ActivityViewer.svelte';
   import HeaderActionButton from '$lib/components/HeaderActionButton.svelte';
@@ -25,7 +26,7 @@
   import TagAction from '$lib/components/timeline/actions/TagAction.svelte';
   import AssetSelectControlBar from '$lib/components/timeline/AssetSelectControlBar.svelte';
   import Timeline from '$lib/components/timeline/Timeline.svelte';
-  import { AlbumPageViewMode, OpenQueryParam } from '$lib/constants';
+  import { AlbumPageViewMode } from '$lib/constants';
   import { activityManager } from '$lib/managers/activity-manager.svelte';
   import { assetMultiSelectManager, AssetMultiSelectManager } from '$lib/managers/asset-multi-select-manager.svelte';
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
@@ -47,7 +48,6 @@
   import { getAssetBulkActions } from '$lib/services/asset.service';
   import { SlideshowNavigation, SlideshowState, slideshowStore } from '$lib/stores/slideshow.store';
   import { handlePromiseError } from '$lib/utils';
-  import { getByteUnitString } from '$lib/utils/byte-units';
   import { handleError } from '$lib/utils/handle-error';
   import { isAlbumsRoute, navigate, type AssetGridRouteSearchParams } from '$lib/utils/navigation';
   import {
@@ -75,10 +75,6 @@
     mdiAccountEye,
     mdiAccountEyeOutline,
     mdiArrowLeft,
-    mdiChartArc,
-    mdiCloudCheckOutline,
-    mdiCloudOffOutline,
-    mdiCloudSyncOutline,
     mdiCogOutline,
     mdiDeleteOutline,
     mdiDotsHorizontal,
@@ -88,12 +84,11 @@
     mdiImageOutline,
     mdiImagePlusOutline,
     mdiLink,
-    mdiOpenInNew,
     mdiPlus,
     mdiPresentationPlay,
   } from '@mdi/js';
   import { onDestroy } from 'svelte';
-  import { locale, t } from 'svelte-i18n';
+  import { t } from 'svelte-i18n';
   import { fly } from 'svelte/transition';
   import type { PageData } from './$types';
   import AlbumDescription from './AlbumDescription.svelte';
@@ -417,46 +412,6 @@
     }
   };
 
-  // Usage as a fraction, or null on unlimited accounts where there is nothing to be a fraction of.
-  const driveStorageRatio = $derived(
-    driveStorage?.limitBytes ? driveStorage.usageBytes / driveStorage.limitBytes : null,
-  );
-  // 80% warns, 95% alarms — the same thresholds the quota block uses server-side, so the gauge
-  // turns red before uploads start failing rather than after.
-  const driveStorageColor = $derived(
-    driveStorageRatio === null
-      ? undefined
-      : driveStorageRatio >= 0.95
-        ? 'text-red-500'
-        : driveStorageRatio >= 0.8
-          ? 'text-yellow-500'
-          : undefined,
-  );
-  const driveStorageSubtitle = $derived.by(() => {
-    if (!driveStorage) {
-      return '';
-    }
-    const used = getByteUnitString(driveStorage.usageBytes, $locale ?? undefined, 1);
-    const base = driveStorage.limitBytes
-      ? `${used} / ${getByteUnitString(driveStorage.limitBytes, $locale ?? undefined, 1)}`
-      : used;
-    // Trash occupies quota but is one click from being reclaimed, so it is worth naming whenever
-    // it is a meaningful share — on a transit-folder Drive it is routinely most of the usage.
-    return driveStorage.usageInDriveTrashBytes > driveStorage.usageBytes * 0.1
-      ? `${base} · ${$t('google_drive_storage_trash', { values: { size: getByteUnitString(driveStorage.usageInDriveTrashBytes, $locale ?? undefined, 1) } })}`
-      : base;
-  });
-
-  // Opens the configured destination folder, or the Drive root when none is set. New tab, since
-  // this is a hand-off to another app rather than navigation within immich.
-  const openGoogleDriveFolder = (folderId: string | null) => {
-    open(
-      folderId ? `https://drive.google.com/drive/folders/${folderId}` : 'https://drive.google.com/drive/my-drive',
-      '_blank',
-      'noopener',
-    );
-  };
-
   const handleGoogleDriveSync = async () => {
     if (googleDriveSyncing) {
       return;
@@ -723,64 +678,18 @@
                   offset={{ x: 175, y: 25 }}
                   onOpen={loadGoogleDriveMenu}
                 >
-                  {#if driveMenuLoading}
-                    <MenuOption icon={mdiCloudSyncOutline} text={$t('loading')} onClick={() => {}} />
-                  {:else if !driveConnected}
-                    <!-- Every album member sees this menu, but only a connected one can do
-                         anything in it. Offering the way to connect is the whole content of the
-                         menu in that state — the alternative is a menu of controls that all fail. -->
-                    <MenuOption
-                      icon={mdiCloudOffOutline}
-                      text={$t('google_drive_connect')}
-                      subtitle={$t('google_drive_not_connected_short')}
-                      onClick={() => goto(Route.userSettings({ isOpen: OpenQueryParam.GOOGLE_DRIVE_SYNC }))}
-                    />
-                  {:else}
-                    <MenuOption
-                      icon={driveBackedUp ? mdiCloudCheckOutline : mdiCloudOffOutline}
-                      text={driveBackedUp ? $t('google_drive_backup_on') : $t('google_drive_backup_off')}
-                      subtitle={driveBackedUp
-                        ? $t('google_drive_backup_progress', {
-                            values: { uploaded: driveUploaded, total: driveTotal },
-                          })
-                        : $t('google_drive_backup_off_description')}
-                      onClick={handleToggleGoogleDriveBackup}
-                      activeColor={driveTogglePending ? 'bg-gray-300' : undefined}
-                    />
-                    {#if driveBackedUp && driveTotal > driveUploaded}
-                      <!-- This row counts *this album*, always. It briefly showed the poller's
-                           number while a sync was running, which is a different population: that
-                           figure is user-wide across every backed-up album (me/status), so with
-                           two albums selected, opening one album's menu during the other's sync
-                           reported the other album's backlog under this album's name. The
-                           user-wide number belongs to the corner card, which is scoped to say so. -->
-                      <MenuOption
-                        icon={mdiCloudSyncOutline}
-                        text={$t('google_drive_sync_album')}
-                        subtitle={$t('google_drive_pending_count', {
-                          values: { count: driveTotal - driveUploaded },
-                        })}
-                        onClick={handleGoogleDriveSync}
-                      />
-                    {/if}
-                    {#if driveStorage}
-                      <!-- The colour is the point, not decoration: this deployment uses Drive as a
-                           buffer that a Pixel drains, so the useful signal is "clean it out before
-                           it fills". Text alone makes the reader do the division. -->
-                      <MenuOption
-                        icon={mdiChartArc}
-                        text={$t('google_drive_storage')}
-                        textColor={driveStorageColor}
-                        subtitle={driveStorageSubtitle}
-                        onClick={() => openGoogleDriveFolder(null)}
-                      />
-                    {/if}
-                    <MenuOption
-                      icon={mdiOpenInNew}
-                      text={$t('google_drive_open')}
-                      onClick={() => openGoogleDriveFolder(driveFolderId)}
-                    />
-                  {/if}
+                  <GoogleDriveAlbumMenu
+                    loading={driveMenuLoading}
+                    connected={driveConnected}
+                    backedUp={driveBackedUp}
+                    togglePending={driveTogglePending}
+                    uploaded={driveUploaded}
+                    total={driveTotal}
+                    storage={driveStorage}
+                    folderId={driveFolderId}
+                    onToggle={handleToggleGoogleDriveBackup}
+                    onSyncNow={handleGoogleDriveSync}
+                  />
                 </ButtonContextMenu>
               {/if}
             {/if}
