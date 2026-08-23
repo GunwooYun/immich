@@ -184,6 +184,51 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
     });
 
+    it('should skip an asset no longer in any selected album, before calling Drive', async () => {
+      // The deselect gate. A job can outlive its selection: unsubscribing deletes the row but not
+      // jobs already queued, and those would otherwise write real files into the user's Drive. The
+      // worker stops them at execution.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'refresh-token',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+      mocks.googleDrive.hasUpload.mockResolvedValue(false);
+      mocks.googleDrive.isAssetInSubscribedAlbum.mockResolvedValue(false);
+
+      await expect(sut.uploadAsset(userId, newUuid())).resolves.toBe('skipped');
+
+      expect(mocks.asset.getById).not.toHaveBeenCalled();
+      expect(driveFilesCreate).not.toHaveBeenCalled();
+      // A no-op skip, not a failure: nothing recorded, so a re-select re-queues cleanly.
+      expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+    });
+
+    it('should check the ledger before the selection join', async () => {
+      // Gate order (review Q2): already-uploaded is the highest-hit-rate reject via idempotent
+      // re-queueing and is a PK lookup, so it must bail before the more expensive membership join
+      // even runs.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'refresh-token',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+      mocks.googleDrive.hasUpload.mockResolvedValue(true);
+
+      await expect(sut.uploadAsset(userId, newUuid())).resolves.toBe('skipped');
+
+      expect(mocks.googleDrive.isAssetInSubscribedAlbum).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.getBlockingError).not.toHaveBeenCalled();
+    });
+
     it('should skip when the original file is missing from disk', async () => {
       // An asset row is not proof the bytes are still there — a half-restored backup or a failed
       // storage-template migration can leave the row pointing at nothing. This has to be a *skip*

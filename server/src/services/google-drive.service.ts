@@ -647,24 +647,42 @@ export class GoogleDriveService extends BaseService {
       return 'skipped';
     }
 
-    // 1.5) Is this user's account currently blocked (Drive full, destination folder deleted)?
+    // 2) Has this asset already been uploaded for this user before? If so, don't upload it
+    //    again — that would create a duplicate file in their Drive. Checked first among the
+    //    per-asset gates because idempotent re-queueing (add to two albums, re-run a backfill,
+    //    press sync again) makes "already uploaded" the highest-hit-rate reject, and it's a plain
+    //    (userId, assetId) primary-key lookup — cheaper than the join below.
+    if (await this.googleDriveRepository.hasUpload(userId, assetId)) {
+      return 'skipped';
+    }
+
+    // 3) Does this asset still belong to an album this user has selected and can still see?
+    //    Deselecting an album (or losing access to it) deletes the selection row but cannot recall
+    //    jobs already queued — and those jobs write real files into the user's Drive, invisibly
+    //    from immich. This gate stops them at execution. It only runs for genuinely-pending assets
+    //    (already-uploaded ones bailed at gate 2), and it's also a second live-access enforcement
+    //    point: an album unshared after its jobs were queued stops here. See
+    //    GoogleDriveRepository#isAssetInSubscribedAlbum.
+    if (!(await this.googleDriveRepository.isAssetInSubscribedAlbum(userId, assetId))) {
+      this.logger.debug(
+        `Skipping Google Drive upload for asset ${assetId}: no longer in a selected album for user ${userId}`,
+      );
+      return 'skipped';
+    }
+
+    // 4) Is this user's account currently blocked (Drive full, destination folder deleted)?
     //    Account-level state: every upload is guaranteed to fail the same way, so calling Drive
     //    per job would only rediscover it — expensively. This gate is what turns "quota hit
     //    mid-backfill" from ~N doomed API calls into one failure plus N−1 cheap skips: the first
     //    failing job writes the blocking row, and every job behind it in the queue lands here.
     //    Deliberately *no* error row per skipped asset — these assets stay pending (no ledger
-    //    row), which is exactly what lets the resume path re-queue them later.
+    //    row), which is exactly what lets the resume path re-queue them later. Last among the
+    //    gates because it need only be asked for assets we're actually about to send to Drive.
     const blockingError = await this.googleDriveRepository.getBlockingError(userId);
     if (blockingError) {
       this.logger.debug(
         `Skipping Google Drive upload for asset ${assetId}: user ${userId} is blocked (${blockingError})`,
       );
-      return 'skipped';
-    }
-
-    // 2) Has this asset already been uploaded for this user before? If so, don't upload it
-    //    again — that would create a duplicate file in their Drive.
-    if (await this.googleDriveRepository.hasUpload(userId, assetId)) {
       return 'skipped';
     }
 

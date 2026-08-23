@@ -74,6 +74,14 @@ run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
 
 if [[ $RUN_MEDIUM -eq 1 ]]; then
   # Needs a reachable Postgres. Kept opt-in so the everyday loop stays fast and offline-safe.
+  #
+  # The medium harness reads IMMICH_TEST_POSTGRES_URL and clones a `mich` template database per
+  # test. If it isn't already set, point it at the dev Postgres from docker/.env — otherwise every
+  # run makes you export it by hand, which is how a "just run the tests" script stops being one.
+  if [[ -z "${IMMICH_TEST_POSTGRES_URL:-}" ]]; then
+    DBPW="$(grep -oP '(?<=^DB_PASSWORD=).*' "${REPO_ROOT}/docker/.env" 2>/dev/null || echo postgres)"
+    export IMMICH_TEST_POSTGRES_URL="postgres://postgres:${DBPW}@localhost:5432/mich"
+  fi
   run_suite "server (medium, needs a database)" server test/vitest.config.medium.mjs "${MEDIUM_SPECS[@]}"
 fi
 

@@ -320,6 +320,10 @@ export const getMocks = () => {
   googleDriveMock.isSubscribed.mockResolvedValue(false);
   googleDriveMock.getSubscribableAlbums.mockResolvedValue([]);
   googleDriveMock.countPendingUploads.mockResolvedValue(0);
+  // Default true: the worker's selection gate should let assets through unless a test is
+  // specifically about deselection. The upload-path tests already stub credentials/ledger; without
+  // this they'd all skip at the new gate for the wrong reason.
+  googleDriveMock.isAssetInSubscribedAlbum.mockResolvedValue(true);
 
   const mocks: ServiceMocks = {
     access: newAccessRepositoryMock(),

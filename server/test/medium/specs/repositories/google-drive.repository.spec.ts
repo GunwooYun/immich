@@ -108,4 +108,76 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       expect(after.find((row) => row.albumId === album.id)).toMatchObject({ subscribed: true, accessLost: true });
     });
   });
+
+  describe('isAssetInSubscribedAlbum', () => {
+    // The worker's deselect gate. This is the one join the feature keeps getting subtly wrong, and
+    // a mocked unit test can only assert it was called — the filtering itself has to be proven on
+    // real Postgres.
+    it('should be true for an asset in an album the user selected and can see', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+
+      await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should be false once the album is deselected, even with the asset still in it', async () => {
+      // Deselect deletes the selection row; the gate must then reject the asset's queued jobs.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(true);
+
+      await sut.unsubscribe(user.id, album.id);
+
+      await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(false);
+    });
+
+    it('should stay true when the asset is in another still-selected album', async () => {
+      // "Any selected album", not "this one": deselecting A must not stop uploads owed to B.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album: a } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      const { album: b } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database
+        .insertInto('google_drive_album')
+        .values([
+          { userId: user.id, albumId: a.id },
+          { userId: user.id, albumId: b.id },
+        ])
+        .execute();
+
+      await sut.unsubscribe(user.id, a.id);
+
+      await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should be false once the album is unshared, even with the selection row surviving', async () => {
+      // Second live-access enforcement point: the selection row outlives an unshare so a re-share
+      // resumes, but the gate must stop uploads to an album the user can no longer open.
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: guest } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: owner.id });
+      const { album } = await ctx.newAlbum({ ownerId: owner.id }, [asset.id]);
+      await ctx.newAlbumUser({ albumId: album.id, userId: guest.id });
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+      await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(true);
+
+      await ctx.database
+        .deleteFrom('album_user')
+        .where('albumId', '=', album.id)
+        .where('userId', '=', guest.id)
+        .execute();
+
+      await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(false);
+      // …and the selection row is still there, so a re-share resumes without re-picking.
+      await expect(sut.isSubscribed(guest.id, album.id)).resolves.toBe(true);
+    });
+  });
 });

@@ -419,6 +419,41 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * Does this asset still belong to *any* album this user has selected for backup, that they can
+   * still see?
+   *
+   * The worker checks this at entry so that deselecting an album (or losing access to it) stops
+   * its queued jobs at execution, not just future queueing. Deselect deletes the selection row
+   * but cannot recall jobs already in the queue — and those jobs write real files into the user's
+   * Google Drive, invisibly from immich's side. Without this gate, turning a freshly-enabled
+   * album off can still leak the whole album (subscribeAlbum queues it all up front).
+   *
+   * "*Any* selected album", not this specific one: an asset in albums A and B with only A
+   * deselected must keep uploading for B. Same shape as countPendingUploads/streamPendingUploads —
+   * and, like them, it joins live `album_user` membership, because a selection row deliberately
+   * outlives an unshare (so re-sharing resumes). That makes this a second enforcement point for
+   * "no uploads from an album you can no longer open", now at execution time.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async isAssetInSubscribedAlbum(userId: string, assetId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('album_asset')
+      .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album_asset.albumId')
+      .innerJoin('album_user', (join) =>
+        join
+          .onRef('album_user.albumId', '=', 'album_asset.albumId')
+          .onRef('album_user.userId', '=', 'google_drive_album.userId'),
+      )
+      .where('album_asset.assetId', '=', assetId)
+      .where('google_drive_album.userId', '=', userId)
+      .select('album_asset.assetId')
+      .limit(1)
+      .executeTakeFirst();
+
+    return !!row;
+  }
+
+  /**
    * The single-asset version of getUploadedAssetIds: "has this one asset already gone to this
    * user's Drive?"
    *

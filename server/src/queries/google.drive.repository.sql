@@ -218,6 +218,20 @@ where
   "userId" = $1
   and "assetId" in ($2)
 
+-- GoogleDriveRepository.isAssetInSubscribedAlbum
+select
+  "album_asset"."assetId"
+from
+  "album_asset"
+  inner join "google_drive_album" on "google_drive_album"."albumId" = "album_asset"."albumId"
+  inner join "album_user" on "album_user"."albumId" = "album_asset"."albumId"
+  and "album_user"."userId" = "google_drive_album"."userId"
+where
+  "album_asset"."assetId" = $1
+  and "google_drive_album"."userId" = $2
+limit
+  $3
+
 -- GoogleDriveRepository.hasUpload
 select
   "assetId"
