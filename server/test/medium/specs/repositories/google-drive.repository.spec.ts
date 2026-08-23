@@ -208,5 +208,29 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // not that the row was cleaned up.
       await expect(sut.isSubscribed(guest.id, album.id)).resolves.toBe(true);
     });
+
+    it('should stay true when the asset is also in a live selected album, not over-drop', async () => {
+      // The counterpart of "still true via a second selected album", at album-lifetime
+      // granularity: the S1 filter must reject only the soft-deleted album, not the whole asset.
+      // This is the assertion that fails if someone later "simplifies" the album join away or
+      // widens the deletedAt filter — same "any selected album" rule as deselect.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album: live } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      const { album: dead } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database
+        .insertInto('google_drive_album')
+        .values([
+          { userId: user.id, albumId: live.id },
+          { userId: user.id, albumId: dead.id },
+        ])
+        .execute();
+
+      await ctx.database.updateTable('album').set({ deletedAt: new Date() }).where('id', '=', dead.id).execute();
+
+      // The live album still owes the upload, so the gate must not drop the asset.
+      await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(true);
+    });
   });
 });

@@ -11,7 +11,7 @@
   } from '$lib/utils/context-menu';
   import { generateId } from '$lib/utils/generate-id';
   import { IconButton, type Color, type Size, type Variants } from '@immich/ui';
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
 
   type Props = {
@@ -81,9 +81,24 @@
       }
     }
     contextMenuPosition = getContextMenuPositionFromEvent(event, layoutAlign);
+
+    // F2: only announce a genuine closed->open transition. contextMenuNavigation calls this on
+    // every ArrowUp/Down (it opens-then-moves), so firing onOpen unconditionally re-ran the
+    // caller's load on every keystroke — for the Drive menu that meant three HTTP requests per
+    // arrow, one of them a live Google Drive API call. The prop's contract is "called when the
+    // menu opens", not "per keypress".
+    const wasOpen = isOpen;
     isOpen = true;
-    menuContainer?.focus();
-    onOpen?.();
+
+    // F1: focus the menu *after* it has rendered. With hideContent the <ul> that carries
+    // aria-activedescendant is mounted by the {#if isOpen || !hideContent} block below, so at this
+    // synchronous point menuContainer is still undefined and a bare focus() call is a no-op —
+    // leaving focus on the trigger, where assistive tech never sees the keyboard highlight. tick()
+    // lets the block render first. Harmless without hideContent (the element already exists).
+    if (!wasOpen) {
+      onOpen?.();
+    }
+    void tick().then(() => menuContainer?.focus());
   };
 
   const handleClick = (event: MouseEvent) => {
@@ -139,6 +154,13 @@
     // untouched. What it does fix: menu bodies that aren't made of MenuOptions (e.g. a toggle
     // switch, an inline control) no longer vanish the instant you interact with them, which
     // destroyed the very feedback the control exists to give. Outside clicks still close.
+    //
+    // OBLIGATION this creates for future menus: closing is now "the menu closes because MenuOption
+    // closes it", not "the menu closes on any click". A menu body that is NOT built from
+    // MenuOption must therefore call optionClickCallbackStore?.() itself on the rows that should
+    // dismiss it, or those rows will silently leave the menu open. Every ButtonContextMenu body in
+    // the app complies today (18 are MenuOption-based; GoogleDriveAlbumMenu calls the callback
+    // directly); number nineteen must too.
     if (menuContainer?.contains(target)) {
       return;
     }

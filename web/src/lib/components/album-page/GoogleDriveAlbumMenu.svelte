@@ -198,8 +198,12 @@
   {#if storage}
     <!-- Storage as a bar, not a number: this deployment uses Drive as a buffer a Pixel drains, so
          "how full, clean it before it fills" is the signal — and a bar shows it without making the
-         reader divide. Informational row: it carries an id so keyboard navigation keeps its place
-         when passing over it, but has no click action. -->
+         reader divide. Informational row: it has no click action, but it MUST still carry an id.
+         contextMenuNavigation resolves the selection with querySelector('#' + id); an id-less row
+         would push '' back through selectionChanged, and the next getCurrentElement() would call
+         querySelector('#') — an invalid selector that throws. The id here is load-bearing, not
+         decorative; role="menuitem" (rather than presentation) keeps it navigable-but-inert, which
+         is what that action expects of every direct <ul> child. Don't "clean up" either. -->
     <li id={storageRowId} role="menuitem" class={`${rowClass} ${dividerClass}`}>
       <Icon icon={mdiChartArc} size="18" />
       <div class="min-w-0 flex-1">

@@ -38,7 +38,14 @@ SERVER_SPECS=(
   src/services/server.service.spec.ts
   src/services/system-config.service.spec.ts
 )
-WEB_SPECS=(src/lib/managers/google-drive-progress-manager.svelte.spec.ts)
+WEB_SPECS=(
+  src/lib/managers/google-drive-progress-manager.svelte.spec.ts
+  src/lib/components/album-page/GoogleDriveAlbumMenu.spec.ts
+  # Shared component, but the album menu depends on its close/open/focus/onOpen behaviour — the
+  # Wave 5 fixes (W1 guard, F1 focus, F2 onOpen-once) live here, so a regression is a feature
+  # regression even though the file is named for something shared.
+  src/lib/components/shared-components/context-menu/ButtonContextMenu.spec.ts
+)
 MEDIUM_SPECS=(test/medium/specs/repositories/google-drive.repository.spec.ts)
 
 FAILED=0
