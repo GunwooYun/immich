@@ -169,3 +169,65 @@ Wave 1.5 리뷰가 "enqueue 시점에 인가됨"으로 수용했던 "공유 해�
    - 비활성+상태표시로 바꾸면 **#2의 "눌렀는데 반응 없음"이 애초에 누를 수 없게 되어 해소**
      된다. 숨기기보다 이쪽이 오히려 예외를 줄인다.
 3. **진행 막대는 항상 인라인.**
+
+---
+
+## 6. 구현 리뷰 되먹임 (2026-08-23, `google-drive-wave5-impl-...-review.md`)
+
+구현(`320646871` 서버, `9c1e52bd3` 웹)에 대한 리뷰 판정과 그 반영. **모두 코드로 대조 후 확인됨.**
+
+### S1 — 게이트가 소프트 삭제된 앨범에서 계속 업로드함 (실DB로 재현·수정)
+- `isAssetInSubscribedAlbum`는 `album`을 조인하지 않아 `album.deletedAt is null`을 빠뜨렸다.
+  `countPendingUploads`/`streamPendingUploads`는 그 술어를 **의도적으로** 갖는다. 문서 주석의
+  "same shape as ..."는 거짓이었다.
+- 실제 유발 경로: `UserAdminService#delete` → `albumRepository.softDeleteAll(owner)`가 소유
+  앨범 전부를 소프트 삭제하되 `album_asset`/`album_user`/`google_drive_album`에 **캐스케이드
+  안 함**. 게스트의 선택·멤버십이 살아남아, 카드는 0(pending)·설정 목록엔 앨범 없음인데 큐
+  잔여분은 게스트 Drive에 계속 씀 — 이 게이트가 없애려던 바로 그 "보이지 않는 유출".
+- **수정:** `album` 조인 + `deletedAt is null` 추가, medium 테스트 5번째(소프트 삭제 후 false,
+  선택 행은 생존) 추가. `asset.deletedAt`는 여기 넣지 않음(게이트 5가 담당) — 주석에 명시.
+- **되먹임:** 게이트의 앨범 술어는 **`streamPendingUploads`와 동일해야 하는 불변식**이다.
+  세 곳이 갈라지면 "pending"의 정의가 어긋난다. 다음에 하나를 고치면 셋 다 확인할 것.
+
+### S2 — 낡은 문서 3곳 (이 저장소가 두 번 데인 지점)
+- `unsubscribeAlbum` 주석: "워커는 구독을 검사하지 않는다 / per-job 조인은 너무 비싸다 / 몇 장만
+  샌다" — 셋 다 이제 거짓. 게이트 3이 구독을 검사하고, 그 조인을 지불하며, 유출은 앨범 전체
+  규모였다. 다시 씀.
+- `google-drive-album.table.ts` 주석: "membership 조인해야 하는 read path"에 세 번째
+  (`isAssetInSubscribedAlbum`) 추가.
+- `uploadAsset` 게이트 번호 `0,1,2,3,4,3` → 새 선택 게이트가 3을 가져가며 자산 로드 주석이 3에
+  남아 있었음. 5로 재번호. 게이트 4 주석에 "더 이상 첫 게이트 아님" 반 문장 추가(리뷰 Q3).
+
+### W1~W3 — 웹 메뉴가 MenuOption의 구조적 계약을 버렸던 문제
+`GoogleDriveAlbumMenu`가 `<ul role="menu">` 안에 id 없는 bare `<div>`/`<button>`을 넣어서:
+- **W1**: 토글 클릭 시 메뉴가 닫혀 새 상태가 안 보임 — `ButtonContextMenu.handleDocumentClick`가
+  메뉴 본문 클릭에도 닫았기 때문. **수정:** `menuContainer.contains(target)` 가드 추가. MenuOption은
+  자기 onclick에서 `optionClickCallbackStore`로 닫으므로 이 변경은 MenuOption 동작을 안 바꾼다
+  (공유 컴포넌트지만 안전 — 코드로 확인).
+- **W2**: 키보드 조작 사망(id 없어 nav가 하이라이트 못 함, Enter가 메뉴만 닫음) + 잘못된 `<ul>`
+  자식. **수정:** 각 행을 `<li id role="menuitem">`(토글은 `menuitemcheckbox`)로, `$selectedIdStore`
+  하이라이트·hover 동기화, 액션 행은 `optionClickCallbackStore`로 닫음.
+- **W3**: 닫힌 메뉴의 컨트롤이 탭 순서에 남음 — `hideContent` 미지정. **수정:** `hideContent` 전달.
+
+### 낙관적 토글(설계 리뷰 예측 뒤집힘) — 되먹임
+설계 리뷰의 "비낙관적이라 느리게 느껴질 것" 예측도, 실제로 배포된 "낙관적인데 되돌림 없음"도
+아니었다. `@immich/ui` `Switch`의 `checked`를 unbound로 넘겨 bits-ui가 시각만 즉시 뒤집고,
+실패 시 `catch`가 되돌리지 않아 "자가 복구될 수도/안 될 수도" 상태였다. **수정:** Switch를
+표시 전용(`pointer-events-none` + `checked={backedUp}`, onCheckedChange 미연결)으로, 클릭은 행
+`<li>`가 받아 `onToggle` 1회 발화. `backedUp`은 성공 후 `loadGoogleDriveMenu`만 갱신 → 실패 시
+스위치 원위치. 되돌림 로직 없이 정확. **비낙관적으로 확정** — 다음 세션이 낙관적 설계 분석을
+다시 유도하지 않도록.
+
+### W4/W5 — 다른 레이어에 대한 거짓 주장 / 죽은 문자열
+- **W4**: 80/95% 임계가 "서버 quota 블록과 같다"는 주석은 거짓 — 서버엔 % 임계가 없다(블록은
+  Google의 403에 반응할 뿐). 주석을 "여기에만 있는 표시용 임계, 실패 전에 경고"로 정정.
+- **W5**: 고아 i18n 키 4개(`google_drive_backup_on/off/off_description/progress`) 삭제. en.json은
+  대소문자 무시 정렬 유지 확인.
+
+### 검증
+- 기능: 서버 유닛 199 / 웹 유닛 8 / medium **9**(신규 소프트삭제 테스트 포함) PASS
+  (`dev-test/google-drive/results/20260823-1115.txt`).
+- 회귀: 서버 전체 2325 pass(2 skip), 웹 전체 526 pass(2 skip). tsc·eslint(서버/웹) clean.
+- 생성물: `//:sql` 재생성(dist 재빌드 후 — 스테일 dist 주의), 마이그레이션 드리프트 "No changes".
+- **미검증(다음 라운드 리뷰 대상):** 실제 브라우저 렌더링(막대 색 전환, 비활성 "지금 동기화",
+  미연결 멤버 행), 실제 BullMQ 큐를 통한 게이트 end-to-end.
