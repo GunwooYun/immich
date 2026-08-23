@@ -150,6 +150,10 @@
        (pointer-events-none) so a mouse click always lands on the row exactly once, never doubling
        with the Switch's own change handler. -->
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_mouse_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+  <!-- The <li> must be a direct child of <ul role="menu"> for contextMenuNavigation, and this row
+       must carry checkbox semantics; menuitemcheckbox on a list item is the correct role. Changing
+       the element or the role to appease the rule would re-break keyboard nav (W2). -->
   <li
     id={toggleRowId}
     role="menuitemcheckbox"

@@ -1,9 +1,11 @@
 import '@testing-library/jest-dom';
 import { optionClickCallbackStore } from '$lib/stores/context-menu.store';
-import { render } from '@testing-library/svelte';
+import { fireEvent, render } from '@testing-library/svelte';
+import { renderWithTooltips } from '$tests/helpers';
 import userEvent from '@testing-library/user-event';
 import { init, register, waitLocale } from 'svelte-i18n';
 import GoogleDriveAlbumMenu from './GoogleDriveAlbumMenu.svelte';
+import DriveMenuHarness from './__tests__/DriveMenuHarness.svelte';
 
 // Regression tests for the Wave 5 review (W1/W2/W4) and its fixes round. These render the menu's
 // own rows and assert the contract it must satisfy to live inside ButtonContextMenu's <ul role=menu>
@@ -31,7 +33,7 @@ const renderMenu = (overrides: Partial<typeof baseProps> = {}) =>
   render(GoogleDriveAlbumMenu, { ...baseProps, ...overrides, onToggle: vi.fn(), onSyncNow: vi.fn() });
 
 describe('GoogleDriveAlbumMenu', () => {
-  let closeCallback: ReturnType<typeof vi.fn>;
+  let closeCallback: ReturnType<typeof vi.fn<() => void>>;
 
   beforeAll(async () => {
     await init({ fallbackLocale: 'en-US' });
@@ -42,7 +44,7 @@ describe('GoogleDriveAlbumMenu', () => {
   beforeEach(() => {
     // ButtonContextMenu registers this while open; MenuOption-style rows dismiss the menu by
     // calling it. Stub it so we can assert *which* rows close the menu and which stay open.
-    closeCallback = vi.fn();
+    closeCallback = vi.fn<() => void>();
     optionClickCallbackStore.set(closeCallback);
     vi.stubGlobal('open', vi.fn());
   });
@@ -130,7 +132,9 @@ describe('GoogleDriveAlbumMenu', () => {
 
   it.each([
     { usageBytes: 96, limitBytes: 100, cls: 'bg-red-500' },
+    { usageBytes: 95, limitBytes: 100, cls: 'bg-red-500' }, // boundary: >= 0.95
     { usageBytes: 85, limitBytes: 100, cls: 'bg-yellow-500' },
+    { usageBytes: 80, limitBytes: 100, cls: 'bg-yellow-500' }, // boundary: >= 0.80
     { usageBytes: 50, limitBytes: 100, cls: 'bg-primary' },
   ])('colours the storage bar $cls at usage $usageBytes/$limitBytes', ({ usageBytes, limitBytes, cls }) => {
     const { container } = render(GoogleDriveAlbumMenu, {
@@ -162,5 +166,45 @@ describe('GoogleDriveAlbumMenu', () => {
     });
     expect(getByText('Loading')).toBeInTheDocument();
     expect(queryByRole('menuitemcheckbox')).toBeNull();
+  });
+
+  // R4: the two split specs each test one half against a stub. W1/W2/W3 were all found in the
+  // composition — the real menu inside the real ButtonContextMenu with hideContent — so drive that
+  // composition end-to-end with the real optionClickCallbackStore wiring (no stub).
+  describe('inside the real ButtonContextMenu (composition)', () => {
+    const open = async (user: ReturnType<typeof userEvent.setup>, getByLabelText: (t: string) => HTMLElement) => {
+      await user.click(getByLabelText('drive'));
+    };
+
+    it('focuses the menu, navigates by keyboard, keeps open on toggle, closes on sync', async () => {
+      const user = userEvent.setup();
+      const onToggle = vi.fn<() => void>();
+      const onSyncNow = vi.fn<() => void>();
+      const { getByLabelText, getByRole, getByText, findByRole, queryByRole } = renderWithTooltips(DriveMenuHarness, {
+        onToggle,
+        onSyncNow,
+      });
+
+      await open(user, getByLabelText);
+      const menu = await findByRole('menu');
+      // F1 end-to-end: focus lands on the <ul>, not the trigger.
+      await vi.waitFor(() => expect(menu).toHaveFocus());
+
+      // W2 end-to-end: ArrowDown advances aria-activedescendant through real rows.
+      await fireEvent.keyDown(getByLabelText('drive').closest('[data-testid="ctx"]') as HTMLElement, {
+        key: 'ArrowDown',
+      });
+      await vi.waitFor(() => expect(menu.getAttribute('aria-activedescendant')).toMatch(/.+/));
+
+      // W1 end-to-end: flipping the toggle fires onToggle and leaves the menu open (real callback).
+      await user.click(getByRole('menuitemcheckbox'));
+      expect(onToggle).toHaveBeenCalledTimes(1);
+      expect(queryByRole('menu')).toBeInTheDocument();
+
+      // Sync row closes the menu via the real optionClickCallbackStore.
+      await user.click(getByText('Sync to Google Drive'));
+      expect(onSyncNow).toHaveBeenCalledTimes(1);
+      expect(queryByRole('menu')).not.toBeInTheDocument();
+    });
   });
 });

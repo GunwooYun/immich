@@ -94,11 +94,22 @@
     // aria-activedescendant is mounted by the {#if isOpen || !hideContent} block below, so at this
     // synchronous point menuContainer is still undefined and a bare focus() call is a no-op —
     // leaving focus on the trigger, where assistive tech never sees the keyboard highlight. tick()
-    // lets the block render first. Harmless without hideContent (the element already exists).
+    // lets the block render first.
     if (!wasOpen) {
       onOpen?.();
     }
-    void tick().then(() => menuContainer?.focus());
+    // R1: the focus is deferred, so guard it on isOpen. Without the guard a close that runs before
+    // this microtask drains (closeDropdown ends with focusButton()) would be overridden here, and
+    // for the 18 menus that do NOT pass hideContent the <ul> is still mounted (max-height:0), so
+    // focus would strand on the collapsed, invisible menu instead of the trigger. Deferring
+    // inverted the ordering that the old synchronous focus relied on — which is exactly why it is
+    // *not* harmless without hideContent. Left outside the !wasOpen guard on purpose: re-focusing
+    // an already-open menu on arrow keys recovers navigation if focus ever drifts out of it.
+    void tick().then(() => {
+      if (isOpen) {
+        menuContainer?.focus();
+      }
+    });
   };
 
   const handleClick = (event: MouseEvent) => {

@@ -27,7 +27,7 @@ describe('ButtonContextMenu', () => {
   it('W1: a MenuOption click closes the menu', async () => {
     const user = userEvent.setup();
     const { getByLabelText, getByText, queryByRole } = renderWithTooltips(ContextMenuHarness, {
-      mode: 'menuoption',
+      mode: 'menuoption' as const,
       hideContent: true,
     });
     await openMenu(user, getByLabelText);
@@ -41,9 +41,9 @@ describe('ButtonContextMenu', () => {
     // This is the assertion that would FAIL before the handleDocumentClick guard: the document
     // click handler would close the menu on any in-body click that is not the trigger.
     const user = userEvent.setup();
-    const onPlainClick = vi.fn();
+    const onPlainClick = vi.fn<() => void>();
     const { getByLabelText, getByTestId, queryByRole } = renderWithTooltips(ContextMenuHarness, {
-      mode: 'plain',
+      mode: 'plain' as const,
       hideContent: true,
       onPlainClick,
     });
@@ -57,7 +57,7 @@ describe('ButtonContextMenu', () => {
 
   it('W1: an outside click still closes the menu', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'plain', hideContent: true });
+    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'plain' as const, hideContent: true });
     await openMenu(user, getByLabelText);
     expect(queryByRole('menu')).toBeInTheDocument();
 
@@ -67,7 +67,7 @@ describe('ButtonContextMenu', () => {
 
   it('W3: hideContent keeps the menu body (and its tab stops) out of the DOM while closed', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption', hideContent: true });
+    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption' as const, hideContent: true });
     // Closed: no menu at all.
     expect(queryByRole('menu')).not.toBeInTheDocument();
     expect(queryByRole('menuitem')).not.toBeInTheDocument();
@@ -79,7 +79,7 @@ describe('ButtonContextMenu', () => {
 
   it('F1: with hideContent, focus lands on the menu after opening (not the trigger)', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, findByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption', hideContent: true });
+    const { getByLabelText, findByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption' as const, hideContent: true });
     await openMenu(user, getByLabelText);
     const menu = await findByRole('menu');
     // openDropdown defers focus via tick() because the <ul> is not mounted synchronously under
@@ -87,11 +87,29 @@ describe('ButtonContextMenu', () => {
     await vi.waitFor(() => expect(menu).toHaveFocus());
   });
 
+  it('R1: a close before the deferred focus fires does not strand focus on the menu (no hideContent)', async () => {
+    // Without hideContent the <ul> stays mounted (max-height:0) when closed, so a deferred focus
+    // that runs after closeDropdown would land on the invisible menu. Open then close synchronously
+    // — the tick()-deferred focus is still pending — and assert the guard skips it.
+    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, {
+      mode: 'menuoption' as const,
+      hideContent: false,
+    });
+    const trigger = getByLabelText('menu');
+    trigger.click(); // open  (schedules the deferred focus)
+    trigger.click(); // close (focusButton runs; isOpen is now false)
+    await new Promise((resolve) => setTimeout(resolve, 0)); // drain the microtask
+
+    const menu = queryByRole('menu'); // present-but-collapsed under hideContent:false
+    expect(menu).not.toBeNull();
+    expect(menu).not.toHaveFocus();
+  });
+
   it('F2: onOpen fires once per open, not on every arrow keypress', async () => {
     const user = userEvent.setup();
-    const onOpen = vi.fn();
-    const { getByLabelText, getByTestId } = renderWithTooltips(ContextMenuHarness, {
-      mode: 'menuoption',
+    const onOpen = vi.fn<() => void>();
+    const { getByLabelText, getByTestId, findByRole } = renderWithTooltips(ContextMenuHarness, {
+      mode: 'menuoption' as const,
       hideContent: true,
       onOpen,
     });
@@ -105,5 +123,11 @@ describe('ButtonContextMenu', () => {
       await fireEvent.keyDown(wrapper, { key: 'ArrowDown' });
     }
     expect(onOpen).toHaveBeenCalledTimes(1);
+
+    // R5: pin the negative assertion so it cannot pass for the wrong reason. If the arrow presses
+    // ever stopped reaching moveSelection, "onOpen still 1" would pass vacuously — so prove the
+    // navigation genuinely ran by checking the selection actually advanced (CLAUDE.md §4).
+    const menu = await findByRole('menu');
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/.+/);
   });
 });

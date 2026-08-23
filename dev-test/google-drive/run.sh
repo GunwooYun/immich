@@ -79,6 +79,23 @@ run_suite() {
 run_suite "server (unit)" server test/vitest.config.mjs "${SERVER_SPECS[@]}"
 run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
 
+# Web type-checking. tsc/eslint do not type-check Svelte call sites — svelte-check does, and the
+# Wave 5 fixes-round-2 review caught spec type errors that both of those missed. svelte-check runs
+# project-wide and the repo carries some pre-existing errors in unrelated files, so gate only on
+# errors in the files this feature owns.
+{
+  echo "── web (svelte-check, feature files) ──────────────────────────────────────────────"
+} | tee -a "$OUT"
+GD_SC="$(cd "${REPO_ROOT}/web" && npx svelte-check --output machine 2>&1 | grep -i error   | grep -iE 'google-drive|GoogleDriveAlbumMenu|ButtonContextMenu|ContextMenuHarness|DriveMenuHarness' || true)"
+if [[ -n "$GD_SC" ]]; then
+  echo "$GD_SC" | tee -a "$OUT"
+  echo "svelte-check errors in feature files ↑" | tee -a "$OUT"
+  FAILED=1
+else
+  echo "no svelte-check errors in feature files" | tee -a "$OUT"
+fi
+echo | tee -a "$OUT"
+
 if [[ $RUN_MEDIUM -eq 1 ]]; then
   # Needs a reachable Postgres. Kept opt-in so the everyday loop stays fast and offline-safe.
   #
