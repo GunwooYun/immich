@@ -474,3 +474,41 @@ FAIL(G1b 해소). 정상 트리에선 "no regressions vs baseline (3 files)".
 
 **⇒ Wave 5 shipped 코드는 라운드 4~6 내내 무변경(전부 test-infra). I1이 반영됐으니 브랜치와 배포
 사이에 남은 것은 브라우저 패스뿐.**
+
+---
+
+## 12. 수정 리뷰 라운드 7 (2026-08-27, `google-drive-wave5-fixes6-...-review.md`)
+
+리뷰 판정: **I1 완전히 닫힘(없음·빈 파일 둘 다 end-to-end FAIL, malformed 매트릭스 5종 중 4종 fail-closed
+또는 무해, 1종은 "숫자를 위로 손편집"해야만 열리고 그마저 STALE로 자기고발).** 하나 — **J1.**
+
+### J1 — regen 명령의 `&& mv`가 실패한 파이프라인을 못 막음 (fail-open 아님, 반영 완료)
+문서화된 regen 명령이 **주석**(run.sh)이라 사용자의 인터랙티브 셸에서 실행되는데, 거기엔
+`pipefail`이 없다. `sort`가 빈 입력에 exit 0 → `&&` 진행 → 0바이트 베이스라인 설치. (실측: no-pipefail
+`( false | sort ) > t && mv` → exit 0, dest 0바이트 / pipefail → exit 1, dest 유지.)
+**단, 이번 라운드의 `-s` 가드가 정확히 이걸 봉쇄** — 잘린 베이스라인은 이제 조용한 초록이 아니라
+큰 `RESULT: FAIL`. 즉 J1은 견고성/사용성 결함이지 fail-open 아님(두 실수가 겹쳐야 문제). 리뷰어:
+"브랜치 홀드 사유 아님."
+**수정(리뷰어 권장 durable 안):** 파이프라인을 **`./dev-test/google-drive/run.sh --regen-baseline`
+서브커맨드**로. 스크립트 자체의 `set -o pipefail` 아래 실행 + COMPLETED 검증 + 빈 결과 거부 + 원자적
+temp→mv 설치. **추출 파이프라인을 한 곳(`sc_extract` 함수)으로 통합** — 게이트와 주석에 두 벌 있어
+이미 한 번 드리프트했던 것(주석이 옛 `grep`/`awk` 유지) 제거. 추가로 리뷰어 nit 반영: `-s` 검사를
+`SC_OUT=`(느린 svelte-check 실행) **위로 hoist** — 결정된 실패에 14s를 안 쓰게.
+**검증:** `bash -n` OK, `--regen-baseline`이 체크인 베이스라인을 byte-identical 재현, 빈 베이스라인→FAIL
+(이제 svelte-check 실행 없이), full suite --medium 199/29/10 PASS.
+
+### 리뷰가 확인해준 것 (되먹임)
+- **format validation 불필요**: 모든 *우발적* malformation(탭 없음/비숫자 카운트/공백만/CRLF)은 이미
+  fail-closed 또는 무해. 검증기는 *고의적* 오편집만 막고 포맷 동기화 부담만 늘림 → 도입 안 함.
+  (원하면 "탭 없는 줄"에 warn만 — 유일하게 조용히 무해-무보호인 형태.)
+- `-s` → `COMPLETED` → compare 순서 정확. present-but-stale + crash 조합도 COMPLETED 분기로 FAIL.
+- **패턴 교훈**: 이 게이트가 의존하는 모든 입력을 검증하라 — `COMPLETED` 라인, 베이스라인 파일,
+  그리고 이제 regen 파이프라인의 성공. fail-open이 3라운드에 걸쳐 나온 이유가 "입력을 가정"한 것.
+- 추출 파이프라인 중복이 J1의 더 깊은 원인 — 서브커맨드가 한 방에 통합+수정.
+
+### 검증 (라운드 7)
+- 기능: 서버 199 / 웹 29 / medium 10 / 베이스라인 게이트 회귀 0 PASS. `--regen-baseline` 재현성 확인.
+- **남은 미검증(코드 결함 아님):** 4개 시각 상태 브라우저 패스, 실 BullMQ 큐 e2e.
+
+**⇒ shipped 코드 라운드 3 이후 무변경(라운드 4~7 전부 test-infra). 리뷰어 재확인: 배포 전 남은 건
+브라우저 패스뿐이며, §1상 그것은 자체 report+review 라운드이지 이 라운드의 사인오프가 아니다.**
