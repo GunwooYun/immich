@@ -102,19 +102,47 @@ run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
   echo "── web (svelte-check, baseline-gated) ──────────────────────────────────────────────"
 } | tee -a "$OUT"
 SC_BASELINE="$(dirname "${BASH_SOURCE[0]}")/svelte-check-baseline.txt"
-SC_OUT="$(cd "${REPO_ROOT}/web" && npx svelte-check --output machine 2>&1)"
+# timeout, not a bare call: the COMPLETED check below converts a *crash* into a FAIL, but a *hang*
+# (svelte-check wedged, not exited) would stall the whole suite instead — timeout turns that into a
+# non-zero exit with no COMPLETED line, i.e. a FAIL. (H review note.)
+SC_OUT="$(cd "${REPO_ROOT}/web" && timeout 600 npx svelte-check --output machine 2>&1)"
 if ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
   # svelte-check never finished — treat as failure rather than "clean", the fail-open bug's fix.
   echo "svelte-check did not complete — treating as failure" | tee -a "$OUT"
   echo "$SC_OUT" | tail -5 | tee -a "$OUT"
   FAILED=1
 else
-  SC_CUR="$(grep ' ERROR ' <<<"$SC_OUT" | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c | awk '{print $2"\t"$1}' | sort)"
-  # A "regression" is any path whose current error count exceeds its baseline count (absent => 0).
-  SC_NEW="$(awk -F'\t' 'NR==FNR{base[$1]=$2; next} {if (($2)+0 > (base[$1])+0) print $1" ("$2" errors, baseline "base[$1]+0")"}' "$SC_BASELINE" <(echo "$SC_CUR"))"
-  if [[ -n "$SC_NEW" ]]; then
+  # Extract "path<TAB>count" for files with errors. Two parsing choices matter (fixes-round-4 H1/H2):
+  #   - `awk '$2=="ERROR"'` not `grep ' ERROR '`: field match, so a WARNING whose *message* contains
+  #     " ERROR " can't be mistaken for an error line and invent a phantom file (false FAIL).
+  #   - `sed -E 's/^ *([0-9]+) (.*)/\2\t\1/'` not `awk '{print $2"\t"$1}'`: keeps the whole path, so a
+  #     path containing a space is not truncated into a non-matching string (false FAIL).
+  SC_CUR="$(awk '$2=="ERROR"' <<<"$SC_OUT" | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 \
+    | sort | uniq -c | sed -E 's/^ *([0-9]+) (.*)/\2\t\1/' | sort)"
+  # Compare against the baseline in BOTH directions:
+  #   REGRESSION — a path with more errors than baseline (absent baseline => 0). Fails the gate.
+  #   STALE      — a path with FEWER errors than baseline (e.g. an upstream merge fixed a pre-existing
+  #                one). Does NOT fail — under-count is fine — but is printed loudly, because a stale
+  #                baseline silently widens what that file tolerates (H3). Regenerate when you see it.
+  SC_CMP="$(awk -F'\t' '
+    NR==FNR { base[$1]=$2; next }
+    $1!="" { cur[$1]=$2 }
+    END {
+      for (f in cur) {
+        if (cur[f]+0 > base[f]+0)      print "REGRESSION\t" f "\t" cur[f] "\t" base[f]+0
+        else if (cur[f]+0 < base[f]+0) print "STALE\t" f "\t" cur[f] "\t" base[f]+0
+      }
+      for (f in base) if (!(f in cur) && base[f]+0 > 0) print "STALE\t" f "\t0\t" base[f]+0
+    }' "$SC_BASELINE" <(echo "$SC_CUR"))"
+  SC_REG="$(grep '^REGRESSION' <<<"$SC_CMP" || true)"
+  SC_STALE="$(grep '^STALE' <<<"$SC_CMP" || true)"
+  if [[ -n "$SC_STALE" ]]; then
+    echo "svelte-check baseline is stale (fewer errors than recorded) — regenerate it:" | tee -a "$OUT"
+    echo "$SC_STALE" | sed 's/^STALE\t/  /' | tee -a "$OUT"
+  fi
+  if [[ -n "$SC_REG" ]]; then
     echo "svelte-check regressions vs baseline:" | tee -a "$OUT"
-    echo "$SC_NEW" | tee -a "$OUT"
+    echo "$SC_REG" | sed 's/^REGRESSION\t/  /' | tee -a "$OUT"
     FAILED=1
   else
     echo "no svelte-check regressions vs baseline ($(wc -l < "$SC_BASELINE") pre-existing files)" | tee -a "$OUT"
