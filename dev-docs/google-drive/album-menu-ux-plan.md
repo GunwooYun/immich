@@ -385,3 +385,45 @@ FAIL(G1b 해소). 정상 트리에선 "no regressions vs baseline (3 files)".
 **리뷰어 결론:** *"Wave 5는 그 외엔 끝. 배포까지 남은 건 G1 + 네 개 시각 상태 브라우저 패스뿐이며,
 §1상 브라우저 패스는 리뷰 대체가 아니라 자체 라운드가 필요하다."* → G1/G2/G3 반영 완료. 코드 측은
 이 라운드로 마무리. 남은 것은 (a) 이 G-수정에 대한 리뷰 1회, (b) 배포, (c) 배포 후 브라우저 검증.
+
+---
+
+## 10. 수정 리뷰 라운드 5 (2026-08-27, `google-drive-wave5-fixes4-...-review.md`)
+
+리뷰 판정: **G1/G2/G3 모두 정확히 수정, 블로킹 없음 — Wave 5에서 처음으로 "배포 전 필수 수정"
+지적이 0인 라운드.** 리뷰어 결론: *"Wave 5의 코드는 끝났다. 브랜치와 배포 사이에 남은 유일한 것은
+네 개 시각 상태의 브라우저 패스이며, §1상 그것은 자체 리뷰 라운드이지 사인오프가 아니다."*
+
+**Before/after 증거(재실행 가능):** 라운드 3 게이트가 PASS시켰던 바로 그 `+page.svelte` 한 줄 주입이,
+새 게이트에선 `svelte-check regressions vs baseline … RESULT: FAIL`. G1a 닫힘을 이 대비로 기록.
+
+### 게이트는 의도적으로 name-agnostic
+라운드 3의 교훈은 "파일명 allowlist는 기능 뒤로 드리프트한다"였다. 베이스라인 방식이 그 유지보수를
+없앤다. **scoping을 다시 넣지 말 것.**
+
+### H1/H2/H3 정리 (라운드 5에서 반영 — 현재 저장소에선 도달 불가하나 견고화)
+리뷰가 지적한 잠복 파싱 취약점 + 드리프트를 같은 정리 커밋에서 처리:
+- **H1**: 공백 포함 경로가 `awk '{print $2}'`에 잘림 → `sed -E 's/^ *([0-9]+) (.*)/\2\t\1/'`로 경로 보존.
+- **H2**: `grep ' ERROR '`가 WARNING의 **메시지**에 " ERROR "가 있으면 오탐 → `awk '$2=="ERROR"'`(필드 매칭).
+- **H3**: 베이스라인이 **관대한 방향으로만** 검사됐음(업스트림 머지가 기존 에러를 고치면 그 파일이 새
+  에러 최대 N개를 조용히 용인). 이제 **양방향** 비교 — REGRESSION(초과)은 FAIL, STALE(미만)은
+  실패 없이 "regenerate" 경고 출력. 진짜 masking(같은 파일 fix+new 동수)은 line:col/해시가 필요하나
+  그 3개 파일은 이 기능이 안 건드리는 무관 파일이라 잔여 위험 대비 유지비가 커서 도입 안 함.
+- **timeout**: `timeout 600 npx svelte-check` — 크래시가 아닌 **행(hang)**도 COMPLETED 부재로 FAIL 전환.
+- 검증: 클린 트리 PASS/무-STALE, `+page.svelte` 주입→REGRESSION→FAIL(end-to-end), 전부 fix→STALE만,
+  공백 경로 보존, 베이스라인 파일 초과→REGRESSION — 6/6 시나리오 정확.
+
+### 리뷰 affirmation
+- `--output machine`는 **상대 경로**(기본 `human`은 절대) — 베이스라인/게이트가 같은 형식이라 3파일이
+  영구 회귀로 안 읽힘. regen 명령이 체크인 베이스라인과 **byte-for-byte 동일**함을 리뷰어가 확인.
+- G2의 `expect(trigger).toHaveFocus()`는 `focusButton()`이 책임지는 정확한 상태를 못박음(`getByLabelText('menu')`
+  = `IconButton`의 `id=buttonId` 버튼). 닫힘 자가교정 주석도 정확.
+- G3는 재설계의 부수효과로 해소(전체 라인 대신 경로만 매칭).
+
+### 검증 (라운드 5)
+- 기능: 서버 199 / 웹 29 / medium 10 / 베이스라인 게이트(견고화) 회귀 0 PASS. eslint clean.
+- 게이트 견고화: H1/H2/H3 + timeout 반영, 6개 시나리오 격리 검증 + 주입 end-to-end.
+- **남은 미검증(코드 결함 아님):** 4개 시각 상태 브라우저 패스, 실 BullMQ 큐 e2e.
+
+**⇒ Wave 5 코드 측 완료.** 남은 것: (a) 이 H-정리에 대한 리뷰(선택 — test-infra only), (b) 배포
+(§1/§7: DB 백업 + 사용자 확인 필수), (c) 배포 후 브라우저 검증(자체 라운드).

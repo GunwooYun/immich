@@ -1,0 +1,47 @@
+Google Drive — unit test run
+date:   2026-08-27T00:44:46+09:00
+commit: c3a410df2 (feat/google-drive-album-sync-v3.1.0)
+
+── server (unit) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+ ✓ |server:unit| src/utils/google-drive.spec.ts (16 tests) 5ms
+(node:13747) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:13734) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:13733) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:13736) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:13741) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:unit| src/services/server.service.spec.ts (14 tests) 238ms
+ ✓ |server:unit| src/services/queue.service.spec.ts (18 tests) 359ms
+ ✓ |server:unit| src/services/system-config.service.spec.ts (28 tests) 513ms
+ ✓ |server:unit| src/services/google-drive.service.spec.ts (53 tests) 748ms
+ ✓ |server:unit| src/services/album.service.spec.ts (70 tests) 822ms
+
+ Test Files  6 passed (6)
+      Tests  199 passed (199)
+   Start at  00:44:46
+   Duration  5.10s (transform 2.02s, setup 0ms, collect 19.57s, tests 2.69s, environment 1ms, prepare 614ms)
+
+
+── web (unit) ──────────────────────────────────────────────
+
+ RUN  v4.1.10 /home/gwyun/workspace/immich/web
+
+
+ Test Files  3 passed (3)
+      Tests  29 passed (29)
+   Start at  00:44:53
+   Duration  8.53s (transform 12.86s, setup 1.05s, import 15.24s, tests 996ms, environment 576ms)
+
+
+── web (svelte-check, baseline-gated) ──────────────────────────────────────────────
+no svelte-check regressions vs baseline (3 pre-existing files)
+
+════════════════════════════════════════════════════════════
+RESULT: PASS
