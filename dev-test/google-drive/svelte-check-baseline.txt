@@ -1,0 +1,3 @@
+src/lib/components/asset-viewer/AssetViewerNavBar.spec.ts	2
+src/lib/components/assets/thumbnail/__test__/Thumbnail.spec.ts	2
+src/lib/components/shared-components/__test__/NumberRangeInput.spec.ts	3

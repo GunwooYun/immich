@@ -80,19 +80,45 @@ run_suite "server (unit)" server test/vitest.config.mjs "${SERVER_SPECS[@]}"
 run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
 
 # Web type-checking. tsc/eslint do not type-check Svelte call sites — svelte-check does, and the
-# Wave 5 fixes-round-2 review caught spec type errors that both of those missed. svelte-check runs
-# project-wide and the repo carries some pre-existing errors in unrelated files, so gate only on
-# errors in the files this feature owns.
+# Wave 5 fixes-round-2 review caught spec type errors that both of those missed.
+#
+# svelte-check runs project-wide and the repo carries pre-existing errors in unrelated files, so we
+# gate against a checked-in baseline (svelte-check-baseline.txt: "path<TAB>error-count" per file)
+# rather than a filename allowlist. The first version of this gate scoped by a grep of feature
+# filenames and it had two holes the fixes-round-3 review reproduced: it missed the album +page
+# (edited every round, matched by no pattern), and it failed *open* — if svelte-check couldn't run,
+# the grep found nothing and the gate declared the feature clean. This version instead:
+#   - fails closed: no COMPLETED line (svelte-check crashed/OOM'd/mis-invoked) => FAIL, not pass;
+#   - compares the *set and per-file count* of files-with-errors to the baseline, so a NEW file with
+#     errors or MORE errors in an existing file trips it, whatever the filename;
+#   - matches on the extracted path only, not the whole machine line, so an error *message* that
+#     happens to contain a path-like substring can't move the result.
+# When you legitimately change the pre-existing set (e.g. fix one of the unrelated errors),
+# regenerate the baseline:
+#   (cd web && npx svelte-check --output machine 2>&1 | grep ' ERROR ' \
+#     | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c \
+#     | awk '{print $2"\t"$1}' | sort) > dev-test/google-drive/svelte-check-baseline.txt
 {
-  echo "── web (svelte-check, feature files) ──────────────────────────────────────────────"
+  echo "── web (svelte-check, baseline-gated) ──────────────────────────────────────────────"
 } | tee -a "$OUT"
-GD_SC="$(cd "${REPO_ROOT}/web" && npx svelte-check --output machine 2>&1 | grep -i error   | grep -iE 'google-drive|GoogleDriveAlbumMenu|ButtonContextMenu|ContextMenuHarness|DriveMenuHarness' || true)"
-if [[ -n "$GD_SC" ]]; then
-  echo "$GD_SC" | tee -a "$OUT"
-  echo "svelte-check errors in feature files ↑" | tee -a "$OUT"
+SC_BASELINE="$(dirname "${BASH_SOURCE[0]}")/svelte-check-baseline.txt"
+SC_OUT="$(cd "${REPO_ROOT}/web" && npx svelte-check --output machine 2>&1)"
+if ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
+  # svelte-check never finished — treat as failure rather than "clean", the fail-open bug's fix.
+  echo "svelte-check did not complete — treating as failure" | tee -a "$OUT"
+  echo "$SC_OUT" | tail -5 | tee -a "$OUT"
   FAILED=1
 else
-  echo "no svelte-check errors in feature files" | tee -a "$OUT"
+  SC_CUR="$(grep ' ERROR ' <<<"$SC_OUT" | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c | awk '{print $2"\t"$1}' | sort)"
+  # A "regression" is any path whose current error count exceeds its baseline count (absent => 0).
+  SC_NEW="$(awk -F'\t' 'NR==FNR{base[$1]=$2; next} {if (($2)+0 > (base[$1])+0) print $1" ("$2" errors, baseline "base[$1]+0")"}' "$SC_BASELINE" <(echo "$SC_CUR"))"
+  if [[ -n "$SC_NEW" ]]; then
+    echo "svelte-check regressions vs baseline:" | tee -a "$OUT"
+    echo "$SC_NEW" | tee -a "$OUT"
+    FAILED=1
+  else
+    echo "no svelte-check regressions vs baseline ($(wc -l < "$SC_BASELINE") pre-existing files)" | tee -a "$OUT"
+  fi
 fi
 echo | tee -a "$OUT"
 

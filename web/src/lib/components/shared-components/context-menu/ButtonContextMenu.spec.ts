@@ -102,7 +102,13 @@ describe('ButtonContextMenu', () => {
 
     const menu = queryByRole('menu'); // present-but-collapsed under hideContent:false
     expect(menu).not.toBeNull();
+    // Pin why the negative passes (CLAUDE.md §4): not just "focus isn't on the menu" — focus went
+    // back to the trigger, where closeDropdown's focusButton() put it. Without that, a broken
+    // focusButton() dropping focus to <body> would also satisfy `not.toHaveFocus()`.
     expect(menu).not.toHaveFocus();
+    expect(trigger).toHaveFocus();
+    // The menu being closed is self-correcting here: if a regression left it open, the deferred
+    // focus would legitimately fire and this test would fail on the assertion above.
   });
 
   it('F2: onOpen fires once per open, not on every arrow keypress', async () => {
