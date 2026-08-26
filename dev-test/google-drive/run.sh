@@ -94,10 +94,13 @@ run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
 #   - matches on the extracted path only, not the whole machine line, so an error *message* that
 #     happens to contain a path-like substring can't move the result.
 # When you legitimately change the pre-existing set (e.g. fix one of the unrelated errors),
-# regenerate the baseline:
-#   (cd web && npx svelte-check --output machine 2>&1 | grep ' ERROR ' \
+# regenerate the baseline. Write via a temp file + mv so an interrupted or wrong-directory run can
+# never leave a truncated (zero-byte) baseline behind — an empty baseline used to make the gate
+# pass everything (fixes-round-5 I1):
+#   (cd web && npx svelte-check --output machine 2>&1 | awk '$2=="ERROR"' \
 #     | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c \
-#     | awk '{print $2"\t"$1}' | sort) > dev-test/google-drive/svelte-check-baseline.txt
+#     | sed -E 's/^ *([0-9]+) (.*)/\2\t\1/' | sort) > /tmp/sc-baseline.$$ \
+#     && mv /tmp/sc-baseline.$$ dev-test/google-drive/svelte-check-baseline.txt
 {
   echo "── web (svelte-check, baseline-gated) ──────────────────────────────────────────────"
 } | tee -a "$OUT"
@@ -106,7 +109,16 @@ SC_BASELINE="$(dirname "${BASH_SOURCE[0]}")/svelte-check-baseline.txt"
 # (svelte-check wedged, not exited) would stall the whole suite instead — timeout turns that into a
 # non-zero exit with no COMPLETED line, i.e. a FAIL. (H review note.)
 SC_OUT="$(cd "${REPO_ROOT}/web" && timeout 600 npx svelte-check --output machine 2>&1)"
-if ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
+if [[ ! -s "$SC_BASELINE" ]]; then
+  # I1 (fixes-round-5): a missing or empty baseline must FAIL, never pass. This guard is
+  # load-bearing, not a redundant existence check: with an empty first file the comparison awk's
+  # NR==FNR idiom stays true while reading the *current* rows, loading them all into base[] and
+  # leaving cur[] empty — so every real regression is silently classified away and the gate passes.
+  # A missing file makes awk abort to stderr, which then scrolls past a RESULT: PASS. The regen
+  # command truncates the baseline before writing, so a bad regen is the realistic way to get here.
+  echo "svelte-check baseline missing or empty ($SC_BASELINE) — treating as failure" | tee -a "$OUT"
+  FAILED=1
+elif ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
   # svelte-check never finished — treat as failure rather than "clean", the fail-open bug's fix.
   echo "svelte-check did not complete — treating as failure" | tee -a "$OUT"
   echo "$SC_OUT" | tail -5 | tee -a "$OUT"
