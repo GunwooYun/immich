@@ -21,6 +21,46 @@ OUT="${RESULTS_DIR}/${STAMP}.txt"
 export PATH="$HOME/.local/share/mise/shims:$PATH"
 export NODE_OPTIONS="--max-old-space-size=4096"
 
+SC_BASELINE="$(dirname "${BASH_SOURCE[0]}")/svelte-check-baseline.txt"
+
+# The ONE parser for svelte-check --output machine → "path<TAB>error-count" per file. Both the gate
+# and --regen-baseline call this, so the two can't drift (fixes-round-6 J1: they had already drifted
+# once, the comment keeping an older `grep`/`awk` than the gate). Field choices matter:
+#   - `awk '$2=="ERROR"'` not `grep ' ERROR '`: field match, so a WARNING whose *message* contains
+#     " ERROR " can't be read as an error line and invent a phantom file (H2).
+#   - `sed -E 's/^ *([0-9]+) (.*)/\2\t\1/'` not `awk '{print $2}'`: keeps the whole path, so a path
+#     containing a space is not truncated into a non-matching string (H1).
+sc_extract() {
+  awk '$2=="ERROR"' | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c \
+    | sed -E 's/^ *([0-9]+) (.*)/\2\t\1/' | sort
+}
+
+# `--regen-baseline`: recompute the baseline the safe way. Runs under this script's `set -o pipefail`
+# (unlike the same pipeline pasted into an interactive shell, where a failed svelte-check would still
+# `&& mv` a zero-byte file into place — J1), validates the result before installing it, and installs
+# atomically via a temp file + mv. Use this instead of hand-editing the baseline or pasting a pipeline.
+if [[ "${1:-}" == "--regen-baseline" ]]; then
+  RAW="$(cd "${REPO_ROOT}/web" && timeout 600 npx svelte-check --output machine 2>&1)"
+  if ! grep -q 'COMPLETED' <<<"$RAW"; then
+    echo "svelte-check did not complete — baseline NOT regenerated"
+    echo "$RAW" | tail -5
+    exit 1
+  fi
+  NEW="$(sc_extract <<<"$RAW")"
+  if [[ -z "$NEW" ]]; then
+    # Zero errors project-wide would write an empty baseline, which the gate's -s guard then treats
+    # as failure. If that is genuinely the state, it is a deliberate situation to handle by hand
+    # (delete the gate, or record a sentinel), not something a regen should silently install.
+    echo "svelte-check reports zero errors — refusing to write an empty baseline (the gate would fail on it)."
+    exit 1
+  fi
+  SC_TMP="$(mktemp)"
+  printf '%s\n' "$NEW" > "$SC_TMP" && mv "$SC_TMP" "$SC_BASELINE"
+  echo "baseline regenerated ($(wc -l < "$SC_BASELINE") files):"
+  cat "$SC_BASELINE"
+  exit 0
+fi
+
 RUN_MEDIUM=0
 [[ "${1:-}" == "--medium" ]] && RUN_MEDIUM=1
 
@@ -94,43 +134,35 @@ run_suite "web (unit)" web "" "${WEB_SPECS[@]}"
 #   - matches on the extracted path only, not the whole machine line, so an error *message* that
 #     happens to contain a path-like substring can't move the result.
 # When you legitimately change the pre-existing set (e.g. fix one of the unrelated errors),
-# regenerate the baseline. Write via a temp file + mv so an interrupted or wrong-directory run can
-# never leave a truncated (zero-byte) baseline behind — an empty baseline used to make the gate
-# pass everything (fixes-round-5 I1):
-#   (cd web && npx svelte-check --output machine 2>&1 | awk '$2=="ERROR"' \
-#     | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 | sort | uniq -c \
-#     | sed -E 's/^ *([0-9]+) (.*)/\2\t\1/' | sort) > /tmp/sc-baseline.$$ \
-#     && mv /tmp/sc-baseline.$$ dev-test/google-drive/svelte-check-baseline.txt
+# regenerate the baseline with `./dev-test/google-drive/run.sh --regen-baseline` (defined near the
+# top). That runs the extraction under this script's pipefail, validates it, and installs it
+# atomically — never leaving a truncated baseline behind (fixes-round-6 J1). Do not hand-edit it.
 {
   echo "── web (svelte-check, baseline-gated) ──────────────────────────────────────────────"
 } | tee -a "$OUT"
-SC_BASELINE="$(dirname "${BASH_SOURCE[0]}")/svelte-check-baseline.txt"
-# timeout, not a bare call: the COMPLETED check below converts a *crash* into a FAIL, but a *hang*
-# (svelte-check wedged, not exited) would stall the whole suite instead — timeout turns that into a
-# non-zero exit with no COMPLETED line, i.e. a FAIL. (H review note.)
-SC_OUT="$(cd "${REPO_ROOT}/web" && timeout 600 npx svelte-check --output machine 2>&1)"
+# Validate the baseline BEFORE paying for a svelte-check run: a missing/empty baseline is already a
+# FAIL, so there is nothing to learn from running the slowest step of the suite first (fixes-round-6
+# nit). This guard is load-bearing, not a redundant existence check: with an empty first file the
+# comparison awk's NR==FNR idiom stays true while reading the *current* rows, loading them all into
+# base[] and leaving cur[] empty — so every real regression is silently classified away and the gate
+# passes (I1). A missing file makes awk abort to stderr, which then scrolls past a RESULT: PASS. The
+# regen path can still truncate the file to zero bytes, so this stays the last line of defence.
 if [[ ! -s "$SC_BASELINE" ]]; then
-  # I1 (fixes-round-5): a missing or empty baseline must FAIL, never pass. This guard is
-  # load-bearing, not a redundant existence check: with an empty first file the comparison awk's
-  # NR==FNR idiom stays true while reading the *current* rows, loading them all into base[] and
-  # leaving cur[] empty — so every real regression is silently classified away and the gate passes.
-  # A missing file makes awk abort to stderr, which then scrolls past a RESULT: PASS. The regen
-  # command truncates the baseline before writing, so a bad regen is the realistic way to get here.
   echo "svelte-check baseline missing or empty ($SC_BASELINE) — treating as failure" | tee -a "$OUT"
-  FAILED=1
-elif ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
-  # svelte-check never finished — treat as failure rather than "clean", the fail-open bug's fix.
-  echo "svelte-check did not complete — treating as failure" | tee -a "$OUT"
-  echo "$SC_OUT" | tail -5 | tee -a "$OUT"
+  echo "  regenerate with: ./dev-test/google-drive/run.sh --regen-baseline" | tee -a "$OUT"
   FAILED=1
 else
-  # Extract "path<TAB>count" for files with errors. Two parsing choices matter (fixes-round-4 H1/H2):
-  #   - `awk '$2=="ERROR"'` not `grep ' ERROR '`: field match, so a WARNING whose *message* contains
-  #     " ERROR " can't be mistaken for an error line and invent a phantom file (false FAIL).
-  #   - `sed -E 's/^ *([0-9]+) (.*)/\2\t\1/'` not `awk '{print $2"\t"$1}'`: keeps the whole path, so a
-  #     path containing a space is not truncated into a non-matching string (false FAIL).
-  SC_CUR="$(awk '$2=="ERROR"' <<<"$SC_OUT" | sed 's/^[0-9]* ERROR "//' | cut -d'"' -f1 \
-    | sort | uniq -c | sed -E 's/^ *([0-9]+) (.*)/\2\t\1/' | sort)"
+  # timeout, not a bare call: the COMPLETED check below converts a *crash* into a FAIL, but a *hang*
+  # (svelte-check wedged, not exited) would stall the whole suite instead — timeout turns that into a
+  # non-zero exit with no COMPLETED line, i.e. a FAIL. (H review note.)
+  SC_OUT="$(cd "${REPO_ROOT}/web" && timeout 600 npx svelte-check --output machine 2>&1)"
+  if ! grep -q 'COMPLETED' <<<"$SC_OUT"; then
+    # svelte-check never finished — treat as failure rather than "clean", the fail-open bug's fix.
+    echo "svelte-check did not complete — treating as failure" | tee -a "$OUT"
+    echo "$SC_OUT" | tail -5 | tee -a "$OUT"
+    FAILED=1
+  else
+  SC_CUR="$(sc_extract <<<"$SC_OUT")"
   # Compare against the baseline in BOTH directions:
   #   REGRESSION — a path with more errors than baseline (absent baseline => 0). Fails the gate.
   #   STALE      — a path with FEWER errors than baseline (e.g. an upstream merge fixed a pre-existing
@@ -159,7 +191,8 @@ else
   else
     echo "no svelte-check regressions vs baseline ($(wc -l < "$SC_BASELINE") pre-existing files)" | tee -a "$OUT"
   fi
-fi
+  fi   # close: svelte-check COMPLETED?
+fi     # close: baseline present and non-empty?
 echo | tee -a "$OUT"
 
 if [[ $RUN_MEDIUM -eq 1 ]]; then
