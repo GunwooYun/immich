@@ -339,3 +339,49 @@ W1/W2/W3는 **합성**(실 Drive 메뉴 ⊂ 실 ButtonContextMenu, hideContent)�
 
 **리뷰어 결론: "Fix R1 before deploy, R2/R3 same commit — then this is done."** 모두 반영 완료.
 다음 라운드가 깨끗하면 배포 단계로.
+
+---
+
+## 9. 수정 리뷰 라운드 4 (2026-08-27, `google-drive-wave5-fixes3-...-review.md`)
+
+리뷰 판정: **R1/R3/R4/R5 완전히 수정됨(각각 neutering으로 재확인 — 가드→R1만, 토글-닫힘→유닛+합성,
+동기화-무닫힘→유닛+합성). R2는 코드는 고쳐졌으나 그것을 지키려던 게이트가 작동 안 함.**
+
+### G1 — `run.sh`의 svelte-check 게이트에 구멍 2개 (배포 전 수정)
+라운드 3에서 추가한 파일명 grep 게이트가:
+- **G1a**: 앨범 `+page.svelte`(매 라운드 편집·메뉴 마운트·`loadGoogleDriveMenu`/`hideContent` 소유)를
+  어떤 패턴에도 안 걸려 **놓침**. 리뷰어가 그 파일에 타입 에러 주입 → 게이트 "clean" + PASS 재현.
+  `MenuOption`/`ContextMenu`/`context-menu.store`도 같은 사각.
+- **G1b**: **fail-open** — svelte-check가 아예 못 돌면(`|| true`) 에러 텍스트에 기능명이 없어 두 번째
+  grep이 비고 → "clean" 선언. R2가 애초에 "svelte-check를 안 돌려서" 생겼는데, 안 돌아도 초록불.
+**수정:** 파일명 allowlist를 버리고 **체크인 베이스라인 대비 게이트**로 교체
+(`dev-test/google-drive/svelte-check-baseline.txt` = 기존 7에러 3파일의 `path<TAB>count`).
+새 게이트는 ① `COMPLETED` 라인 없으면 FAIL(fail-closed), ② 에러 파일의 **집합+파일별 카운트**를
+베이스라인과 비교해 신규 파일/증가 시 FAIL, ③ 경로만 추출 비교(G3: 에러 메시지 텍스트 매칭 제거).
+검증: `+page.svelte`에 에러 주입→게이트 FAIL(G1a 해소), 잘못된 플래그로 실행→`COMPLETED` 없어
+FAIL(G1b 해소). 정상 트리에선 "no regressions vs baseline (3 files)".
+
+### G2 — R1 회귀 테스트가 부정만 단언
+`expect(menu).not.toHaveFocus()`는 포커스가 트리거로 갔든 `<body>`로 샜든 통과. §4대로 **왜 통과하는지**
+못박음: `expect(trigger).toHaveFocus()` 추가(닫힘은 자가교정임을 주석). neutering 시 R1 테스트만 실패 유지.
+
+### G3 — 게이트 grep이 경로 아닌 전체 라인 매칭
+무관 파일의 에러 **메시지**에 경로 유사 문자열이 있으면 오탐. fail-closed 방향이라 위험보단 성가심.
+새 게이트가 경로만 추출·비교하므로 함께 해소.
+
+### 리뷰 affirmation
+- R2 코드 수정 완결(프로젝트 전역 7에러, 정확히 그 3개 기존 파일). R3 소거 방식 정확. R5는
+  "true-before" 가드를 부정 단언에 적용한 올바른 표준. 경계행(80.0→yellow, 95.0→red) `>=` 질문 종결.
+- **합성 테스트는 stub 유닛이 못 잡는 것을 잡는다**(콜백 배선 변화) — 존재 이유이자 유지 이유.
+- 비낙관적 토글의 `pointer-events-none`은 jsdom 미구현이라 **테스트 불가, 구성상 안전**으로 계속 기록.
+
+### 검증 (라운드 4)
+- 기능: 서버 199 / 웹 29 / medium 10 / **svelte-check(베이스라인 게이트) 회귀 0** PASS
+  (`results/20260827-0026.txt`). eslint clean.
+- 게이트 자체 검증: G1a(주입 에러 포착)·G1b(미완료 시 FAIL) 모두 재현 확인.
+- **남은 미검증(코드 결함 아님):** 4개 시각 상태(색 전환·비활성 동기화·미연결 멤버 행) 브라우저
+  확인, 실 BullMQ 큐 e2e.
+
+**리뷰어 결론:** *"Wave 5는 그 외엔 끝. 배포까지 남은 건 G1 + 네 개 시각 상태 브라우저 패스뿐이며,
+§1상 브라우저 패스는 리뷰 대체가 아니라 자체 라운드가 필요하다."* → G1/G2/G3 반영 완료. 코드 측은
+이 라운드로 마무리. 남은 것은 (a) 이 G-수정에 대한 리뷰 1회, (b) 배포, (c) 배포 후 브라우저 검증.
