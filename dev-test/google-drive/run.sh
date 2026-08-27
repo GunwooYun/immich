@@ -47,16 +47,23 @@ if [[ "${1:-}" == "--regen-baseline" ]]; then
     exit 1
   fi
   NEW="$(sc_extract <<<"$RAW")"
-  if [[ -z "$NEW" ]]; then
-    # Zero errors project-wide would write an empty baseline, which the gate's -s guard then treats
-    # as failure. If that is genuinely the state, it is a deliberate situation to handle by hand
-    # (delete the gate, or record a sentinel), not something a regen should silently install.
-    echo "svelte-check reports zero errors — refusing to write an empty baseline (the gate would fail on it)."
+  # Always write a comment header, so the file is never empty even when there are zero errors (K2).
+  # An empty baseline is unrepresentable otherwise: the -s gate rejects it, regen used to refuse to
+  # write it, and the STALE notice then nags "regenerate" forever with a command that refuses — a
+  # dead end. With the header the zero-error state is a valid baseline that makes the gate stricter
+  # (any error anywhere is then a regression). The comparison awk treats a `#`-led line as inert:
+  # it has no tab, so its count parses as 0 and it produces neither REGRESSION nor STALE.
+  SC_TMP="$(mktemp)"
+  # Install as one guarded step (K1): the previous `printf … && mv` discarded its status, so a failed
+  # mv (read-only checkout, full disk, permissions) still printed "regenerated" and cat'd the OLD
+  # file while exiting 0 — the tool whose whole job is installing this file safely reporting success
+  # while doing nothing. Now a failed install cleans up the temp file and exits non-zero, loudly.
+  if ! { { echo "# svelte-check baseline — regenerate with: ./dev-test/google-drive/run.sh --regen-baseline"; printf '%s\n' "$NEW"; } > "$SC_TMP" && mv "$SC_TMP" "$SC_BASELINE"; }; then
+    rm -f "$SC_TMP"
+    echo "failed to install the baseline (see above) — nothing was changed"
     exit 1
   fi
-  SC_TMP="$(mktemp)"
-  printf '%s\n' "$NEW" > "$SC_TMP" && mv "$SC_TMP" "$SC_BASELINE"
-  echo "baseline regenerated ($(wc -l < "$SC_BASELINE") files):"
+  echo "baseline regenerated ($(grep -vc '^#' "$SC_BASELINE") files):"
   cat "$SC_BASELINE"
   exit 0
 fi
@@ -162,37 +169,39 @@ else
     echo "$SC_OUT" | tail -5 | tee -a "$OUT"
     FAILED=1
   else
-  SC_CUR="$(sc_extract <<<"$SC_OUT")"
-  # Compare against the baseline in BOTH directions:
-  #   REGRESSION — a path with more errors than baseline (absent baseline => 0). Fails the gate.
-  #   STALE      — a path with FEWER errors than baseline (e.g. an upstream merge fixed a pre-existing
-  #                one). Does NOT fail — under-count is fine — but is printed loudly, because a stale
-  #                baseline silently widens what that file tolerates (H3). Regenerate when you see it.
-  SC_CMP="$(awk -F'\t' '
-    NR==FNR { base[$1]=$2; next }
-    $1!="" { cur[$1]=$2 }
-    END {
-      for (f in cur) {
-        if (cur[f]+0 > base[f]+0)      print "REGRESSION\t" f "\t" cur[f] "\t" base[f]+0
-        else if (cur[f]+0 < base[f]+0) print "STALE\t" f "\t" cur[f] "\t" base[f]+0
-      }
-      for (f in base) if (!(f in cur) && base[f]+0 > 0) print "STALE\t" f "\t0\t" base[f]+0
-    }' "$SC_BASELINE" <(echo "$SC_CUR"))"
-  SC_REG="$(grep '^REGRESSION' <<<"$SC_CMP" || true)"
-  SC_STALE="$(grep '^STALE' <<<"$SC_CMP" || true)"
-  if [[ -n "$SC_STALE" ]]; then
-    echo "svelte-check baseline is stale (fewer errors than recorded) — regenerate it:" | tee -a "$OUT"
-    echo "$SC_STALE" | sed 's/^STALE\t/  /' | tee -a "$OUT"
+    SC_CUR="$(sc_extract <<<"$SC_OUT")"
+    # Compare against the baseline in BOTH directions:
+    #   REGRESSION — a path with more errors than baseline (absent baseline => 0). Fails the gate.
+    #   STALE      — a path with FEWER errors than baseline (e.g. an upstream merge fixed a
+    #                pre-existing one). Does NOT fail — under-count is fine — but is printed loudly,
+    #                because a stale baseline silently widens what that file tolerates (H3).
+    # The baseline's leading `#` comment header (written by --regen-baseline, K2) is skipped so it is
+    # never treated as a path key.
+    SC_CMP="$(awk -F'\t' '
+      NR==FNR { if ($0 ~ /^#/) next; base[$1]=$2; next }
+      $1!="" { cur[$1]=$2 }
+      END {
+        for (f in cur) {
+          if (cur[f]+0 > base[f]+0)      print "REGRESSION\t" f "\t" cur[f] "\t" base[f]+0
+          else if (cur[f]+0 < base[f]+0) print "STALE\t" f "\t" cur[f] "\t" base[f]+0
+        }
+        for (f in base) if (!(f in cur) && base[f]+0 > 0) print "STALE\t" f "\t0\t" base[f]+0
+      }' "$SC_BASELINE" <(echo "$SC_CUR"))"
+    SC_REG="$(grep '^REGRESSION' <<<"$SC_CMP" || true)"
+    SC_STALE="$(grep '^STALE' <<<"$SC_CMP" || true)"
+    if [[ -n "$SC_STALE" ]]; then
+      echo "svelte-check baseline is stale (fewer errors than recorded) — regenerate it:" | tee -a "$OUT"
+      echo "$SC_STALE" | sed 's/^STALE\t/  /' | tee -a "$OUT"
+    fi
+    if [[ -n "$SC_REG" ]]; then
+      echo "svelte-check regressions vs baseline:" | tee -a "$OUT"
+      echo "$SC_REG" | sed 's/^REGRESSION\t/  /' | tee -a "$OUT"
+      FAILED=1
+    else
+      echo "no svelte-check regressions vs baseline ($(grep -vc '^#' "$SC_BASELINE") pre-existing files)" | tee -a "$OUT"
+    fi
   fi
-  if [[ -n "$SC_REG" ]]; then
-    echo "svelte-check regressions vs baseline:" | tee -a "$OUT"
-    echo "$SC_REG" | sed 's/^REGRESSION\t/  /' | tee -a "$OUT"
-    FAILED=1
-  else
-    echo "no svelte-check regressions vs baseline ($(wc -l < "$SC_BASELINE") pre-existing files)" | tee -a "$OUT"
-  fi
-  fi   # close: svelte-check COMPLETED?
-fi     # close: baseline present and non-empty?
+fi
 echo | tee -a "$OUT"
 
 if [[ $RUN_MEDIUM -eq 1 ]]; then
