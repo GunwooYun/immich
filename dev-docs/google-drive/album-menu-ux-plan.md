@@ -544,3 +544,17 @@ temp→mv 설치. **추출 파이프라인을 한 곳(`sc_extract` 함수)으로
 - K1/K2는 `run.sh`(dev-tooling), 배포 이미지 미포함, 리뷰어 "브랜치 홀드 사유 아님".
 - 사용자 조건("코드 수정 필요 시 리뷰 먼저")상 K1/K2를 고치면 그 수정도 리뷰 대상 → test-infra
   리뷰 루프가 한 번 더 순환. → **배포 시점 결정은 사용자에게.**
+
+### 라운드 8 K1/K2 반영 (2026-08-27)
+- **K1**: 설치를 한 단계 가드로 — `if ! { { echo "#header"; printf …; } > tmp && mv tmp baseline; }; then
+  rm tmp; echo fail; exit 1; fi`. `mv` 실패가 이제 조용한 성공보고 대신 non-zero + "nothing was
+  changed"로 나옴. (권한없는 대상으로 install-failure 분기 진입 확인.)
+- **K2**: regen이 항상 `# svelte-check baseline — regenerate with: …` 헤더를 써서 빈 파일이 안 됨 →
+  0-에러 상태가 표현 가능한 유효 베이스라인(그 상태에선 게이트가 *더* 엄격: 어디든 에러=회귀).
+  0-에러 거부 제거. 비교 awk에 `if ($0 ~ /^#/) next` 명시(헤더를 경로 키로 취급 안 함). 검증:
+  헤더-only + 신규에러→REGRESSION(fail-closed), 헤더-only + 클린→무-STALE, `-s` 통과.
+- cosmetic: hoist가 더한 중첩만큼 내부 비교 블록 재들여쓰기, `# close:` 라벨 주석 제거.
+- 체크인 베이스라인을 헤더 포함으로 재생성(regen 멱등성 유지 — 두 번 돌려도 동일). 파일 수 카운트는
+  `grep -vc '^#'`로 헤더 제외.
+- 검증: `bash -n` OK, regen 멱등, 기능 199/29/10 + 게이트 회귀 0 PASS.
+- **남은 것: K1/K2 리뷰(사용자 조건) → 통과 시 배포 → 배포 후 브라우저 패스.**
