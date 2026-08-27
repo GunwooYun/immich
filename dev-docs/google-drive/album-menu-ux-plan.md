@@ -576,3 +576,28 @@ exit 1 → K1 가드가 **거짓 설치실패**로 오인하는 함정 — 리�
 
 **상태:** shipped 코드 라운드 3 이후 무변경(라운드 4~9 전부 test-infra). **HEAD는 전부 리뷰 완료** —
 사용자 조건상 배포 허용됨. L1은 배포·현재상태 무관 사소 잔여. 남은 것: 배포 + 배포 후 브라우저 패스.
+
+---
+
+## 14. 배포 (2026-08-27)
+
+Wave 5(앨범 Drive 메뉴 UX + 워커 선택 게이트)를 랩탑 운영에 배포. **9라운드 리뷰 사이클을 통과한
+shipped 코드**(라운드 3 `861869fe7` 이후 shipped 무변경; 이후는 전부 test-infra).
+
+- **빌드**: `docker build -f server/Dockerfile -t immich-server:3.1.0-gdrive .` → ID `cd43709aff9b`
+  (linux/amd64 단일 플랫폼, 3.25GB). 데스크탑 23Gi RAM(8GB는 랩탑) — dev 스택 정지 후 빌드.
+- **다운그레이드 가드**: HEAD ⊃ v3.1.0 ✓. **마이그레이션 드리프트**: No changes ✓.
+- **백업**(먼저): `docker exec immich_postgres pg_dumpall -U $POSTGRES_USER | gzip` →
+  `~/immich-backups/immich-db.2026-08-27-2121.sql.gz` (~150MB, gzip -t OK, 검증됨).
+- **전송/로드**: `docker save | gzip -1 | ssh | gunzip | docker load` (~2분, 무중단).
+- **재기동**: 사용자가 랩탑에서 `docker compose up -d`. immich_server만 새 이미지로 재생성.
+- **검증**: `health=healthy`, `/api/server/ping`→pong, `/api/server/version`→3.1.0, 부팅 로그
+  "No schema drift detected" + `googleDrive: true` + 에러 없음. 옛 이미지 `dcce8abb686f` 랩탑에
+  잔존(롤백 가능).
+
+### 배포 후 남은 것
+- **브라우저 4개 시각 상태 검증** (§1: 자체 report+review 라운드) — 막대 색 전환·비활성 "지금
+  동기화"·미연결 멤버 행·connect 행. jsdom이 못 본 외형. 데스크탑 dev 스택은 이 검증을 위해 정지
+  상태 유지(2283 해제 → `http://192.168.50.211:2283` 직접 접속, 터널 불필요).
+- **L1 후속**: 0-에러 베이스라인 카운트 오차(현재 무영향). 별도 리뷰 사이클로 처리.
+- 실 BullMQ 큐 e2e(운영에서 실동작으로 관찰 가능해짐).
