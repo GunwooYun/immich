@@ -84,6 +84,12 @@ SERVER_SPECS=(
   src/services/queue.service.spec.ts
   src/services/server.service.spec.ts
   src/services/system-config.service.spec.ts
+  # Wave 6 moved two decisions out of this feature's own files: the credentials now default from
+  # the environment (config.spec.ts) and the redirect URL is derived from the External Domain
+  # setting (misc.spec.ts, alongside the enabled-gate). Both files are named for something generic,
+  # but a regression in either is a regression in this feature.
+  src/config.spec.ts
+  src/utils/misc.spec.ts
 )
 WEB_SPECS=(
   src/lib/managers/google-drive-progress-manager.svelte.spec.ts

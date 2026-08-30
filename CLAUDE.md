@@ -183,9 +183,27 @@ web/src/**/*.spec.ts             웹 유닛
   ```
   compose에서 우리가 바꾸는 것은 `immich-server`의 `image:` **한 줄뿐**이다. 나머지 3개
   컨테이너(postgres/redis/ML)는 공식 이미지를 그대로 쓴다.
-- **데스크탑에서 랩탑 immich에 붙으려면 SSH 터널이 필요하다.** 두 경우에 쓴다:
-  ① 구글 OAuth 연결·재연결 (구글이 리디렉션 대상으로 사설 IP를 거부하고 `localhost`만 받음),
-  ② 데스크탑 브라우저로 운영 화면을 확인할 때.
+- **구글 OAuth 연결은 Tailscale HTTPS 주소로 한다** (Wave 6). 구글이 redirect URI로 사설 IP를
+  거부하고 공개 HTTPS 또는 `localhost`만 받기 때문이다. 랩탑의 tailnet 주소
+  `https://ha-server.tail68cec7.ts.net`가 그 조건을 만족한다.
+
+  ```
+  폰 immich 앱  ──────→ http://192.168.50.211:2283   (그대로, LAN)
+  Drive 연결 브라우저 ─→ https://ha-server.tail68cec7.ts.net  (OAuth 플로우만)
+  ```
+
+  **연결 시작과 콜백이 같은 origin이어야 한다** — state 쿠키가 origin에 묶여 있다. 그래서 "연결할
+  때만" 이 주소로 로그인해서 끝까지 진행한다. 연결이 끝나면 업로드는 랩탑이 구글과 직접 하므로
+  평소 사용은 LAN 주소 그대로다. **모바일 앱 엔드포인트는 바꾸지 않는다** — serve는 기존 2283 위에
+  HTTPS 입구를 *추가*하는 것이지 대체가 아니다.
+
+  자격증명은 랩탑 `~/immich-app/.env`의 `IMMICH_GOOGLE_DRIVE_CLIENT_ID` / `_CLIENT_SECRET` /
+  `_API_KEY`에서 온다(**값은 절대 커밋하지 않는다** — §1). redirect URL은 admin의 External Domain
+  설정에서 파생되므로 따로 입력하지 않는다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
+
+- **SSH 터널은 이제 개발용 폴백이다.** 두 경우에 아직 쓴다: ① dev container에서 `localhost:2283`
+  redirect로 OAuth를 시험할 때, ② 데스크탑 브라우저로 운영 화면을 확인할 때(tailnet 주소를 쓰면
+  이것도 불필요하다).
 
   ```bash
   ssh -N -L 2283:localhost:2283 gwyun@192.168.50.211   # 이후 브라우저는 localhost:2283
@@ -209,7 +227,6 @@ web/src/**/*.spec.ts             웹 유닛
   **PuTTY의 Open이 아무 반응 없을 때**는 Tunnels 화면에서 바로 Open을 눌러 Session의
   Host Name이 비어 있는 경우다. Session 화면으로 돌아가 주소를 확인하고 다시 Open한다.
 
-  **OAuth 연결이 끝나면 터널은 불필요하다** — 업로드는 랩탑이 구글과 직접 통신한다.
   평소 사용은 `http://192.168.50.211:2283`으로 한다.
 - 랩탑에서 테스트를 직접 구동할 때는 API 키를 쓴다(`x-api-key`). 브라우저 클릭을 사용자에게
   시키기 전에, 직접 할 수 있는지 먼저 검토한다.
@@ -217,7 +234,17 @@ web/src/**/*.spec.ts             웹 유닛
 ## 8. 도메인 지식 (Google Drive 기능)
 
 설계 근거는 `dev-docs/google-drive/feature-roadmap.md`, 실패 처리는 `failure-handling-plan.md`,
-현재 작업은 `wave1.5-plan.md`. 반복해서 문제가 되는 사실들:
+설정·redirect 구조는 `wave6-plan.md`. 반복해서 문제가 되는 사실들:
+
+- **clientId/clientSecret은 앱(이 배포본)의 신원이지 사용자 계정이 아니다.** 서버에 내장해도 각
+  사용자는 자기 구글 계정으로 로그인해 자기 Drive에 연결한다. 다만 Google Cloud 앱이 "Testing"
+  상태인 동안은 **Test users에 등록된 계정만** 연결할 수 있다.
+- **redirect URL은 `externalDomain`에서 파생된다**(`getGoogleDriveRedirectUrl`). 필드는 override로만
+  남아 있다. `getExternalDomain()`의 `https://my.immich.app` 폴백을 여기 쓰면 안 된다 — 그럴듯하지만
+  틀린 redirect는 구글의 불투명한 에러를 낳고, 빈 값은 기능을 꺼서 원인을 말해준다.
+- **env 값이 DB에 고착되지 않는 이유**: `updateConfig`가 defaults와 diff해 "비었거나 같으면" 저장을
+  생략한다. env 값이 곧 defaults라 무변경 저장은 아무것도 쓰지 않는다. 대신 **env가 제공하는 필드는
+  UI에서 빈 값으로 강제할 수 없다** — 끄려면 `enabled` 토글을 쓴다.
 
 - **Drive는 최종 저장소가 아니라 Pixel로 가는 경유지다.** 따라서 Drive에서 파일이 사라지는
   것은 정상 운영이고, 원장(ledger)이 "이미 올렸음"을 기억하는 것이 옳다.
