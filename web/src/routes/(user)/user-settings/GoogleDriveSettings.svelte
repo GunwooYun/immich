@@ -55,6 +55,11 @@
   let failedCount = $state(0);
   let blockedReason = $state<string | null>(null);
   let resuming = $state(false);
+  // Whether the server has a Google API key, i.e. whether the picker can open at all. Without this
+  // the button was drawn unconditionally and a deployment with no API key only found out by
+  // clicking it and getting an error toast; now the manual folder-id field below is simply the
+  // only way in. Starts false so the button can't flash in before the status call answers.
+  let pickerAvailable = $state(false);
   // Which albums are backed up to *this* user's Drive. Uploads follow this list, not album
   // ownership — an album shared with you can be backed up by you, and one you own need not be.
   // Counts are per-viewer: "uploaded" means "already in your Drive".
@@ -71,6 +76,7 @@
     folderName = status.folderName ?? null;
     failedCount = status.failedCount;
     blockedReason = status.blockedReason ?? null;
+    pickerAvailable = status.pickerAvailable;
     albums = connected ? await getGoogleDriveAlbums() : [];
   };
 
@@ -289,8 +295,10 @@
                   })
                 : $t('google_drive_connected')}
             </p>
-            <!-- The primary way to choose a folder. The text field below stays as a fallback for
-                 deployments with no Google API key configured, where the picker cannot open. -->
+            <!-- The primary way to choose a folder — but only where it can actually work. The
+                 picker is a Google-hosted widget that needs a server-configured API key, so on a
+                 deployment without one the button is left out entirely rather than offered and
+                 failing on click; the text field below is then the way to set a folder. -->
             <div class="flex flex-col gap-2">
               <p class="text-sm">
                 {folderName
@@ -299,18 +307,20 @@
                     ? $t('google_drive_folder_current', { values: { folder: folderId } })
                     : $t('google_drive_folder_none')}
               </p>
-              <div class="flex justify-start">
-                <Button
-                  shape="round"
-                  type="button"
-                  size="small"
-                  onclick={handlePickFolder}
-                  disabled={pickerLoading}
-                  loading={pickerLoading}
-                >
-                  {$t('google_drive_pick_folder')}
-                </Button>
-              </div>
+              {#if pickerAvailable}
+                <div class="flex justify-start">
+                  <Button
+                    shape="round"
+                    type="button"
+                    size="small"
+                    onclick={handlePickFolder}
+                    disabled={pickerLoading}
+                    loading={pickerLoading}
+                  >
+                    {$t('google_drive_pick_folder')}
+                  </Button>
+                </div>
+              {/if}
             </div>
             <SettingInputField
               inputType={SettingInputFieldType.TEXT}
