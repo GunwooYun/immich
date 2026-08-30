@@ -10,6 +10,7 @@ import {
   LogLevel,
   OAuthTokenEndpointAuthMethod,
   QueueName,
+  SystemMetadataKey,
   ToneMapping,
   TranscodeHardwareAcceleration,
   TranscodePolicy,
@@ -502,6 +503,34 @@ describe(SystemConfigService.name, () => {
       mocks.systemMetadata.readFile.mockResolvedValue(JSON.stringify({}));
       await expect(sut.updateSystemConfig(defaults)).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.systemMetadata.set).not.toHaveBeenCalled();
+    });
+
+    it('should not persist values that merely equal the defaults', async () => {
+      // This is what makes environment-provided credentials safe (Wave 6). Those values ARE the
+      // defaults, so the admin form shows them pre-filled — and if saving the untouched form wrote
+      // them into the stored config, they would be frozen there: a later change to the environment
+      // would be silently ignored, and the operator would have no idea why. updateConfig only
+      // persists what differs from the defaults, so a no-op save persists nothing at all.
+      mocks.systemMetadata.get.mockResolvedValue({});
+
+      await sut.updateSystemConfig(defaults);
+
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {});
+    });
+
+    it('should persist a googleDrive credential only when it differs from the default', async () => {
+      // The other half of the same rule, asserted on this feature's fields specifically: typing a
+      // value in the admin UI must still win over whatever the environment supplies.
+      mocks.systemMetadata.get.mockResolvedValue({});
+
+      await sut.updateSystemConfig({
+        ...defaults,
+        googleDrive: { ...defaults.googleDrive, clientId: 'typed-in-the-admin-ui' },
+      });
+
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {
+        googleDrive: { clientId: 'typed-in-the-admin-ui' },
+      });
     });
   });
 

@@ -56,6 +56,13 @@ const GoogleDriveStatusResponseSchema = z
       .describe(
         "Account-level condition currently stopping uploads, if any: 'quota_exceeded', 'folder_missing', or 'revoked' (access was revoked — also why the account shows as disconnected)",
       ),
+    // The picker needs a Google API key the server may not have. Without this the settings page had
+    // no way to know, so it always drew the "Choose folder" button and the user only discovered the
+    // gap by clicking it and getting an error toast. Now the button can be left out entirely,
+    // leaving the manual folder-id field as the (working) way in.
+    pickerAvailable: z
+      .boolean()
+      .describe('Whether the server has a Google API key configured, i.e. the folder picker can open'),
   })
   .meta({ id: 'GoogleDriveStatusResponseDto' });
 

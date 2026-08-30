@@ -23,7 +23,7 @@ import {
   shouldRetryDriveRequest,
 } from 'src/utils/google-drive';
 import { mimeTypes } from 'src/utils/mime-types';
-import { isGoogleDriveEnabled } from 'src/utils/misc';
+import { getGoogleDriveRedirectUrl, isGoogleDriveEnabled } from 'src/utils/misc';
 
 /**
  * This is the shape of the data we embed inside the OAuth `state` parameter.
@@ -118,23 +118,32 @@ export class GoogleDriveService extends BaseService {
   }
 
   /**
-   * Builds a Google OAuth2 client from the admin-managed system config.
+   * Builds a Google OAuth2 client from the system config.
    *
-   * These briefly came from `process.env` (with placeholder fallbacks like 'YOUR_CLIENT_ID', which
-   * meant a misconfigured deployment failed *silently* — every OAuth attempt bounced off Google
-   * with an opaque error and nothing pointed at the cause). System config is now the only source,
-   * matching how the OIDC login credentials work, and a missing value is rejected here with a
-   * message that names what to fix.
+   * The credentials briefly came from ad-hoc `process.env` reads *inside this service*, with
+   * placeholder fallbacks like 'YOUR_CLIENT_ID' — so a misconfigured deployment failed silently,
+   * every OAuth attempt bouncing off Google with an opaque error and nothing pointing at the
+   * cause. That was replaced by admin-only system config, and this comment used to say there was
+   * deliberately no environment fallback at all.
    *
-   * There is deliberately no environment-variable fallback. `GOOGLE_CLIENT_ID` and friends were
-   * never part of `EnvSchema`, so they were undocumented, untyped and unvalidated — and worse,
-   * their presence meant clearing the client ID in the admin UI didn't actually disable anything
-   * as long as the container still had them set.
+   * Wave 6 re-decided that, because the objection was to *how* the environment was read, not to
+   * the environment itself. `IMMICH_GOOGLE_DRIVE_CLIENT_ID` and friends are now defaults in
+   * `config.ts` (the same shape `machineLearning` has always used), which fixes each thing the old
+   * arrangement got wrong: there is one merge point instead of scattered reads, the effective
+   * value is visible in the admin UI, and a value saved there still wins — because the stored
+   * partial is merged *over* the defaults. What an admin cannot do is force a field back to empty
+   * when the environment supplies one; use the `enabled` toggle to turn the feature off instead.
+   *
+   * These credentials identify the *deployment's* Google Cloud app, not any user's account: each
+   * person still signs in with their own Google account and connects their own Drive.
+   *
+   * A missing value is still rejected here with a message naming what to fix.
    */
   private async getOAuth2Client() {
-    const { googleDrive } = await this.getConfig({ withCache: true });
+    const { googleDrive, server } = await this.getConfig({ withCache: true });
 
-    const { clientId, clientSecret, redirectUrl } = googleDrive;
+    const { clientId, clientSecret } = googleDrive;
+    const redirectUrl = getGoogleDriveRedirectUrl(googleDrive, server);
 
     if (!googleDrive.enabled) {
       throw new BadRequestException('Google Drive sync is disabled for this server');
@@ -143,7 +152,9 @@ export class GoogleDriveService extends BaseService {
     const missing = [
       ['client ID', clientId],
       ['client secret', clientSecret],
-      ['redirect URL', redirectUrl],
+      // Named for what the admin actually has to do, since the value is normally derived: it is
+      // missing only when *both* the override field and the external domain are empty.
+      ['redirect URL (set it, or set the server External Domain)', redirectUrl],
     ]
       .filter(([, value]) => !value)
       .map(([label]) => label);
@@ -166,8 +177,8 @@ export class GoogleDriveService extends BaseService {
    * there a clear error message is more useful than silence.
    */
   private async isEnabled(): Promise<boolean> {
-    const { googleDrive } = await this.getConfig({ withCache: true });
-    return isGoogleDriveEnabled(googleDrive);
+    const { googleDrive, server } = await this.getConfig({ withCache: true });
+    return isGoogleDriveEnabled(googleDrive, server);
   }
 
   /**
@@ -400,7 +411,14 @@ export class GoogleDriveService extends BaseService {
     connectedAt: Date | null;
     failedCount: number;
     blockedReason: GoogleDriveUploadErrorClass | null;
+    pickerAvailable: boolean;
   }> {
+    // Server-wide, not per-user, but it rides along here because the settings page already asks
+    // this endpoint on load — a separate round trip just to learn whether one button should exist
+    // would be worse. getPickerConfig keeps its own check; this only decides what to draw.
+    const { googleDrive } = await this.getConfig({ withCache: true });
+    const pickerAvailable = !!googleDrive.apiKey;
+
     const credentials = await this.googleDriveRepository.getCredentials(userId);
     if (!credentials) {
       // Disconnected users still get their failure summary: after an automatic disconnect
@@ -418,6 +436,7 @@ export class GoogleDriveService extends BaseService {
         connectedAt: null,
         failedCount,
         blockedReason: revoked ? GoogleDriveUploadErrorClass.Revoked : blockedReason,
+        pickerAvailable,
       };
     }
 
@@ -429,6 +448,7 @@ export class GoogleDriveService extends BaseService {
       connectedAt: credentials.connectedAt,
       failedCount,
       blockedReason,
+      pickerAvailable,
     };
   }
 

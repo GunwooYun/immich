@@ -20013,6 +20013,10 @@
             "description": "Display name of that folder, if it was chosen via the picker",
             "nullable": true,
             "type": "string"
+          },
+          "pickerAvailable": {
+            "description": "Whether the server has a Google API key configured, i.e. the folder picker can open",
+            "type": "boolean"
           }
         },
         "required": [
@@ -20021,7 +20025,8 @@
           "connectedAt",
           "failedCount",
           "folderId",
-          "folderName"
+          "folderName",
+          "pickerAvailable"
         ],
         "type": "object"
       },

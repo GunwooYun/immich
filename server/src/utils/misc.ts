@@ -106,13 +106,52 @@ export const isDuplicateDetectionEnabled = (machineLearning: SystemConfig['machi
 export const isFaceImportEnabled = (metadata: SystemConfig['metadata']) => metadata.faces.import;
 
 /**
+ * Where Google should send the browser back after the user approves — i.e. the `redirect_uri` of
+ * the OAuth client, which must byte-match one registered in the Google Cloud Console.
+ *
+ * The value is always `<this instance's origin>/api/google-drive/callback`, so making an admin
+ * retype it was busywork with a sharp edge: get one character wrong and Google rejects the flow
+ * with an error that points nowhere. `server.externalDomain` already records that origin (it is
+ * normalized to a bare origin at bootstrap, see utils/config.ts) and is already what this feature
+ * uses to bounce the browser back to the UI afterwards, so derive from it.
+ *
+ * The explicit `redirectUrl` field survives as an override, for the case the two genuinely differ
+ * — a dev container serves the API on :2283 while the web dev server is :3000, and Google must be
+ * told about the API origin.
+ *
+ * Deliberately *not* falling back to getExternalDomain()'s `https://my.immich.app`: a plausible
+ * but wrong redirect URI produces an opaque Google error, whereas an empty one leaves the feature
+ * switched off with a message naming what to set. Off beats subtly broken.
+ */
+export const getGoogleDriveRedirectUrl = (
+  googleDrive: SystemConfig['googleDrive'],
+  server: SystemConfig['server'],
+): string => {
+  if (googleDrive.redirectUrl) {
+    return googleDrive.redirectUrl;
+  }
+
+  // buildConfig already reduces externalDomain to an origin, but this is cheap and means a
+  // hand-edited config row can't produce a double slash that Google would refuse to match.
+  const externalDomain = server.externalDomain.replace(/\/+$/, '');
+  return externalDomain ? `${externalDomain}/api/google-drive/callback` : '';
+};
+
+/**
  * Google Drive sync needs both an explicit opt-in *and* a complete OAuth client — an admin who
  * flips the switch on but hasn't filled in the credentials yet would otherwise expose a "Connect
  * Google Drive" button that can only ever fail. Treating "configured" as part of "enabled" keeps
  * that half-set-up state invisible to users instead of broken for them.
+ *
+ * The redirect URL counts as configured when it can be *derived* (see getGoogleDriveRedirectUrl),
+ * which is why this needs the server config too — with credentials from the environment and an
+ * external domain already set, the feature is fully configured without anyone touching the form.
  */
-export const isGoogleDriveEnabled = (googleDrive: SystemConfig['googleDrive']) =>
-  googleDrive.enabled && !!googleDrive.clientId && !!googleDrive.clientSecret && !!googleDrive.redirectUrl;
+export const isGoogleDriveEnabled = (googleDrive: SystemConfig['googleDrive'], server: SystemConfig['server']) =>
+  googleDrive.enabled &&
+  !!googleDrive.clientId &&
+  !!googleDrive.clientSecret &&
+  !!getGoogleDriveRedirectUrl(googleDrive, server);
 
 export const isConnectionAborted = (error: Error | any) => error.code === 'ECONNABORTED';
 

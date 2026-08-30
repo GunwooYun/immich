@@ -1271,6 +1271,8 @@ export type GoogleDriveStatusResponseDto = {
     folderId: string | null;
     /** Display name of that folder, if it was chosen via the picker */
     folderName: string | null;
+    /** Whether the server has a Google API key configured, i.e. the folder picker can open */
+    pickerAvailable: boolean;
 };
 export type GoogleDriveStorageDto = {
     /** Total quota in bytes, or null when the account is unlimited */

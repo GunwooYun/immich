@@ -98,6 +98,7 @@ export class ServerService extends BaseService {
       notifications,
       ffmpeg,
       googleDrive,
+      server,
     } = await this.getConfig({ withCache: false });
     const { configFile } = this.configRepository.getEnv();
 
@@ -118,7 +119,7 @@ export class ServerService extends BaseService {
       configFile: !!configFile,
       email: notifications.smtp.enabled,
       realtimeTranscoding: ffmpeg.realtime.enabled,
-      googleDrive: isGoogleDriveEnabled(googleDrive),
+      googleDrive: isGoogleDriveEnabled(googleDrive, server),
     };
   }
 

@@ -360,8 +360,8 @@ export class AlbumService extends BaseService {
   }
 
   private async isGoogleDriveEnabled(): Promise<boolean> {
-    const { googleDrive } = await this.getConfig({ withCache: true });
-    return isGoogleDriveEnabled(googleDrive);
+    const { googleDrive, server } = await this.getConfig({ withCache: true });
+    return isGoogleDriveEnabled(googleDrive, server);
   }
 
   /**

@@ -345,10 +345,18 @@ export const defaults = Object.freeze<SystemConfig>({
   },
   googleDrive: {
     enabled: false,
-    clientId: '',
-    clientSecret: '',
+    // The three credentials that identify *this deployment's* Google Cloud app (not any user's
+    // account) can come from the environment, the way machineLearning above does. The operator
+    // sets them once in the compose .env and no admin ever has to paste them into a form — which
+    // is the whole difference between "log in and approve" and the four-field setup this feature
+    // used to demand. Values saved in the admin UI still win: they land in the system-config
+    // partial, which is merged *over* these defaults (see utils/config.ts buildConfig).
+    clientId: process.env.IMMICH_GOOGLE_DRIVE_CLIENT_ID || '',
+    clientSecret: process.env.IMMICH_GOOGLE_DRIVE_CLIENT_SECRET || '',
+    // Deliberately not from the environment: it is derived from server.externalDomain when left
+    // empty (see getGoogleDriveRedirectUrl), so there is nothing for an operator to type.
     redirectUrl: '',
-    apiKey: '',
+    apiKey: process.env.IMMICH_GOOGLE_DRIVE_API_KEY || '',
   },
   oauth: {
     autoLaunch: false,

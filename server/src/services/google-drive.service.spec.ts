@@ -16,19 +16,29 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
-const { driveFilesCreate, driveFilesDelete, driveAboutGet } = vi.hoisted(() => ({
+const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed } = vi.hoisted(() => ({
   driveFilesCreate: vi.fn(),
   driveFilesDelete: vi.fn(),
   driveAboutGet: vi.fn(),
+  // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
+  // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
+  // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
+  oauth2Constructed: vi.fn(),
 }));
 
 vi.mock('googleapis', () => ({
   google: {
     auth: {
       OAuth2: class {
+        constructor(clientId: string, clientSecret: string, redirectUrl: string) {
+          oauth2Constructed({ clientId, clientSecret, redirectUrl });
+        }
         setCredentials() {}
         getAccessToken() {
           return { token: 'access-token' };
+        }
+        generateAuthUrl() {
+          return 'https://accounts.google.com/o/oauth2/v2/auth?mocked=true';
         }
       },
     },
@@ -110,6 +120,59 @@ describe(GoogleDriveService.name, () => {
 
   it('should work', () => {
     expect(sut).toBeDefined();
+  });
+
+  /**
+   * The redirect URL Google is told about. Wave 6 made it derivable from the External Domain
+   * setting so that a deployment with credentials in its environment needs no configuration at all
+   * — which means the derivation itself is now load-bearing for whether the feature works.
+   */
+  describe('getAuthUrl (redirect URL)', () => {
+    beforeEach(() => {
+      oauth2Constructed.mockClear();
+      mocks.crypto.randomBytesAsText.mockReturnValue('state-secret');
+    });
+
+    it('should derive the redirect URL from the external domain when none is configured', async () => {
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { ...enabledConfig, redirectUrl: '' },
+        server: { externalDomain: 'https://immich.example.com' },
+      });
+
+      await sut.getAuthUrl(newUuid());
+
+      expect(oauth2Constructed).toHaveBeenCalledWith(
+        expect.objectContaining({ redirectUrl: 'https://immich.example.com/api/google-drive/callback' }),
+      );
+    });
+
+    it('should prefer an explicitly configured redirect URL over the external domain', async () => {
+      // The override is what makes a dev container work, where the API origin (:2283) is not the
+      // address the browser knows the instance by.
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { ...enabledConfig, redirectUrl: 'http://localhost:2283/api/google-drive/callback' },
+        server: { externalDomain: 'https://immich.example.com' },
+      });
+
+      await sut.getAuthUrl(newUuid());
+
+      expect(oauth2Constructed).toHaveBeenCalledWith(
+        expect.objectContaining({ redirectUrl: 'http://localhost:2283/api/google-drive/callback' }),
+      );
+    });
+
+    it('should refuse with an actionable message when there is no redirect URL and none can be derived', async () => {
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { ...enabledConfig, redirectUrl: '' },
+        server: { externalDomain: '' },
+      });
+
+      // Not merely "it threw": the message has to name the two settings that would fix it, because
+      // a wrong redirect URL otherwise surfaces only as an opaque error from Google.
+      await expect(sut.getAuthUrl(newUuid())).rejects.toThrow(/redirect URL.*External Domain/i);
+      // And it must fail *before* building a client with an empty redirect URL.
+      expect(oauth2Constructed).not.toHaveBeenCalled();
+    });
   });
 
   describe('uploadAsset', () => {
@@ -522,6 +585,7 @@ describe(GoogleDriveService.name, () => {
         connectedAt: null,
         failedCount: 3,
         blockedReason: GoogleDriveUploadErrorClass.Revoked,
+        pickerAvailable: false,
       });
     });
   });
@@ -863,6 +927,7 @@ describe(GoogleDriveService.name, () => {
         connectedAt: null,
         failedCount: 0,
         blockedReason: null,
+        pickerAvailable: false,
       });
     });
 
@@ -886,10 +951,27 @@ describe(GoogleDriveService.name, () => {
         connectedAt,
         failedCount: 0,
         blockedReason: null,
+        pickerAvailable: false,
       });
       // Guard against someone later "simplifying" this into a spread of the credentials row.
       expect(JSON.stringify(status)).not.toContain('super-secret-refresh-token');
     });
+
+    // The settings page uses this to decide whether to draw the "choose folder" button at all.
+    // Before it existed the button was always drawn, and a deployment with no API key only found
+    // out by clicking it and getting an error toast.
+    it.each([
+      { apiKey: 'picker-api-key', pickerAvailable: true },
+      { apiKey: '', pickerAvailable: false },
+    ])(
+      'should report pickerAvailable=$pickerAvailable when the API key is "$apiKey"',
+      async ({ apiKey, pickerAvailable }) => {
+        mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, apiKey } });
+        mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+
+        await expect(sut.getStatus(newUuid())).resolves.toMatchObject({ pickerAvailable });
+      },
+    );
   });
 
   describe('disconnect', () => {

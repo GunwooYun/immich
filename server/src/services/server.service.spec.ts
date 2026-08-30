@@ -155,6 +155,41 @@ describe(ServerService.name, () => {
       });
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
     });
+
+    it('should report Google Drive as available when the redirect URL is only derivable', async () => {
+      // The zero-configuration case Wave 6 exists for: credentials supplied by the environment, no
+      // redirect URL typed anywhere, and the feature nonetheless fully set up because the redirect
+      // URL follows from the External Domain. If this flag were false the web UI would hide the
+      // feature from users who can in fact use it.
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: {
+          enabled: true,
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUrl: '',
+          apiKey: '',
+        },
+        server: { externalDomain: 'https://immich.example.com' },
+      });
+
+      await expect(sut.getFeatures()).resolves.toMatchObject({ googleDrive: true });
+    });
+
+    it('should not report Google Drive as available when no redirect URL can be derived', async () => {
+      // Same config minus the external domain, so the only difference is the thing under test.
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: {
+          enabled: true,
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUrl: '',
+          apiKey: '',
+        },
+        server: { externalDomain: '' },
+      });
+
+      await expect(sut.getFeatures()).resolves.toMatchObject({ googleDrive: false });
+    });
   });
 
   describe('getSystemConfig', () => {

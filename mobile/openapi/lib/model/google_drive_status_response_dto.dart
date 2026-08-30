@@ -19,6 +19,7 @@ class GoogleDriveStatusResponseDto {
     required this.failedCount,
     required this.folderId,
     required this.folderName,
+    required this.pickerAvailable,
   });
 
   /// Account-level condition currently stopping uploads, if any: 'quota_exceeded', 'folder_missing', or 'revoked' (access was revoked — also why the account shows as disconnected)
@@ -42,6 +43,9 @@ class GoogleDriveStatusResponseDto {
   /// Display name of that folder, if it was chosen via the picker
   String? folderName;
 
+  /// Whether the server has a Google API key configured, i.e. the folder picker can open
+  bool pickerAvailable;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveStatusResponseDto &&
     other.blockedReason == blockedReason &&
@@ -49,7 +53,8 @@ class GoogleDriveStatusResponseDto {
     other.connectedAt == connectedAt &&
     other.failedCount == failedCount &&
     other.folderId == folderId &&
-    other.folderName == folderName;
+    other.folderName == folderName &&
+    other.pickerAvailable == pickerAvailable;
 
   @override
   int get hashCode =>
@@ -59,10 +64,11 @@ class GoogleDriveStatusResponseDto {
     (connectedAt == null ? 0 : connectedAt!.hashCode) +
     (failedCount.hashCode) +
     (folderId == null ? 0 : folderId!.hashCode) +
-    (folderName == null ? 0 : folderName!.hashCode);
+    (folderName == null ? 0 : folderName!.hashCode) +
+    (pickerAvailable.hashCode);
 
   @override
-  String toString() => 'GoogleDriveStatusResponseDto[blockedReason=$blockedReason, connected=$connected, connectedAt=$connectedAt, failedCount=$failedCount, folderId=$folderId, folderName=$folderName]';
+  String toString() => 'GoogleDriveStatusResponseDto[blockedReason=$blockedReason, connected=$connected, connectedAt=$connectedAt, failedCount=$failedCount, folderId=$folderId, folderName=$folderName, pickerAvailable=$pickerAvailable]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -90,6 +96,7 @@ class GoogleDriveStatusResponseDto {
     } else {
       json[r'folderName'] = null;
     }
+      json[r'pickerAvailable'] = this.pickerAvailable;
     return json;
   }
 
@@ -108,6 +115,7 @@ class GoogleDriveStatusResponseDto {
         failedCount: mapValueOfType<int>(json, r'failedCount')!,
         folderId: mapValueOfType<String>(json, r'folderId'),
         folderName: mapValueOfType<String>(json, r'folderName'),
+        pickerAvailable: mapValueOfType<bool>(json, r'pickerAvailable')!,
       );
     }
     return null;
@@ -161,6 +169,7 @@ class GoogleDriveStatusResponseDto {
     'failedCount',
     'folderId',
     'folderName',
+    'pickerAvailable',
   };
 }
 
