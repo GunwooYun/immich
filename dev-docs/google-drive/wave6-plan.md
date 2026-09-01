@@ -135,8 +135,9 @@ Drive 연결 브라우저 ─→ https://ha-server.tail68cec7.ts.net  (OAuth만)
 
 ## 4. 검증
 
-- 기능 스위트: 서버 208 / 웹 29 / medium 10 / svelte-check 회귀 0 **PASS**
-  (`dev-test/google-drive/results/20260830-0835.txt`)
+- 기능 스위트: 서버 **238** / 웹 29 / medium 10 / svelte-check 회귀 0 **PASS**
+  (`dev-test/google-drive/results/20260902-0746.txt` — 커밋 `936efa611`, **코드를 포함한** 커밋에서
+  생성. 첫 첨부본은 부모 커밋을 찍고 있었다 → §6 M2)
 - 전체 회귀: 서버 2347 pass(2 skip), 웹 547 pass(2 skip). tsc·eslint clean.
 - 생성물: `mise run //:open-api` 재생성(status DTO 변경 → SDK에 `pickerAvailable` 반영 확인).
   **스키마 무변경** → `//:sql`·마이그레이션 드리프트 검사 불필요.
