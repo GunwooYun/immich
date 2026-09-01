@@ -1,3 +1,5 @@
+import { SystemMetadataKey } from 'src/enum';
+import { newTestService } from 'test/utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -11,7 +13,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * What the *rest* of the arrangement guarantees — that a value saved in the admin UI still wins,
  * and that saving an untouched form doesn't freeze the environment's values into the database —
  * lives in system-config.service.spec.ts, because it is a property of updateConfig, not of these
- * defaults.
+ * defaults. The one exception is the second describe block below: it is an updateConfig property,
+ * but the only one that needs `defaults` built against a *non-empty* environment, which is a thing
+ * only this file can arrange.
  */
 // Re-imports the module so its `defaults` object is rebuilt against whatever the environment
 // currently says. Relative rather than the usual 'src/...' alias: this file sits next to the module
@@ -69,5 +73,52 @@ describe('defaults.googleDrive', () => {
 
     expect(defaults.googleDrive.enabled).toBe(false);
     expect(defaults.googleDrive.redirectUrl).toBe('');
+  });
+});
+
+/**
+ * N1 (wave6 fixes review). system-config.service.spec.ts already pins "a cleared field with a
+ * non-empty default persists nothing", but it has to assert it through `oauth.buttonText`: that
+ * spec's `defaults` are evaluated at import time with no environment set, so every googleDrive
+ * credential is '' there and `isEqual` would explain a skipped write exactly as well as `isEmpty`
+ * does — the assertion would pass without proving anything. Here the environment is stubbed before
+ * the module is built, so the rule can be asserted on the field the feature actually depends on.
+ *
+ * Both tests are worth keeping and they pin different things: buttonText pins the generic rule,
+ * this one pins googleDrive's instance of it. If someone later special-cases googleDrive in
+ * updateConfig — an env-aware branch, a redaction step — buttonText keeps passing while the
+ * behaviour Wave 6 depends on has changed, and only this test notices.
+ */
+describe('updateConfig with credentials from the environment', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('should not persist a cleared credential that the environment supplies', async () => {
+    vi.stubEnv('IMMICH_GOOGLE_DRIVE_CLIENT_ID', 'env-client-id');
+    vi.resetModules();
+
+    // Re-imported rather than taken from the top-level import: the service closes over the
+    // `defaults` object built when its module was first evaluated, so it has to be rebuilt here for
+    // the stubbed environment to reach it at all.
+    const { defaults } = await import('./config.js');
+    const { SystemConfigService } = await import('./services/system-config.service.js');
+    const { sut, mocks } = newTestService(SystemConfigService);
+    mocks.systemMetadata.get.mockResolvedValue({});
+
+    // The precondition that makes the assertion mean anything: without it, an environment that
+    // stopped being read would leave clientId at '' and the test would pass vacuously again.
+    expect(defaults.googleDrive.clientId).toBe('env-client-id');
+
+    await sut.updateSystemConfig({
+      ...defaults,
+      googleDrive: { ...defaults.googleDrive, clientId: '' },
+    });
+
+    // Nothing written at all — so the effective value falls back to the environment's. Clearing the
+    // field in the admin UI cannot remove an env-supplied credential; `enabled: false` is the
+    // control that turns the feature off.
+    expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {});
   });
 });
