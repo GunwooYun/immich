@@ -200,3 +200,59 @@ env를 Y로 바꾸고 재시작 → 관리자가 낡은 폼을 저장하면 X �
   (`SystemConfigRead` + `admin: true`)하고 redaction 레이어는 애초에 없으므로 **노출 클래스는 불변**.
   다만 "defaults는 정적 상수라 로깅·캐싱해도 안전"이라는 추론은 **이제 틀리다**.
 - 대문자 호스트는 `.origin`이 소문자로 정규화하므로 방어적 `replace`가 못 잡는 부분까지 커버됨.
+
+## 7. 리뷰 되먹임 (2026-09-02, `google-drive-wave6-fixes-...-review.md`)
+
+판정: **M1·M2 모두 올바르게 반영됨.** 리뷰어가 반대편을 세워보려 했으나 성립하지 않았다.
+지적 1건(N1) 반영.
+
+### M1 결정 확정 — 근거가 더 강해졌다
+
+원래 근거는 "sentinel은 `''`에 두 번째 의미를 부여한다"였다. 리뷰어가 찾아낸 더 강한 근거:
+**관리자가 필요로 하는 것은 이미 다른 컨트롤이 제공한다.** 자격증명을 지우고 싶은 시나리오를
+모두 걸어보면 —
+
+| 상황 | 실제로 필요한 것 |
+|---|---|
+| 자격증명이 유출돼 즉시 사용 중단 | 필드가 비는 것이 아니라 **기능이 꺼지는 것** → `enabled: false` |
+| env 관리 → DB 관리로 이전 | **다른 값으로 override** — D4 그대로, 영향 없음 |
+| "자격증명이 아예 없는 상태"에 도달 | 쓸모 있는 목적지가 아니다. 기능 불가 상태는 `enabled: false`가 가역적으로 표현한다 |
+| 관리자가 운영자의 env 설정을 되돌리기 | env는 **의도적으로 관리자 위층**이다. UI가 지우게 하면 층위가 뒤집힌다 |
+
+`enabled` 토글이 자격증명과 **독립적으로** 동작한다는 것도 리뷰어가 왕복 검증했다: 끄면
+`false === defaults.enabled`라 `isEqual`이 건너뛰지만, `partialConfig`는 저장할 때마다 `{}`에서
+새로 만들어져 `metadataRepo.set`으로 통째로 쓰이므로 이전에 저장된 `enabled: true`가 **삭제**되고
+실효값이 기본값 `false`로 떨어진다. **끄면 꺼진다.**
+
+→ 남은 제약은 실재하지만 **무해하다**. "제약을 감수했다"가 아니라 "감수할 것이 없다"가 정확한 기록.
+
+### N1 — M1 테스트가 대리 지표를 단언했고, 그럴 필요가 없었다 (반영: 직접 테스트 추가)
+
+`system-config.service.spec.ts`의 테스트는 `oauth.buttonText`로 규칙을 고정한다. 이유는
+"googleDrive 자격증명은 테스트에서 `''`라 `isEqual`로도 설명돼 공허해진다"였는데, 이 전제는
+**환경을 stub하지 않을 때만** 참이다. `config.spec.ts`는 이미 `IMMICH_GOOGLE_DRIVE_*`를 stub하고
+re-import하는 패턴을 갖고 있다 — M1 커밋이 건드린 바로 그 파일이다.
+
+**드리프트 위험이 구체적이다.** `buttonText`는 *일반 규칙*("기본값이 비어있지 않은 필드를 비우면
+아무것도 저장되지 않는다")을 고정한다. 누군가 나중에 `updateConfig`에 googleDrive 전용 분기를
+넣으면 buttonText 테스트는 계속 통과하는데 Wave 6이 의존하는 동작은 바뀌어 있다. 주석은 단언이
+아니다.
+
+→ **두 테스트를 모두 유지한다.** `config.spec.ts`에 `updateConfig with credentials from the
+environment` describe를 추가: env를 stub → `config.js`와 `system-config.service.js`를 재import →
+`clientId`를 비우고 저장 → `set(SystemMetadataKey.SystemConfig, {})` 단언.
+전제(`defaults.googleDrive.clientId === 'env-client-id'`)를 함께 못박아 환경 읽기가 끊기면
+공허하게 통과하지 않게 했다.
+
+비공허 확인: `utils/config.ts`의 `isEmpty`에서 `''`를 빼면 **이 테스트만** 실패하고
+(`expected "spy" to be called with arguments: [ 'system-config', {} ]`) 나머지 3개는 통과한다.
+
+### 프로세스 — 리뷰가 딛고 선 땅이 흔들렸던 건 (해소됨)
+
+리뷰어가 지적한 대로, 리뷰 시점의 워킹트리에서 `CLAUDE.md`가 범용 오케스트레이터 템플릿으로
+덮여 §1(절대 규칙)·§2(리뷰 사이클)·§4(지뢰 표)가 사라져 있었다. 리포트가 인용한 "§2.4에 따라
+수정 자체도 리뷰 대상"이 워킹트리에는 존재하지 않는 상태였다.
+
+→ 2026-09-02 `/init`에서 해소: 템플릿 섹션은 유지하되 HEAD의 §1~§9 전체를 `## Current Project`
+아래로 복원했다(헤딩만 한 단계 강등, 내용 동일). 리뷰 요청 훅(`pending-reviews.sh`의
+SessionStart/UserPromptSubmit/Stop 3개 등록)도 그대로 있다.
