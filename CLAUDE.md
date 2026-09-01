@@ -1,15 +1,187 @@
-# CLAUDE.md
+# Claude Code Orchestrator
+
+**멀티 에이전트 협업 프레임워크**
+
+**Claude Code**가 **deep-reasoning 서브에이전트(Claude Fable, 심층 추론)**와 **Antigravity CLI(`agy`, Gemini 모델 기반 대규모 리서치)**를 오케스트레이션하여 각 에이전트의 강점을 극대화하고 **개발 속도와 품질을 동시에 끌어올리는 구조**다.
+
+---
+
+## 왜 이 구조가 필요한가?
+
+| 에이전트 | 강점 | 사용 목적 |
+|-------|----------|---------|
+| **Claude Code (메인)** | 오케스트레이션, 사용자 대화 | 전체 통합, 태스크 관리, 의사결정|
+| **deep-reasoning 서브에이전트 (Claude Fable)** | 깊은 추론, 설계 판단, 디버깅 | 설계 검토, 에러 분석, 트레이드오프 평가 (격리된 컨텍스트, 읽기 전용 — Edit/Write 도구 없음, Bash는 지시로 제한) |
+| **Antigravity CLI (`agy`, Gemini 모델)** | 대규모 컨텍스트, 멀티모달, 웹 검색 | 대규모 코드 분석, 라이브러리 조사, PDF/이미지/영상 분석 |
+
+**IMPORTANT**: 각 에이전트는 단독으로도 강력하지만, **의도적으로 역할을 분리했을 때 성능이 폭발**한다.
+
+---
+
+## 컨텍스트 관리 (CRITICAL)
+
+Claude Code의 최대 컨텍스트는 **200k 토큰**이지만,
+툴 정의 / 시스템 프롬프트 등을 제외하면 **실질적으로 70~100k 수준**이다.
+
+**YOU MUST** 👉 그래서 **출력이 큰 작업은 반드시 서브 에이전트 경유**가 원칙이다.
+
+### 출력 크기 기준
+
+| 출력 크기  | 사용 방식           | 이유                     |
+| ------ | --------------- | ---------------------- |
+| 1~2문장  | 메인이 직접 처리        | 오버헤드 없음                |
+| 10줄 이상 | **서브 에이전트 경유**  | 메인 컨텍스트 보호             |
+| 분석 리포트 | 서브 에이전트 → 파일 저장 | `.claude/docs/`에 영구 보존 |
+
+### 예시
+```
+# MUST: 설계 검토는 deep-reasoning 서브에이전트 (분석은 격리 컨텍스트에서, 요약만 반환)
+Task(subagent_type="deep-reasoning", prompt="Review this design ... Return concise summary")
+
+# MUST: 대규모 리서치는 general-purpose 서브에이전트 경유로 agy 호출 (출력 큼)
+Task(subagent_type="general-purpose", prompt="Research X via agy, save to .claude/docs/research/, return a concise summary")
+
+# OK: 짧은 agy 질문은 직접 호출 (아주 짧은 출력)
+Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
+```
+
+---
+
+## 빠른 사용 가이드(Quick Reference)
+
+### deep-reasoning 서브에이전트를 써야 할 때
+
+- 설계 판단
+    - "어떤 패턴이 맞을까?"
+    - "이 구조, 확장 가능할까?"
+- 디버깅
+    - "왜 이 에러가 나는지?"
+- 비교/선택
+    - "A vs B, 뭐가 나은지?"
+- ➡ 깊은 사고가 필요하면 deep-reasoning (메인에서 `Task(subagent_type="deep-reasoning")` 호출)
+
+→ 참고: `.claude/rules/deep-reasoning-delegation.md`
+
+### Antigravity CLI(agy)를 써야 할 때
+
+- 리서치
+    - "이거 조사해줘"
+    - "요즘 트렌드 뭐임?"
+- 대규모 분석
+    - "이 레포 전체 구조 설명해줘"
+- 멀티모달
+    - "이 PDF 요약"
+    - "이 강의 영상 핵심만 정리"
+- ➡ 많이 읽고, 넓게 볼 땐 agy
+
+→ 참고: `.claude/rules/antigravity-delegation.md`
+
+---
+
+## Workflow
+
+```
+/startproject <기능명>
+```
+
+### 진행 순서
+
+1. Antigravity CLI (agy)
+    - 리포지토리 전체 분석 (서브 에이전트)
+2. Claude 
+    - 요구사항 정리
+    - 개발 계획 수립
+3. deep-reasoning 서브에이전트
+    - 설계 리뷰 및 리스크 검토
+4. Claude 
+    - 실행 가능한 태스크 리스트 생성
+5. (권장)
+    - **구현 완료 후 별도 세션에서 리뷰**
+
+→ 관련 커맨드: `/startproject`, `/plan`, `/tdd` skills
+
+---
+
+## 기술 스택(Tech Stack)
+
+`immich-app/immich`의 개인 포크 — TypeScript 모노레포(pnpm workspace) + Flutter 모바일 + Python ML.
+
+| 영역 | 스택 |
+|---|---|
+| **server** | NestJS 11 / TypeScript, Kysely + PostgreSQL, BullMQ + Redis, vitest |
+| **web** | SvelteKit 2 / Svelte 5, Vite, TailwindCSS 4, vitest |
+| **machine-learning** | Python 3.11, uv, ruff(line-length 120), mypy --strict, pytest |
+| **mobile** | Flutter / Dart (drift, 생성된 openapi 클라이언트) |
+| **e2e** | vitest + Playwright (docker compose) |
+| **packages/** | `@immich/sdk`(oazapfts 생성), `plugin-sdk`, `cli` |
+
+- **Node 24.15.0 / pnpm 11.13.1** — 버전은 `mise.toml`과 `.nvmrc`가 고정한다. 툴체인 관리는 **mise**,
+  셸에는 `export PATH="$HOME/.local/share/mise/shims:$PATH"`가 필요하다.
+- **pip·npm 직접 설치 ❌** — 워크스페이스 설치는 `pnpm --filter <pkg> install --frozen-lockfile`
+  (= `mise //server:install`). ML만 `uv sync --locked`.
+- 포맷 **Prettier 3.8**, 린트 **ESLint 9**(`--max-warnings 0`, 경고도 0), 타입 **tsc --noEmit** ·
+  **svelte-check**. `Makefile`의 옛 타깃은 전부 제거되어 `mise` 태스크로 안내만 한다.
+- 실행은 컨테이너 기준(`mise dev` = `docker/docker-compose.dev.yml`), 유닛 테스트는 로컬 vitest.
+
+- 공통 명령어
+    ```bash
+    mise dev                    # 개발 스택 기동 / mise dev-down 으로 종료
+    mise //server:ci-unit       # server: format → lint → check → unit test
+    mise //web:ci-unit          # web: format → check(ts+svelte) → unit test
+    mise //server:test-medium   # 실 DB 통합 테스트
+    mise //machine-learning:checklist   # ML: format → lint → mypy → pytest
+    mise //:open-api            # OpenAPI + TS SDK + Dart SDK 재생성
+    mise //:sql                 # @GenerateSql 쿼리 재생성
+    ./dev-test/[기능]/run.sh    # 기능별 테스트 묶음 → results/ 에 증거 저장
+    ```
+
+- 커밋 컨벤션 **Conventional Commits**, 기본 브랜치 **`main`**
+  (현재 작업 브랜치 `feat/google-drive-album-sync-v3.1.0`).
+
+→ 참고: `.claude/rules/dev-environment.md`
+
+---
+
+## 문서구조(Documentation)
+
+| 위치                             | 내용                    |
+| ------------------------------ | --------------------- |
+| `.claude/rules/`               | 코딩 / 보안 / 언어 규칙       |
+| `.claude/docs/DESIGN.md`       | 설계 결정 기록              |
+| `.claude/docs/research/`       | agy 조사 결과             |
+| `.claude/logs/cli-tools.jsonl` | agy 입출력 로그            |
+| `.agents/rules/AGENTS.md`      | agy용 프로젝트 컨텍스트     |
+
+---
+
+## 운영 주의사항 (Operational Notes)
+
+- **서브에이전트는 서브에이전트를 못 띄운다.** general-purpose 안에서 설계 판단이 필요해지면 결과만 보고하고, 메인이 `Task(subagent_type="deep-reasoning")`를 호출한다.
+- **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. `## Current Project` 블록은 Session History 섹션 **앞**에 둔다.
+- **리뷰는 별도 세션에서.** 구현한 세션은 자기 코드에 편향되므로 `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션에서 "리포트 파일만 작성, 다른 파일 수정 금지"로 리뷰를 받고, 원 세션에서 반영한다. 세션 안에서의 가벼운 리뷰는 deep-reasoning 서브에이전트로 충분하다.
+- **훅 파일명을 바꾸면 `.claude/settings.json` 등록 경로를 같은 커밋에서 함께 바꾼다.** 어긋나면 PreToolUse 훅 오류로 모든 Edit이 막힌다.
+- **agy 헤드리스 호출의 빈 응답은 실패다** (soft-deny, exit 0). stderr를 버리지 말고 `--output-format json`의 `.status`/`response`로 판단한다. 파일을 읽는 호출은 템플릿 패턴의 플래그와 "파일 수정 금지" 문구를 그대로 쓴다.
+- **deep-reasoning의 읽기 전용은 도구 제거 + 지시**이지 커널 샌드박스가 아니다. 커밋 전 `git status`로 의도치 않은 변경을 확인한다.
+
+---
+
+## 언어 프로토콜(Language Protocol)
+
+- **사고/코드/로그**: 영어
+- **사용자대화/설명**: 한국어
+
+---
+
+## Current Project
 
 `immich-app/immich`의 개인 포크. 업스트림 기능을 개선하고 새 기능을 추가한다.
 현재 진행 중: **Google Drive 앨범 동기화** (`dev-docs/google-drive/`).
 
-이 파일은 매 세션 컨텍스트에 로드된다. **저장소를 읽으면 알 수 있는 것은 적지 않는다**
+이 절은 매 세션 컨텍스트에 로드된다. **저장소를 읽으면 알 수 있는 것은 적지 않는다**
 (디렉토리 구조, 언어 비율, 업스트림 문서). 여기 있어야 할 것은 **읽어서는 알 수 없는 것**
 — 이 포크의 결정, 실제로 밟았던 지뢰, 반복해서 틀리는 지점이다.
 
----
-
-## 1. 절대 규칙
+### 1. 절대 규칙
 
 - **비밀값을 추적 파일에 커밋하지 않는다.** OAuth 클라이언트 시크릿·API 키·DB 비밀번호는
   전부 **시스템 설정(DB)** 또는 호스트 셸 환경에 있다. `devcontainer.json`의 `remoteEnv`에는
@@ -25,9 +197,9 @@
   금지다.** 순서는 §2: 변경 → 테스트 통과 → 리뷰 요청서(테스트 결과 첨부) → 리뷰 → 반영 →
   그 반영도 다음 라운드 대상. 배포는 이 사이클을 통과한 커밋만 대상으로 한다.
 
-## 2. 개발 워크플로우
+### 2. 개발 워크플로우
 
-### 문서 배치
+#### 문서 배치
 
 ```
 dev-docs/
@@ -45,7 +217,7 @@ dev-docs/
   텍스트 도식(ASCII, 표)을 적극 활용하고, **결정의 근거("왜 이렇게 했는가")를 남긴다.**
 - 문서가 코드와 어긋나면 문서를 고친다. 오래된 진행 문서를 근거로 리뷰가 잘못 나간 적 있다.
 
-### 유닛테스트 (코드 변경마다 — 예외 없음)
+#### 유닛테스트 (코드 변경마다 — 예외 없음)
 
 **순서를 지킨다: 코드 변경 → 테스트 작성/보강 → 실행 → 통과 → 그 다음에야 커밋·리뷰 요청.**
 통과하지 않은 변경은 커밋하지 않고 배포하지 않는다.
@@ -67,7 +239,7 @@ dev-docs/
 - 모듈 싱글톤을 테스트할 때는 정리(타이머·구독 해제)를 `afterEach`에 둔다. 테스트 본문 끝에
   두면 단언 실패 시 건너뛰어 다음 테스트를 오염시킨다 — 실제로 두 번 겪었다.
 
-### 리뷰 (코드 변경은 예외 없이 — 리뷰 없는 배포 절대 금지)
+#### 리뷰 (코드 변경은 예외 없이 — 리뷰 없는 배포 절대 금지)
 1. 변경 후 `dev-docs/review/[기능]/report/`에 리뷰 요청서를 쓴다.
    - **유닛테스트 결과를 반드시 첨부한다.** `run.sh`가 남긴 `results/` 파일의 요약(실행 시각,
      커밋, 스위트별 통과 수, PASS/FAIL)을 리포트 본문에 붙인다. "N개 통과"라고 쓰기만 하면
@@ -82,14 +254,14 @@ dev-docs/
 4. 리뷰가 지적한 것을 고쳤으면, **그 수정 자체도 다음 라운드 리뷰 대상**이다
    (Wave 1의 R1~R3 수정이 실제로 새 결함을 만들었다).
 
-### 커밋
+#### 커밋
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `merge:`).
 - **커밋 메시지는 길고 친절하게.** 무엇을 바꿨는지가 아니라 **왜 필요했는지, 어떤 대안을
   버렸는지, 무엇을 일부러 안 했는지**를 쓴다. 이 저장소의 기존 커밋들이 기준선이다.
 - 논리 단위로 나누되, 나누면 빌드가 깨지는 경우(같은 함수를 여러 관심사가 건드림)는
   합치고 메시지 본문에서 구분해 설명한다.
 
-## 3. 반드시 지켜야 할 검증 절차
+### 3. 반드시 지켜야 할 검증 절차
 
 코드 변경 후, 커밋 전. **순서대로 전부 통과해야 커밋한다.**
 
@@ -109,19 +281,19 @@ cd ../server && npx vitest run --config test/vitest.config.mjs  # 기본 `vitest
 cd ../web && npx vitest run
 ```
 
-### 생성물 재생성 (해당 변경이 있으면 필수)
+#### 생성물 재생성 (해당 변경이 있으면 필수)
 ```bash
 mise run //:open-api   # 컨트롤러/DTO/enum 변경 시 → OpenAPI + TS SDK + Dart SDK
 mise run //:sql        # @GenerateSql 붙은 리포지토리 메서드 변경 시 → src/queries/*.sql
 ```
 
-### 마이그레이션 드리프트 검사
+#### 마이그레이션 드리프트 검사
 ```bash
 cd server && npx sql-tools -u "postgres://postgres:<pw>@localhost:5432/immich" migrations generate
 # "No changes detected" 여야 함. 뭔가 나오면 스키마 데코레이터와 마이그레이션이 어긋난 것.
 ```
 
-## 4. 이 저장소에서 실제로 밟은 지뢰
+### 4. 이 저장소에서 실제로 밟은 지뢰
 
 | 증상 | 원인 / 대처 |
 |---|---|
@@ -133,7 +305,7 @@ cd server && npx sql-tools -u "postgres://postgres:<pw>@localhost:5432/immich" m
 | 테스트가 통과하는데 아무것도 검증 안 함 | 기본 설정에서 기능이 **꺼져** 있어 첫 관문에서 빠져나간 것. "안 했다"를 단언하는 테스트는 **의도한 이유로 통과하는지** 반드시 확인 (예: ledger 조회가 실제로 일어났는지 함께 단언) |
 | 병합 커밋에 생성물이 누락됨 | 충돌 해결로 `git add` 한 **뒤에** 재생성을 돌려서 스테이징본이 낡음. 재생성은 `git add` **전에** |
 
-## 5. 테스트 배치
+### 5. 테스트 배치
 
 규칙과 절차는 §2 "유닛테스트"에 있다. 여기는 **어디에 무엇을 두는가**만.
 
@@ -153,7 +325,7 @@ web/src/**/*.spec.ts             웹 유닛
   호출됐다"까지만 말할 수 있다 — 공유 해제 시 업로드 중단 같은 성질은 Postgres에서 확인해야
   하고, 실제로 그렇게 해서 첫 구현의 오류를 잡았다.
 
-## 6. 코딩 컨벤션
+### 6. 코딩 컨벤션
 
 - **주석은 의도와 배경을 쓴다.** "무엇을 하는지"가 아니라 **"왜 이렇게 했는지, 어떤 함정이
   있었는지"**. 이 포크의 기존 코드가 기준선이다 — 짧은 설명보다 문단 주석을 선호한다.
@@ -164,7 +336,7 @@ web/src/**/*.spec.ts             웹 유닛
   (`getGoogleDriveStatus`, `getStatus` 아님).
 - `@Endpoint(...)` 사용(`@ApiOperation` 아님), 태그는 `ApiTag` enum.
 
-## 7. 운영 환경 (이 포크 고유)
+### 7. 운영 환경 (이 포크 고유)
 
 ```
 [데스크탑 WSL]  개발 + 이미지 빌드          [랩탑 192.168.50.211]  운영 immich
@@ -231,7 +403,7 @@ web/src/**/*.spec.ts             웹 유닛
 - 랩탑에서 테스트를 직접 구동할 때는 API 키를 쓴다(`x-api-key`). 브라우저 클릭을 사용자에게
   시키기 전에, 직접 할 수 있는지 먼저 검토한다.
 
-## 8. 도메인 지식 (Google Drive 기능)
+### 8. 도메인 지식 (Google Drive 기능)
 
 설계 근거는 `dev-docs/google-drive/feature-roadmap.md`, 실패 처리는 `failure-handling-plan.md`,
 설정·redirect 구조는 `wave6-plan.md`. 반복해서 문제가 되는 사실들:
@@ -256,7 +428,7 @@ web/src/**/*.spec.ts             웹 유닛
 - **404를 무조건 "폴더 없음"으로 보면 안 된다** — resumable 세션 만료도 404다. `notFound`
   reason + 폴더 설정됨 조건을 모두 만족해야 계정을 차단한다.
 
-## 9. 주의사항
+### 9. 주의사항
 
 - **AGPL-3.0.** 업스트림 라이선스를 따른다.
 - **스키마 변경에는 마이그레이션이 필수**이고, 이미 적용된 마이그레이션은 **수정하지 않고**
