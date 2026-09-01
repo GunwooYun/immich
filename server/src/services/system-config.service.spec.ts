@@ -532,6 +532,35 @@ describe(SystemConfigService.name, () => {
         googleDrive: { clientId: 'typed-in-the-admin-ui' },
       });
     });
+
+    it('should not persist a cleared value, even when the default is not empty', async () => {
+      // The third direction, and the one that surprises: `isEmpty` is checked *before* `isEqual`,
+      // so clearing a field writes nothing at all — and with nothing stored, the effective value
+      // falls back to the default. Whatever the default is, that is what the admin gets back.
+      //
+      // Asserted on `oauth.buttonText` rather than a googleDrive credential, deliberately. The
+      // googleDrive defaults are '' under test (no environment set), so clearing one would be
+      // skipped by `isEqual` as much as by `isEmpty` and the test would pass without proving
+      // anything — the §4 trap. buttonText has a non-empty default, so only the isEmpty branch can
+      // explain the result.
+      //
+      // Why this matters for Wave 6: with credentials supplied by the environment, a googleDrive
+      // credential is in exactly this position — its default is non-empty, so an admin who clears
+      // the field and saves gets the environment's value back. Clearing cannot remove an
+      // env-supplied credential; it has to be removed from the environment. Pinned rather than
+      // "fixed" because the alternative needs a sentinel meaning "deliberately empty", and ''
+      // already means "unset" for every other config key. The admin field's hint says so instead
+      // (admin.google_drive_env_default_description).
+      expect(defaults.oauth.buttonText).not.toBe('');
+      mocks.systemMetadata.get.mockResolvedValue({});
+
+      await sut.updateSystemConfig({
+        ...defaults,
+        oauth: { ...defaults.oauth, buttonText: '' },
+      });
+
+      expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {});
+    });
   });
 
   describe('getCustomCss', () => {

@@ -40,6 +40,12 @@ describe('defaults.googleDrive', () => {
     expect(defaults.googleDrive.apiKey).toBe('env-api-key');
   });
 
+  // This unassuming negative is the test that keeps the whole file honest, which is worth saying
+  // because it reads like the throwaway one. It runs *after* a test that stubbed real values, so it
+  // only passes if the module was genuinely re-evaluated in between — i.e. it is the assertion that
+  // proves vi.resetModules() is working. The test above it is not: running first, its own dynamic
+  // import evaluates the module fresh under its own stubs whether or not the reset happens. So do
+  // not "simplify" the resetModules() call in afterEach away; this is what it is holding up.
   it('should leave the credentials empty when the environment does not set them', async () => {
     vi.stubEnv('IMMICH_GOOGLE_DRIVE_CLIENT_ID', undefined);
     vi.stubEnv('IMMICH_GOOGLE_DRIVE_CLIENT_SECRET', undefined);
