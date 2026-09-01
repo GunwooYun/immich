@@ -1,0 +1,139 @@
+# Fork-only CI. Deliberately a NEW file rather than extra jobs in test.yml:
+#
+#   1. Upstream's workflows cannot run here at all. Every job in test.yml starts with
+#      `immich-app/devtools/actions/create-workflow-token` fed by the immich-app org's
+#      PUSH_O_MATIC_* secrets, and each test job is `needs: pre-job`, whose first step is that
+#      same token step — so on a fork pre-job fails and everything downstream is skipped.
+#      web-lint additionally wants the `mich` self-hosted runner.
+#   2. Merge surface. The fork has never authored a change under .github/ (every commit there is
+#      upstream's), so a filename upstream will never have means git never sees a both-modified
+#      path when we merge upstream.
+#
+# Triggers are push-only on feature branches. Every upstream workflow with a `push:` trigger pins
+# it to `branches: [main]`, so pushing feat/** wakes none of them; adding `pull_request:` here
+# would wake ~10 of them, all failing at the token step.
+name: Fork — Google Drive
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feat/**'
+      - 'feature/**'
+    paths-ignore:
+      - 'dev-docs/**'
+      - 'dev-test/google-drive/results/**'
+      - '**/*.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  # The focused gate: the 12 spec files this feature owns, plus the svelte-check baseline gate.
+  # That gate is not a duplicate of upstream's `check:svelte` — it runs svelte-check WITHOUT
+  # --no-tsconfig, so it type-checks the .ts/.spec.ts files (and the component call sites inside
+  # them) that neither `tsc --noEmit` nor upstream's svelte pass reaches.
+  feature:
+    name: Feature suite (dev-test/google-drive)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # Only node and pnpm: this job never builds plugin-core, so the wasm toolchain
+      # (extism, binaryen, java) in the root mise.toml would be dead weight.
+      - name: Setup mise (node + pnpm)
+        uses: jdx/mise-action@v3
+        with:
+          install_args: node pnpm
+
+      # run.sh assumes an installed workspace — it calls `npx vitest` / `npx svelte-check`
+      # directly. Installing here rather than in run.sh keeps the local loop fast.
+      - name: Install workspaces
+        run: |
+          pnpm --filter @immich/sdk install --frozen-lockfile
+          pnpm --filter @immich/sdk build
+          pnpm --filter immich install --frozen-lockfile
+          pnpm --filter immich-web install --frozen-lockfile
+          pnpm --filter immich-web exec svelte-kit sync
+
+      - name: Run the feature suite
+        run: bash dev-test/google-drive/run.sh
+
+      # The evidence file is uploaded, never committed: dev-test/google-drive/results/ is tracked
+      # on purpose so a review report can cite a run at a known commit (CLAUDE.md §2). Machine runs
+      # would drown that, and a committing job needs write permissions and invites push loops.
+      - name: Summarise the run
+        if: always()
+        run: |
+          latest="$(ls -t dev-test/google-drive/results/*.txt 2>/dev/null | head -1)"
+          if [ -n "$latest" ]; then
+            {
+              echo "### $latest"
+              echo '```'
+              tail -40 "$latest"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: google-drive-evidence
+          path: dev-test/google-drive/results/
+          retention-days: 30
+
+  # The broad sweep. run.sh covers 12 spec files and no lint/format/tsc, so this is the job that
+  # actually catches what an upstream merge breaks. Starts non-blocking: the fork has never run
+  # these in CI, and `//web:ci-unit` includes `prettier --check .` over the whole workspace.
+  regression:
+    name: Full server + web unit sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+
+      - name: server — format, lint, check, unit tests
+        run: mise run //server:ci-unit
+
+      - name: web — format, check, unit tests
+        run: mise run //web:ci-unit
+
+  # Real-Postgres tests. No `services:` block: server/test/medium/globalSetup.ts starts the
+  # database itself through testcontainers (ghcr.io/immich-app/postgres:14-vectorchord0.4.3) and
+  # overwrites IMMICH_TEST_POSTGRES_URL with the container's URL, so nothing needs configuring.
+  medium:
+    name: Medium (real database) tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+
+      - name: server — medium tests
+        run: mise run //server:ci-medium
