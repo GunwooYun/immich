@@ -444,3 +444,52 @@ web/src/**/*.spec.ts             웹 유닛
   올라와 있는지 확인한다(`git merge-base --is-ancestor <tag> HEAD`).
 - 대용량 처리(수천 장 동기화) 경로는 스트리밍·청킹을 쓴다. `DATABASE_PARAMETER_CHUNK_SIZE`,
   `JOBS_ASSET_PAGINATION_SIZE` 참고.
+
+---
+
+## Current Project: Google Drive 연결 운영 경로 확정
+
+### Context
+- 목표: 관리자 본인의 Drive 연결이 **끊기지 않고, 매주 의식 없이** 유지되게 만든다.
+  가족은 이 기능을 쓰지 않는다 — 같은 LAN에서 immich 모바일 앱만 쓰므로 별도 작업이 없다.
+- 현재 운영 상태 (2026-09-02 측정, 배포본은 Wave 5 이미지 `immich-server:3.1.0-gdrive`):
+  `googleDrive.redirectUrl = http://localhost:2283/api/google-drive/callback`,
+  `server.externalDomain = (unset)`, `enabled = true`,
+  ledger 6,965건 / 대기 35건(그중 2건은 `source_unreadable` 영구 실패), 마지막 업로드 09-02 00:13 KST.
+- 접속 경로: Windows에서 SSH 터널(`-L 2283:localhost:2283`) → `http://localhost:2283`.
+  구글이 사설 IP redirect를 거부하기 때문이고, localhost는 허용된다.
+- Tailscale은 랩탑에서 컨테이너로 돌고 `serve`로 `https://laptop-server.tail68cec7.ts.net`이
+  tailnet 내부에서 200을 준다. 단 **Windows PC가 tailnet에 없어** 지금은 쓰지 못한다.
+
+### Decisions
+- **공개 노출(funnel) 금지, 도메인 구입 보류** — 사용자 결정. 그래서 경로는 localhost 터널 또는
+  tailnet 둘 중 하나다.
+- **폴더 설정은 앞으로의 업로드에만 적용된다.** 이미 루트에 올라간 6,965건을 옮기는 코드는 없다
+  (`addParents`/`files.update` 없음). Drive 웹에서 수동으로 옮겨도 안전하다 — ledger는
+  `driveFileId` 기준이고 이동해도 ID가 바뀌지 않는다.
+- **일괄 업로드는 자동으로 돌지 않는다.** `GoogleDriveUploadQueueAll`의 유일한 생산자는
+  관리자 Jobs 화면(`queue.service.ts:249`)이다. 새 사진은 이벤트로 개별 큐잉된다.
+
+### Notes (지뢰)
+- **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다.** `isGoogleDriveEnabled`는
+  redirect URL을 *파생할 수 있을 때만* 참인데(`utils/misc.ts:150-154`), 관리자 폼의 설명
+  (`i18n/en.json:94`)은 "비워두면 External Domain을 쓴다"고 안내한다. externalDomain이 빈 지금
+  그 안내를 따르면 에러 없이 전체가 멈춘다. **Wave 6 배포 전에 두 값을 함께 정한다.**
+- **redirect URL을 바꿔도 저장된 refresh token은 무효화되지 않는다.** `redirect_uri`는 코드 교환
+  때만 쓰이고 refresh 요청에는 실리지 않는다. ledger도 그대로다.
+- **`TS_HOSTNAME=ha-server`** 가 컨테이너 env에 있어 재시작 시 콘솔 이름(`laptop-server`)을 되돌릴
+  수 있다. ts.net 경로를 쓰기로 하면 **먼저** compose를 고쳐야 한다 — 이름이 바뀌면 인증서와
+  구글 콘솔 등록이 함께 어긋난다.
+- **데스크탑 dev container가 호스트 2283을 점유**해 터널과 상호 배타적이다. dev를 다른 호스트
+  포트로 바인딩하면 둘이 공존한다.
+
+### Tasks
+1. Jobs에서 Google Drive Upload 큐 실행 → 33건이 선택한 폴더로 들어가는지 확인
+2. `source_unreadable` 2건 처리(원본 경로 확인 → 복구 또는 행 삭제). 방치하면 `failedCount`가 2에
+   고정돼 **다음 진짜 실패를 가린다**
+3. OAuth 앱 "In production" 전환 시도 — 스코프가 `drive.file`(비민감)이고 redirect가 localhost라
+   도메인 검증이 불필요할 가능성이 크다. 성공하면 7일 만료가 사라져 주 1회 재연결 의식이 없어진다
+4. Wave 6 배포 전 redirect 정책 확정(둘 중 하나를 반드시 채운 상태로)
+5. (ts.net 경로로 갈 경우에만) `TS_HOSTNAME` 고정 → Windows에 Tailscale 설치 → 콘솔에 URI 추가
+6. dev container를 다른 호스트 포트로 옮겨 터널과 공존
+7. round-11 리뷰 종료 후 Wave 6 배포
