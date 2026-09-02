@@ -111,7 +111,7 @@ describe('updateConfig with credentials from the environment', () => {
     // stopped being read would leave clientId at '' and the test would pass vacuously again.
     expect(defaults.googleDrive.clientId).toBe('env-client-id');
 
-    await sut.updateSystemConfig({
+    const result = await sut.updateSystemConfig({
       ...defaults,
       googleDrive: { ...defaults.googleDrive, clientId: '' },
     });
@@ -120,5 +120,12 @@ describe('updateConfig with credentials from the environment', () => {
     // field in the admin UI cannot remove an env-supplied credential; `enabled: false` is the
     // control that turns the feature off.
     expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {});
+
+    // And the consequence, asserted on the value the admin gets back rather than only on what was
+    // written (N2). The precondition above pins the `defaults` this spec imported; this pins the
+    // ones the *service* closed over, which is the object that actually decides the outcome — the
+    // two could drift apart if the re-import ever stopped reaching the service. `mapConfig` is the
+    // identity function, so this is the effective config.
+    expect(result.googleDrive.clientId).toBe('env-client-id');
   });
 });
