@@ -49,8 +49,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Only node and pnpm: this job never builds plugin-core, so the wasm toolchain
-      # (extism-js, binaryen) in the root mise.toml would be dead weight.
+      # Only node and pnpm. The root mise.toml pins seven more tools — java, ffmpeg, opentofu,
+      # terragrunt, the openapi generators, and the extism-js/binaryen wasm chain — none of which
+      # this job reaches, since it neither builds plugin-core nor regenerates the SDKs.
       - name: Setup mise (node + pnpm)
         uses: jdx/mise-action@v3
         with:
@@ -88,8 +89,17 @@ jobs:
           pnpm --filter immich install --frozen-lockfile
           pnpm --filter immich-web install --frozen-lockfile
 
+      # The 19 committed evidence files are cleared first, so whatever remains afterwards is
+      # this run's. Picking the newest instead does not work, and the last attempt made it
+      # worse: run.sh stamps filenames with `date +%Y%m%d-%H%M` in local time, the committed
+      # ones were written in KST (+09:00) and a runner is UTC — so a run at 03:24Z writes
+      # 20260902-0324.txt, which sorts *before* every committed file, and `sort | tail -1`
+      # would render a stale PASS with deterministic reliability. Clearing sidesteps the whole
+      # question, and fixes the artifact upload below at the same time.
       - name: Run the feature suite
-        run: bash dev-test/google-drive/run.sh
+        run: |
+          rm -f dev-test/google-drive/results/*.txt
+          bash dev-test/google-drive/run.sh
 
       # The evidence file is uploaded, never committed: dev-test/google-drive/results/ is tracked
       # on purpose so a review report can cite a run at a known commit (CLAUDE.md §2). Machine runs
@@ -97,11 +107,8 @@ jobs:
       - name: Summarise the run
         if: always()
         run: |
-          # By name, not by mtime: a fresh checkout gives every tracked file the same
-          # timestamp, so `ls -t` could pick a committed evidence file from a past run
-          # instead of the one this job just produced. The names are YYYYMMDD-HHMM, so a
-          # lexical sort is a chronological one.
-          latest="$(ls dev-test/google-drive/results/*.txt 2>/dev/null | sort | tail -1)"
+          # Only one file can be here — the run step cleared the rest.
+          latest="$(ls dev-test/google-drive/results/*.txt 2>/dev/null | head -1)"
           if [ -n "$latest" ]; then
             {
               echo "### $latest"
@@ -121,9 +128,11 @@ jobs:
 
   # The broad sweep. run.sh covers 11 spec files and no lint/format/tsc, so this is the job that
   # actually catches what an upstream merge breaks. Starts non-blocking: the fork has never run
-  # these in CI, and both ci-unit tasks *start* with `prettier --check .` (rooted at web/ and
-  # server/ respectively), so a formatting slip stops the sweep before a single test runs — which
-  # is what it did the first time it was checked, on three files this fork wrote.
+  # these in CI, and both ci-unit tasks run `prettier --check .` (rooted at web/ and server/
+  # respectively) before they reach a test — first of all for web, and after :install and
+  # //:plugins for server (server/mise.toml:58-66). Either way a formatting slip stops the sweep
+  # before a single test runs, which is what it did the first time it was checked, on three
+  # files this fork wrote.
   regression:
     name: Full server + web unit sweep
     runs-on: ubuntu-latest
