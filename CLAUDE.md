@@ -160,7 +160,7 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
 ## 운영 주의사항 (Operational Notes)
 
 - **서브에이전트는 서브에이전트를 못 띄운다.** general-purpose 안에서 설계 판단이 필요해지면 결과만 보고하고, 메인이 `Task(subagent_type="deep-reasoning")`를 호출한다.
-- **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. 이 파일에는 아직 Session History 섹션이 없으며, 생기면 `## Current Project` 블록이 그 **앞**에 오도록 유지한다.
+- **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. 이 파일에는 아직 Session History 섹션이 없으며, 생기면 `## Fork Rules`와 `## Current Project` 블록이 그 **앞**에 오도록 유지한다. **`/startproject`(Phase 5)는 `## Current Project`만 교체한다** — `## Fork Rules`를 건드리면 안 된다.
 - **리뷰는 별도 세션에서.** 구현한 세션은 자기 코드에 편향되므로 `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션에서 "리포트 파일만 작성, 다른 파일 수정 금지"로 리뷰를 받고, 원 세션에서 반영한다. 세션 안에서 deep-reasoning 서브에이전트에게 받는 리뷰는 **이 사이클의 대체가 아니라 보조**다 — 작성자와 같은 세션에서 나온 판단이므로 §2의 리뷰 요청서·리뷰 파일을 면제하지 않는다.
 - **훅 파일명을 바꾸면 `.claude/settings.json` 등록 경로를 같은 커밋에서 함께 바꾼다.** 어긋나면 PreToolUse 훅 오류로 모든 Edit이 막힌다.
 - **agy 헤드리스 호출의 빈 응답은 실패다** (soft-deny, exit 0). stderr를 버리지 말고 `--output-format json`의 `.status`/`response`로 판단한다. 파일을 읽는 호출은 템플릿 패턴의 플래그와 "파일 수정 금지" 문구를 그대로 쓴다.
@@ -175,10 +175,14 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
 
 ---
 
-## Current Project
+## Fork Rules (이 포크의 작업 규칙)
 
 `immich-app/immich`의 개인 포크. 업스트림 기능을 개선하고 새 기능을 추가한다.
-현재 진행 중: **Google Drive 앨범 동기화** (`dev-docs/google-drive/`).
+
+**이 절은 `## Current Project`와 다르다.** `## Current Project`는 `/startproject`가 기능마다
+새로 쓰는 블록이고, 이 절은 **기능이 바뀌어도 남는 규칙**이다 — 절대 규칙, 리뷰 사이클, 검증 절차,
+실제로 밟은 지뢰, 운영 환경. 스킬이 덮어쓰지 않도록 헤딩을 분리해 두었다.
+(2026-09-02 `/init` 템플릿과 `/startproject`가 같은 헤딩을 두고 충돌하던 것을 정리한 결과다.)
 
 이 절은 매 세션 컨텍스트에 로드된다. **저장소를 읽으면 알 수 있는 것은 적지 않는다**
 (디렉토리 구조, 언어 비율, 업스트림 문서). 여기 있어야 할 것은 **읽어서는 알 수 없는 것**
