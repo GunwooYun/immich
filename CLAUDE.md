@@ -95,8 +95,8 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
     - 설계 리뷰 및 리스크 검토
 4. Claude 
     - 실행 가능한 태스크 리스트 생성
-5. (권장)
-    - **구현 완료 후 별도 세션에서 리뷰**
+5. **필수** (§1 — 권장이 아니다)
+    - **구현 완료 후 별도 세션에서 리뷰.** 리뷰를 통과하지 않은 커밋은 배포하지 않는다.
 
 → 관련 커맨드: `/startproject`, `/plan`, `/tdd` skills
 
@@ -135,10 +135,13 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
     ./dev-test/[기능]/run.sh    # 기능별 테스트 묶음 → results/ 에 증거 저장
     ```
 
-- 커밋 컨벤션 **Conventional Commits**, 기본 브랜치 **`main`**
-  (현재 작업 브랜치 `feat/google-drive-album-sync-v3.1.0`).
+- 커밋 컨벤션 **Conventional Commits**, 기본 브랜치 **`main`**. 작업 중인 기능 브랜치는
+  `git branch --show-current`로 확인한다.
 
-→ 참고: `.claude/rules/dev-environment.md`
+→ 참고: `.claude/rules/dev-environment.md` — **단, `.claude/`와 `.agents/`는 `.gitignore` 대상이라
+저장소에 없다.** 새 클론이나 `git worktree`로 만든 리뷰용 체크아웃에는 이 파일들이 존재하지 않으므로,
+그 세션에서는 이 문서가 가리키는 규칙 파일·훅·에이전트 설정을 읽을 수 없다. 리뷰 세션에 필요한 맥락은
+`dev-docs/`와 리뷰 요청서 본문에 담는다.
 
 ---
 
@@ -157,8 +160,8 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
 ## 운영 주의사항 (Operational Notes)
 
 - **서브에이전트는 서브에이전트를 못 띄운다.** general-purpose 안에서 설계 판단이 필요해지면 결과만 보고하고, 메인이 `Task(subagent_type="deep-reasoning")`를 호출한다.
-- **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. `## Current Project` 블록은 Session History 섹션 **앞**에 둔다.
-- **리뷰는 별도 세션에서.** 구현한 세션은 자기 코드에 편향되므로 `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션에서 "리포트 파일만 작성, 다른 파일 수정 금지"로 리뷰를 받고, 원 세션에서 반영한다. 세션 안에서의 가벼운 리뷰는 deep-reasoning 서브에이전트로 충분하다.
+- **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. 이 파일에는 아직 Session History 섹션이 없으며, 생기면 `## Current Project` 블록이 그 **앞**에 오도록 유지한다.
+- **리뷰는 별도 세션에서.** 구현한 세션은 자기 코드에 편향되므로 `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션에서 "리포트 파일만 작성, 다른 파일 수정 금지"로 리뷰를 받고, 원 세션에서 반영한다. 세션 안에서 deep-reasoning 서브에이전트에게 받는 리뷰는 **이 사이클의 대체가 아니라 보조**다 — 작성자와 같은 세션에서 나온 판단이므로 §2의 리뷰 요청서·리뷰 파일을 면제하지 않는다.
 - **훅 파일명을 바꾸면 `.claude/settings.json` 등록 경로를 같은 커밋에서 함께 바꾼다.** 어긋나면 PreToolUse 훅 오류로 모든 Edit이 막힌다.
 - **agy 헤드리스 호출의 빈 응답은 실패다** (soft-deny, exit 0). stderr를 버리지 말고 `--output-format json`의 `.status`/`response`로 판단한다. 파일을 읽는 호출은 템플릿 패턴의 플래그와 "파일 수정 금지" 문구를 그대로 쓴다.
 - **deep-reasoning의 읽기 전용은 도구 제거 + 지시**이지 커널 샌드박스가 아니다. 커밋 전 `git status`로 의도치 않은 변경을 확인한다.

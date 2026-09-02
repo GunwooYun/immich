@@ -255,7 +255,9 @@ environment` describe를 추가: env를 stub → `config.js`와 `system-config.s
 
 → 2026-09-02 `/init`에서 해소: 템플릿 섹션은 유지하되 HEAD의 §1~§9 전체를 `## Current Project`
 아래로 복원했다(헤딩만 한 단계 강등, 내용 동일). 리뷰 요청 훅(`pending-reviews.sh`의
-SessionStart/UserPromptSubmit/Stop 3개 등록)도 그대로 있다.
+SessionStart/UserPromptSubmit/Stop 3개 등록)도 그대로 있다 — **다만 `.claude/settings.json`은
+`.gitignore` 대상이라 이 주장은 git으로 검증할 수 없다.** 워킹 카피를 직접 본 결과이고, 리뷰
+세션(새 워크트리)에는 그 파일이 아예 존재하지 않는다.
 
 ## 8. OAuth 호스트명 — 정책 리서치와 실측 (2026-09-02)
 
@@ -310,3 +312,28 @@ Funnel 하나로 끝난다).
 
 단기는 `serve`/`funnel`로 진행하되, 가족이 상시 쓰려면 **도메인 구입(연 $2~10) + 공개 경로**로 갈지가
 남은 판단이다. 이건 비용과 노출 범위가 걸린 문제라 사용자 결정 사항으로 남긴다.
+
+## 9. 리뷰 되먹임 (2026-09-02 round 10, `google-drive-wave6-n1-ci-...-review.md`)
+
+판정: N1 테스트·CLAUDE.md 복원·§7 되먹임은 통과. **CI 워크플로는 그대로 돌리면 3잡 중 2잡이
+기능과 무관한 이유로 실패**한다는 지적 2건(C1·C2)과 가시성 지적 1건(C3), 테스트 보강 1건(N2).
+전부 코드로 대조해 확인하고 반영했다.
+
+| # | 지적 | 코드에서 확인한 근거 | 반영 |
+|---|---|---|---|
+| C1 | `feature` 잡이 `@immich/plugin-sdk`를 빌드하지 않아 서버 스펙이 전부 import 실패 | `server/src/enum.ts:1`이 `WorkflowTrigger`를 **런타임 값**으로 import(`z.enum`), 진입점은 `dist/index.js`, `packages/plugin-sdk/.gitignore`에 `/dist` → 클린 체크아웃엔 없음. 로컬이 통과한 건 예전 `//:plugins` 산출물이 남아 있어서 | 설치 단계 맨 앞에 `plugin-sdk` install+build 추가. `//:plugins`는 plugin-core(wasm 툴체인)까지 빌드하므로 쓰지 않음 |
+| C2 | `medium` 잡 체크아웃에 서브모듈이 없음 | `server/test/medium.factory.ts`의 `testAssetsDir`가 `e2e/test-assets`를 가리키고, 로컬 서브모듈은 **미초기화**(`git submodule status`가 `-6742055…`). 업스트림 medium 잡도 같은 이유로 `submodules: 'recursive'` 사용 | medium 체크아웃에 `submodules: 'recursive'` 추가 |
+| C3 | **잡 단위** `continue-on-error: true`는 체크 목록에 성공으로 표시돼 실패가 안 보임 | GitHub Actions 동작 | 잡 단위 제거 → **스텝 단위**로 내리고, `$GITHUB_STEP_SUMMARY`에 결과를 적고 실패 시 `::warning::`을 남김 |
+| N2 | 전제 단언이 테스트 쪽 `defaults`만 고정하고 서비스 쪽은 고정 안 함 | `updateSystemConfig`는 `mapConfig(newConfig)`를 반환하고 `mapConfig`는 identity | 반환값에 대한 단언 추가 — 지운 뒤에도 실효값이 env 값으로 되돌아오는 것을 직접 확인 |
+
+**`medium` 잡도 첫 실행 동안은 비차단으로 둔다.** 로컬 `run.sh --medium`은 스펙 1개(10 테스트)만
+돌지만 `//server:ci-medium`은 medium 스펙 56개 전부를 돌리고, 이 포크에서 한 번도 실행된 적이 없다.
+`regression`과 같은 방식으로 결과만 summary에 남기고, **초록을 한 번 확인하면 두 잡의
+`continue-on-error` 줄을 지워 차단으로 승격**한다.
+
+리뷰가 짚은 CLAUDE.md 긴장 3건도 반영했다: 템플릿의 "(권장) 별도 세션 리뷰"를 §1대로 **필수**로
+바꾸고, "가벼운 리뷰는 deep-reasoning으로 충분"을 "사이클의 대체가 아니라 보조"로 정정했으며,
+브랜치명 하드코딩과 존재하지 않는 Session History 섹션 언급을 고쳤다. 그리고 **`.claude/`와
+`.agents/`가 `.gitignore` 대상이라 새 워크트리(리뷰 세션)에는 존재하지 않는다**는 사실을 문서에
+명시했다 — 리뷰 세션이 읽을 수 있는 것은 `dev-docs/`와 리뷰 요청서뿐이다. 같은 이유로 §7의
+"훅이 그대로 있다"는 문장도 git으로 검증 불가임을 밝혀 두었다.
