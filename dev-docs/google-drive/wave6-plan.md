@@ -256,3 +256,57 @@ environment` describe를 추가: env를 stub → `config.js`와 `system-config.s
 → 2026-09-02 `/init`에서 해소: 템플릿 섹션은 유지하되 HEAD의 §1~§9 전체를 `## Current Project`
 아래로 복원했다(헤딩만 한 단계 강등, 내용 동일). 리뷰 요청 훅(`pending-reviews.sh`의
 SessionStart/UserPromptSubmit/Stop 3개 등록)도 그대로 있다.
+
+## 8. OAuth 호스트명 — 정책 리서치와 실측 (2026-09-02)
+
+"Tailscale이 정말 필요한가"에 답하기 위해 구글 정책을 조사하고(`\.claude/docs/research/google-oauth-redirect-options.md`)
+랩탑 상태를 실측했다. 결론부터: **Tailscale은 필수가 아니라 이 환경에서 가장 싼 선택지**이고,
+**Tailscale만으로는 In production 전환이 막힌다.**
+
+### 실측 (랩탑, 읽기 전용 조회)
+
+| 항목 | 상태 |
+|---|---|
+| tailscale | 호스트엔 미설치, **`tailscale/tailscale:stable` 컨테이너가 host 네트워크로 실행 중**(HA와 동거). 노드 `ha-server` = 100.74.237.85 = 이 랩탑 |
+| `tailscale serve` | **미설정** (`No serve config`) |
+| tailnet 구성원 | `ha-server`(랩탑), `gwyunpc`(데스크탑), `s26-ultra`(폰, 24일째 오프라인) — **가족 기기는 없음** |
+| 랩탑 `.env` | `IMMICH_GOOGLE_DRIVE_*` 3개 **없음** (env 자격증명 경로는 운영에서 아직 미사용) |
+| 운영 DB | `googleDrive.clientId` set, `enabled` true, **`server.externalDomain` 비어 있음** |
+| 리버스 프록시 | caddy/nginx/traefik/cloudflared 전부 없음. 호스트 리스닝 포트는 2283뿐 |
+
+→ **Wave 6 이미지를 올리기 전에 `externalDomain` 설정이 선행 조건이다.** 비어 있으면 redirect URL이
+파생되지 않아 기능이 꺼진다(§8 도메인 지식의 "빈 값은 기능을 꺼서 원인을 말해준다").
+
+### 정책 (출처는 리서치 문서)
+
+- 사설 IP·`.local`은 **항상 거부**, `http://localhost:PORT`는 Web application 타입에서 **여전히 허용**.
+- `*.ts.net`은 **Public Suffix List 등재 도메인이라 redirect URI로 허용**된다.
+- 구글은 redirect URI의 **네트워크 도달성을 검사하지 않는다.** 따라서 `tailscale serve`와 `funnel`은
+  **정책상 완전히 동일**하고, 차이는 순수하게 "누가 그 주소에 도달할 수 있는가"뿐이다.
+- 이 포크가 요청하는 스코프는 `drive.file` **하나뿐**이고(`google-drive.service.ts:211`), 이는
+  Restricted가 아닌 **Non-sensitive**다 → **CASA·Trust & Safety 검증이 필요 없다.**
+- 그러나 **Testing 상태의 refresh token은 7일 만료**이고 이는 스코프 등급과 무관하다.
+  가족이 매주 재인증해야 하므로 **백그라운드 업로드 기능에는 치명적** — "Testing 영구 유지"는 답이 아니다.
+- In production 전환에는 consent screen의 **Authorized Domains에 대한 Search Console 소유권 검증**이
+  요구되고, `ts.net`은 DNS를 우리가 통제하지 못해 **검증이 불가능하다.**
+
+### 그래서 남는 선택
+
+| 목표 | 되는 것 | 안 되는 것 |
+|---|---|---|
+| 사장님 본인만 연결 | SSH 터널 + `http://localhost:2283` (인프라 0) | — |
+| tailnet 기기에서 연결 | `tailscale serve` (토글 + 명령 1줄) | 가족 기기 |
+| 가족이 자기 폰으로 연결 (Testing) | `tailscale funnel`, 또는 가족을 tailnet에 초대 | refresh token 7일 만료는 그대로 |
+| 가족이 자기 폰으로 연결 (In production) | **실소유 도메인 + 공개 도달 경로** | `ts.net`은 소유권 검증 불가라 막힘 |
+
+**리서치 문서의 최종 권고 중 한 단계는 이 표와 모순되므로 채택하지 않는다.** 거기서는 "도메인을 사서
+A 레코드를 tailnet IP(100.x)로 지정"하라고 했는데, tailnet IP는 CGNAT 대역이라 **tailnet 밖에서는
+도달 불가**다. 도메인 소유권 검증은 통과해도 가족 폰은 여전히 접속하지 못한다. 검증 가능 + 도달 가능을
+동시에 만족하려면 공개 경로가 필요하다 — Cloudflare Tunnel(자체 도메인 지원, 포트포워딩 불필요) 또는
+443 포트포워딩 + 리버스 프록시. **미확인: Tailscale Funnel이 자체 도메인을 붙일 수 있는지**(붙는다면
+Funnel 하나로 끝난다).
+
+### 결정 대기
+
+단기는 `serve`/`funnel`로 진행하되, 가족이 상시 쓰려면 **도메인 구입(연 $2~10) + 공개 경로**로 갈지가
+남은 판단이다. 이건 비용과 노출 범위가 걸린 문제라 사용자 결정 사항으로 남긴다.
