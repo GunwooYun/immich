@@ -96,7 +96,8 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
 4. Claude 
     - 실행 가능한 태스크 리스트 생성
 5. **필수** (§1 — 권장이 아니다)
-    - **구현 완료 후 별도 세션에서 리뷰.** 리뷰를 통과하지 않은 커밋은 배포하지 않는다.
+    - **구현 완료 후 리뷰** — 기본은 `code-reviewer` 서브에이전트, 배포 직전 게이트는 별도 세션.
+      리뷰를 통과하지 않은 커밋은 배포하지 않는다.
 
 → 관련 커맨드: `/startproject`, `/plan`, `/tdd` skills
 
@@ -161,7 +162,12 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
 
 - **서브에이전트는 서브에이전트를 못 띄운다.** general-purpose 안에서 설계 판단이 필요해지면 결과만 보고하고, 메인이 `Task(subagent_type="deep-reasoning")`를 호출한다.
 - **`/checkpointing`(기본 모드)은 `CLAUDE.md`와 `.agents/rules/AGENTS.md`의 Session History 섹션을 덮어쓴다.** 실행 전에 커밋해 두고, 리뷰 전용 세션에서는 실행하지 않는다. 이 파일에는 아직 Session History 섹션이 없으며, 생기면 `## Fork Rules`와 `## Current Project` 블록이 그 **앞**에 오도록 유지한다. **`/startproject`(Phase 5)는 `## Current Project`만 교체한다** — `## Fork Rules`를 건드리면 안 된다.
-- **리뷰는 별도 세션에서.** 구현한 세션은 자기 코드에 편향되므로 `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션에서 "리포트 파일만 작성, 다른 파일 수정 금지"로 리뷰를 받고, 원 세션에서 반영한다. 세션 안에서 deep-reasoning 서브에이전트에게 받는 리뷰는 **이 사이클의 대체가 아니라 보조**다 — 작성자와 같은 세션에서 나온 판단이므로 §2의 리뷰 요청서·리뷰 파일을 면제하지 않는다.
+- **리뷰는 작성자가 아닌 컨텍스트에서 받는다.** 편향을 없애는 데 필요한 건 *다른 세션*이 아니라 *변경을 쓰지 않은 컨텍스트*다. 그래서 기본 경로는 **같은 세션 + `code-reviewer` 서브에이전트**다 — 맥락이 끊기지 않고, 서브에이전트는 격리된 컨텍스트에서 코드를 직접 읽는다.
+  ```
+  Task(subagent_type="code-reviewer",
+       prompt="Review <report>. Write <review>. Verify claims against the code. Modify no other file.")
+  ```
+  돌아온 판정은 §1대로 **코드와 대조한 뒤** 반영한다. **배포 직전 게이트에서만** `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션을 쓴다(업스트림 `/startproject` Phase 6의 Option A). 두 경로 모두 §2의 리포트·리뷰 파일 쌍을 남긴다.
 - **훅 파일명을 바꾸면 `.claude/settings.json` 등록 경로를 같은 커밋에서 함께 바꾼다.** 어긋나면 PreToolUse 훅 오류로 모든 Edit이 막힌다.
 - **agy 헤드리스 호출의 빈 응답은 실패다** (soft-deny, exit 0). stderr를 버리지 말고 `--output-format json`의 `.status`/`response`로 판단한다. 파일을 읽는 호출은 템플릿 패턴의 플래그와 "파일 수정 금지" 문구를 그대로 쓴다.
 - **deep-reasoning의 읽기 전용은 도구 제거 + 지시**이지 커널 샌드박스가 아니다. 커밋 전 `git status`로 의도치 않은 변경을 확인한다.
