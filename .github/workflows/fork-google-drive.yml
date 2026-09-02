@@ -57,24 +57,27 @@ jobs:
 
       # run.sh assumes an installed workspace — it calls `npx vitest` / `npx svelte-check`
       # directly. Installing here rather than in run.sh keeps the local loop fast.
-      # @immich/plugin-sdk is not optional here even though nothing in this feature uses plugins:
-      # server/src/enum.ts imports WorkflowTrigger from it as a *runtime* value (z.enum), its entry
-      # point is dist/index.js, and packages/plugin-sdk/.gitignore excludes /dist — so a clean
-      # checkout has no such file and every server spec fails to import. `mise //:plugins` would
-      # also build plugin-core, which needs the extism/binaryen/java toolchain this job skips.
+      # Both packages are built because both of their outputs are gitignored, so a clean checkout
+      # has neither, and each is needed at *runtime* by something this job runs:
+      #   @immich/plugin-sdk — server/src/enum.ts imports WorkflowTrigger from it as a value
+      #     (z.enum), and its entry point is dist/index.js.
+      #   @immich/sdk — the web specs import it (without packages/sdk/build, vitest fails with
+      #     `Failed to resolve import "@immich/sdk"`), and plugin-sdk's own build bundles it:
+      #     src/host-functions.ts:7 imports values from it and esbuild.js runs with bundle: true.
+      #     The server specs do *not* need it, because that bundling inlines it.
       #
-      # ORDER MATTERS: @immich/sdk must be built before @immich/plugin-sdk, not after.
-      # plugin-sdk's src/host-functions.ts:7 imports values from @immich/sdk and its esbuild.js
-      # runs with bundle: true, so the build resolves that dependency from disk. Reversed, a clean
-      # runner fails with `Could not resolve "@immich/sdk"`. Locally it appeared to work only
-      # because an earlier build had left packages/sdk/build in place — the same trap as the
-      # plugin-sdk dist this step exists to fix.
+      # One multi-filter invocation rather than four ordered ones: pnpm builds a filtered set in
+      # dependency order, so the order they are listed in cannot be got wrong. That matters here —
+      # a previous round of this file built plugin-sdk first and failed on a clean runner with
+      # `Could not resolve "@immich/sdk"`, while passing locally because an earlier build had left
+      # packages/sdk/build behind. mise.toml's own //:plugins task uses this same idiom.
+      #
+      # Not //:plugins itself: that one also builds plugin-core, whose build:wasm needs the
+      # extism-js and binaryen toolchain this job deliberately does not install.
       - name: Install workspaces
         run: |
-          pnpm --filter @immich/sdk install --frozen-lockfile
-          pnpm --filter @immich/sdk build
-          pnpm --filter @immich/plugin-sdk install --frozen-lockfile
-          pnpm --filter @immich/plugin-sdk build
+          pnpm --filter @immich/sdk --filter @immich/plugin-sdk install --frozen-lockfile
+          pnpm --filter @immich/sdk --filter @immich/plugin-sdk build
           pnpm --filter immich install --frozen-lockfile
           pnpm --filter immich-web install --frozen-lockfile
           pnpm --filter immich-web exec svelte-kit sync
