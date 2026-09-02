@@ -62,12 +62,19 @@ jobs:
       # point is dist/index.js, and packages/plugin-sdk/.gitignore excludes /dist — so a clean
       # checkout has no such file and every server spec fails to import. `mise //:plugins` would
       # also build plugin-core, which needs the extism/binaryen/java toolchain this job skips.
+      #
+      # ORDER MATTERS: @immich/sdk must be built before @immich/plugin-sdk, not after.
+      # plugin-sdk's src/host-functions.ts:7 imports values from @immich/sdk and its esbuild.js
+      # runs with bundle: true, so the build resolves that dependency from disk. Reversed, a clean
+      # runner fails with `Could not resolve "@immich/sdk"`. Locally it appeared to work only
+      # because an earlier build had left packages/sdk/build in place — the same trap as the
+      # plugin-sdk dist this step exists to fix.
       - name: Install workspaces
         run: |
-          pnpm --filter @immich/plugin-sdk install --frozen-lockfile
-          pnpm --filter @immich/plugin-sdk build
           pnpm --filter @immich/sdk install --frozen-lockfile
           pnpm --filter @immich/sdk build
+          pnpm --filter @immich/plugin-sdk install --frozen-lockfile
+          pnpm --filter @immich/plugin-sdk build
           pnpm --filter immich install --frozen-lockfile
           pnpm --filter immich-web install --frozen-lockfile
           pnpm --filter immich-web exec svelte-kit sync
