@@ -32,7 +32,8 @@ concurrency:
 permissions: {}
 
 jobs:
-  # The focused gate: the 12 spec files this feature owns, plus the svelte-check baseline gate.
+  # The focused gate: the 11 spec files run.sh runs without --medium, plus the svelte-check
+  # baseline gate. (The twelfth, the database spec, belongs to the medium job below.)
   # That gate is not a duplicate of upstream's `check:svelte` — it runs svelte-check WITHOUT
   # --no-tsconfig, so it type-checks the .ts/.spec.ts files (and the component call sites inside
   # them) that neither `tsc --noEmit` nor upstream's svelte pass reaches.
@@ -49,7 +50,7 @@ jobs:
           persist-credentials: false
 
       # Only node and pnpm: this job never builds plugin-core, so the wasm toolchain
-      # (extism, binaryen, java) in the root mise.toml would be dead weight.
+      # (extism-js, binaryen) in the root mise.toml would be dead weight.
       - name: Setup mise (node + pnpm)
         uses: jdx/mise-action@v3
         with:
@@ -74,13 +75,18 @@ jobs:
       #
       # Not //:plugins itself: that one also builds plugin-core, whose build:wasm needs the
       # extism-js and binaryen toolchain this job deliberately does not install.
+      #
+      # Caveat, latent: pnpm-workspace.yaml sets injectWorkspacePackages: true. Today the
+      # workspace links are plain symlinks, so building after both installs is equivalent to
+      # interleaving them. If a future pnpm actually honours injection, a consumer installed
+      # before its dependency is built could copy an empty output, and this would need to go
+      # back to install-then-build per package — in dependency order.
       - name: Install workspaces
         run: |
           pnpm --filter @immich/sdk --filter @immich/plugin-sdk install --frozen-lockfile
           pnpm --filter @immich/sdk --filter @immich/plugin-sdk build
           pnpm --filter immich install --frozen-lockfile
           pnpm --filter immich-web install --frozen-lockfile
-          pnpm --filter immich-web exec svelte-kit sync
 
       - name: Run the feature suite
         run: bash dev-test/google-drive/run.sh
@@ -91,7 +97,11 @@ jobs:
       - name: Summarise the run
         if: always()
         run: |
-          latest="$(ls -t dev-test/google-drive/results/*.txt 2>/dev/null | head -1)"
+          # By name, not by mtime: a fresh checkout gives every tracked file the same
+          # timestamp, so `ls -t` could pick a committed evidence file from a past run
+          # instead of the one this job just produced. The names are YYYYMMDD-HHMM, so a
+          # lexical sort is a chronological one.
+          latest="$(ls dev-test/google-drive/results/*.txt 2>/dev/null | sort | tail -1)"
           if [ -n "$latest" ]; then
             {
               echo "### $latest"
@@ -109,9 +119,11 @@ jobs:
           path: dev-test/google-drive/results/
           retention-days: 30
 
-  # The broad sweep. run.sh covers 12 spec files and no lint/format/tsc, so this is the job that
+  # The broad sweep. run.sh covers 11 spec files and no lint/format/tsc, so this is the job that
   # actually catches what an upstream merge breaks. Starts non-blocking: the fork has never run
-  # these in CI, and `//web:ci-unit` includes `prettier --check .` over the whole workspace.
+  # these in CI, and both ci-unit tasks *start* with `prettier --check .` (rooted at web/ and
+  # server/ respectively), so a formatting slip stops the sweep before a single test runs — which
+  # is what it did the first time it was checked, on three files this fork wrote.
   regression:
     name: Full server + web unit sweep
     runs-on: ubuntu-latest

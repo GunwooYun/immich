@@ -1,9 +1,9 @@
 import '@testing-library/jest-dom';
-import { optionClickCallbackStore } from '$lib/stores/context-menu.store';
 import { fireEvent, render } from '@testing-library/svelte';
-import { renderWithTooltips } from '$tests/helpers';
 import userEvent from '@testing-library/user-event';
 import { init, register, waitLocale } from 'svelte-i18n';
+import { optionClickCallbackStore } from '$lib/stores/context-menu.store';
+import { renderWithTooltips } from '$tests/helpers';
 import GoogleDriveAlbumMenu from './GoogleDriveAlbumMenu.svelte';
 import DriveMenuHarness from './__tests__/DriveMenuHarness.svelte';
 

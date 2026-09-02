@@ -1,8 +1,8 @@
 import '@testing-library/jest-dom';
 import { fireEvent } from '@testing-library/svelte';
-import { renderWithTooltips } from '$tests/helpers';
 import userEvent from '@testing-library/user-event';
 import { init, register, waitLocale } from 'svelte-i18n';
+import { renderWithTooltips } from '$tests/helpers';
 import ContextMenuHarness from './__tests__/ContextMenuHarness.svelte';
 
 // Regression tests for the Wave 5 fixes round on the shared ButtonContextMenu:
@@ -57,7 +57,10 @@ describe('ButtonContextMenu', () => {
 
   it('W1: an outside click still closes the menu', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'plain' as const, hideContent: true });
+    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, {
+      mode: 'plain' as const,
+      hideContent: true,
+    });
     await openMenu(user, getByLabelText);
     expect(queryByRole('menu')).toBeInTheDocument();
 
@@ -67,7 +70,10 @@ describe('ButtonContextMenu', () => {
 
   it('W3: hideContent keeps the menu body (and its tab stops) out of the DOM while closed', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption' as const, hideContent: true });
+    const { getByLabelText, queryByRole } = renderWithTooltips(ContextMenuHarness, {
+      mode: 'menuoption' as const,
+      hideContent: true,
+    });
     // Closed: no menu at all.
     expect(queryByRole('menu')).not.toBeInTheDocument();
     expect(queryByRole('menuitem')).not.toBeInTheDocument();
@@ -79,7 +85,10 @@ describe('ButtonContextMenu', () => {
 
   it('F1: with hideContent, focus lands on the menu after opening (not the trigger)', async () => {
     const user = userEvent.setup();
-    const { getByLabelText, findByRole } = renderWithTooltips(ContextMenuHarness, { mode: 'menuoption' as const, hideContent: true });
+    const { getByLabelText, findByRole } = renderWithTooltips(ContextMenuHarness, {
+      mode: 'menuoption' as const,
+      hideContent: true,
+    });
     await openMenu(user, getByLabelText);
     const menu = await findByRole('menu');
     // openDropdown defers focus via tick() because the <ul> is not mounted synchronously under

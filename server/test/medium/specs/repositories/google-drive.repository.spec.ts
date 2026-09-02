@@ -197,11 +197,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(true);
 
       // Exactly what softDeleteAll does: stamp album.deletedAt, nothing else.
-      await ctx.database
-        .updateTable('album')
-        .set({ deletedAt: new Date() })
-        .where('id', '=', album.id)
-        .execute();
+      await ctx.database.updateTable('album').set({ deletedAt: new Date() }).where('id', '=', album.id).execute();
 
       await expect(sut.isAssetInSubscribedAlbum(guest.id, asset.id)).resolves.toBe(false);
       // The selection row still exists — the leak was that the gate ignored the album's deletion,
