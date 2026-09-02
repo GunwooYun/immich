@@ -57,8 +57,15 @@ jobs:
 
       # run.sh assumes an installed workspace — it calls `npx vitest` / `npx svelte-check`
       # directly. Installing here rather than in run.sh keeps the local loop fast.
+      # @immich/plugin-sdk is not optional here even though nothing in this feature uses plugins:
+      # server/src/enum.ts imports WorkflowTrigger from it as a *runtime* value (z.enum), its entry
+      # point is dist/index.js, and packages/plugin-sdk/.gitignore excludes /dist — so a clean
+      # checkout has no such file and every server spec fails to import. `mise //:plugins` would
+      # also build plugin-core, which needs the extism/binaryen/java toolchain this job skips.
       - name: Install workspaces
         run: |
+          pnpm --filter @immich/plugin-sdk install --frozen-lockfile
+          pnpm --filter @immich/plugin-sdk build
           pnpm --filter @immich/sdk install --frozen-lockfile
           pnpm --filter @immich/sdk build
           pnpm --filter immich install --frozen-lockfile
@@ -99,7 +106,6 @@ jobs:
     name: Full server + web unit sweep
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -111,11 +117,32 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v3
 
+      # continue-on-error sits on the steps, not the job. On the job it would mark the whole job
+      # successful in the checks list, which hides exactly what this job exists to show. Here the
+      # job still goes green while these two are settling in, but the summary below says out loud
+      # which one failed. Flip both to blocking (delete the two continue-on-error lines) after one
+      # run where both are green.
       - name: server — format, lint, check, unit tests
+        id: server
+        continue-on-error: true
         run: mise run //server:ci-unit
 
       - name: web — format, check, unit tests
+        id: web
+        continue-on-error: true
         run: mise run //web:ci-unit
+
+      - name: Report outcomes
+        if: always()
+        run: |
+          {
+            echo "### Regression sweep (non-blocking)"
+            echo "- server //server:ci-unit: ${{ steps.server.outcome }}"
+            echo "- web //web:ci-unit: ${{ steps.web.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.server.outcome }}" = "failure" ] || [ "${{ steps.web.outcome }}" = "failure" ]; then
+            echo "::warning::the regression sweep failed; it is non-blocking for now"
+          fi
 
   # Real-Postgres tests. No `services:` block: server/test/medium/globalSetup.ts starts the
   # database itself through testcontainers (ghcr.io/immich-app/postgres:14-vectorchord0.4.3) and
@@ -127,13 +154,32 @@ jobs:
     permissions:
       contents: read
     steps:
+      # submodules: the medium suite is wider than run.sh --medium — it runs every spec under
+      # server/test/medium, and several of those read fixtures from e2e/test-assets, which is a
+      # submodule (medium.factory.ts resolves testAssetsDir into it). Upstream's own medium job
+      # checks out recursively for the same reason.
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          submodules: 'recursive'
 
       - name: Setup mise
         uses: jdx/mise-action@v3
 
+      # Non-blocking for the same reason as the sweep above, and flipped the same way: the 56-spec
+      # medium suite is far wider than the single spec run.sh --medium runs locally, and it has
+      # never executed on this fork. The feature's own database spec is inside it, so a red here
+      # still needs reading — hence the summary line rather than silence.
       - name: server — medium tests
+        id: medium
+        continue-on-error: true
         run: mise run //server:ci-medium
+
+      - name: Report outcome
+        if: always()
+        run: |
+          echo "### Medium suite (non-blocking): ${{ steps.medium.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.medium.outcome }}" = "failure" ]; then
+            echo "::warning::the medium suite failed; it is non-blocking for now"
+          fi
