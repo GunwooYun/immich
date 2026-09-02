@@ -168,6 +168,7 @@ Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
        prompt="Review <report>. Write <review>. Verify claims against the code. Modify no other file.")
   ```
   돌아온 판정은 §1대로 **코드와 대조한 뒤** 반영한다. **배포 직전 게이트에서만** `git worktree add --detach ../<project>-review main`으로 격리한 새 `claude` 세션을 쓴다(업스트림 `/startproject` Phase 6의 Option A). 두 경로 모두 §2의 리포트·리뷰 파일 쌍을 남긴다.
+- **`.claude/agents/`에 새 에이전트를 추가해도 그 세션에서는 못 부른다.** 에이전트 목록은 세션 시작 시점에 로드되므로, 방금 만든 `subagent_type`은 `Agent type '...' not found`로 실패한다. 다음 세션부터 쓸 수 있고, 당장 필요하면 `general-purpose`에게 그 에이전트 정의 파일을 읽혀서 계약대로 행동하게 한다(2026-09-02에 `code-reviewer`로 실제로 겪음).
 - **훅 파일명을 바꾸면 `.claude/settings.json` 등록 경로를 같은 커밋에서 함께 바꾼다.** 어긋나면 PreToolUse 훅 오류로 모든 Edit이 막힌다.
 - **agy 헤드리스 호출의 빈 응답은 실패다** (soft-deny, exit 0). stderr를 버리지 말고 `--output-format json`의 `.status`/`response`로 판단한다. 파일을 읽는 호출은 템플릿 패턴의 플래그와 "파일 수정 금지" 문구를 그대로 쓴다.
 - **deep-reasoning의 읽기 전용은 도구 제거 + 지시**이지 커널 샌드박스가 아니다. 커밋 전 `git status`로 의도치 않은 변경을 확인한다.
