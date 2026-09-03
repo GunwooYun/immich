@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { AlbumUserRole, GoogleDriveUploadErrorClass, JobName, JobStatus } from 'src/enum';
+import { AlbumUserRole, GoogleDriveUploadErrorClass, JobName, JobStatus, SystemMetadataKey } from 'src/enum';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { AlbumFactory } from 'test/factories/album.factory';
 import { AssetFactory } from 'test/factories/asset.factory';
@@ -16,10 +16,13 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
-const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed } = vi.hoisted(() => ({
+const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed, oauth2GetToken } = vi.hoisted(() => ({
   driveFilesCreate: vi.fn(),
   driveFilesDelete: vi.fn(),
   driveAboutGet: vi.fn(),
+  // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
+  // account-change reset below cannot be reached without getting a token first.
+  oauth2GetToken: vi.fn(),
   // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
   // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
   // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
@@ -36,6 +39,9 @@ vi.mock('googleapis', () => ({
         setCredentials() {}
         getAccessToken() {
           return { token: 'access-token' };
+        }
+        getToken(code: string) {
+          return oauth2GetToken(code);
         }
         generateAuthUrl() {
           return 'https://accounts.google.com/o/oauth2/v2/auth?mocked=true';
@@ -85,6 +91,7 @@ const quota = (over: Record<string, string> = {}) => ({
 const connected = (userId: string) => ({
   userId,
   refreshToken: 'refresh-token',
+  driveAccountId: null,
   folderId: null,
   folderName: null,
   connectedAt: new Date(),
@@ -96,6 +103,7 @@ const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
   mocks.googleDrive.getCredentials.mockResolvedValue({
     userId,
     refreshToken: 'refresh-token',
+    driveAccountId: null,
     folderId: null,
     folderName: null,
     connectedAt: new Date(),
@@ -207,6 +215,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
+        driveAccountId: null,
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -232,6 +241,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
+        driveAccountId: null,
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -256,6 +266,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
+        driveAccountId: null,
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -280,6 +291,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
+        driveAccountId: null,
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -303,6 +315,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'refresh-token',
+        driveAccountId: null,
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -403,6 +416,7 @@ describe(GoogleDriveService.name, () => {
         mocks.googleDrive.getCredentials.mockResolvedValue({
           userId,
           refreshToken: 'refresh-token',
+          driveAccountId: null,
           folderId: 'folder-1',
           folderName: 'Photos',
           connectedAt: new Date(),
@@ -436,6 +450,7 @@ describe(GoogleDriveService.name, () => {
         mocks.googleDrive.getCredentials.mockResolvedValue({
           userId,
           refreshToken: 'refresh-token',
+          driveAccountId: null,
           folderId: 'folder-1',
           folderName: 'Photos',
           connectedAt: new Date(),
@@ -937,6 +952,7 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
         refreshToken: 'super-secret-refresh-token',
+        driveAccountId: null,
         folderId: 'folder-id',
         folderName: 'Folder name',
         connectedAt,
@@ -1093,6 +1109,104 @@ describe(GoogleDriveService.name, () => {
 
       expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleCallback', () => {
+    /**
+     * Arranges a callback that will pass the state checks, so the tests below can be about what
+     * linking *does* rather than about JWT plumbing. `previousAccountId` is what the database
+     * already holds for this user; `newAccountId` is what Drive reports for the token just issued.
+     */
+    const arrangeLink = ({
+      previousAccountId,
+      newAccountId,
+    }: {
+      previousAccountId: string | null;
+      newAccountId: string | null;
+    }) => {
+      const userId = newUuid();
+
+      mocks.systemMetadata.get.mockImplementation((key: string) =>
+        Promise.resolve(
+          key === SystemMetadataKey.GoogleDriveState ? { secret: 'state-secret' } : { googleDrive: enabledConfig },
+        ),
+      );
+      mocks.crypto.verifyJwt.mockReturnValue({ userId });
+      oauth2GetToken.mockResolvedValue({ tokens: { refresh_token: 'new-refresh-token' } });
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: newAccountId } } });
+      mocks.googleDrive.getCredentials.mockResolvedValue(
+        previousAccountId === null && newAccountId === null
+          ? undefined
+          : {
+              userId,
+              refreshToken: 'old-refresh-token',
+              driveAccountId: previousAccountId,
+              folderId: null,
+              folderName: null,
+              connectedAt: new Date(),
+            },
+      );
+
+      return { userId, run: () => sut.handleCallback('auth-code', 'state', 'state', userId) };
+    };
+
+    it('should forget what was uploaded when a different Google account is linked', async () => {
+      // The bug this pins: the ledger is keyed (userId, assetId) and says nothing about *which*
+      // Drive received an asset, so re-linking another account used to leave every asset reading
+      // "already uploaded" — the new Drive stays empty while the UI reports the library synced.
+      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: 'account-b' });
+
+      await run();
+
+      expect(mocks.googleDrive.deleteUploads).toHaveBeenCalledWith(userId);
+      // Every failure class, not just the revoked ones: a quota or a missing folder belonged to the
+      // account that is no longer connected, and leaving those rows blocks the new account at the
+      // worker's entrance.
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(
+        userId,
+        expect.arrayContaining([
+          GoogleDriveUploadErrorClass.QuotaExceeded,
+          GoogleDriveUploadErrorClass.FolderMissing,
+          GoogleDriveUploadErrorClass.Revoked,
+        ]),
+      );
+      // Non-vacuous: the reset only means something if the link itself went through and recorded
+      // the account it switched to.
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-b');
+    });
+
+    it('should keep the ledger when the same account is linked again', async () => {
+      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: 'account-a' });
+
+      await run();
+
+      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(userId, [GoogleDriveUploadErrorClass.Revoked]);
+      // Witness that the flow ran at all, so the negative above cannot pass by bailing out early.
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-a');
+    });
+
+    it('should record the account without resetting when the previous one is unknown', async () => {
+      // Rows created before driveAccountId existed carry null. Null is "unknown", not "a different
+      // account" — wiping a ledger on that guess would re-upload someone's whole library.
+      const { userId, run } = arrangeLink({ previousAccountId: null, newAccountId: 'account-a' });
+
+      await run();
+
+      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-a');
+    });
+
+    it('should link successfully when Drive will not say which account it is', async () => {
+      // The identity probe is best-effort: failing the whole connection because it came back empty
+      // would turn a working link into an error for no gain.
+      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: null });
+
+      await run();
+
+      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', null);
     });
   });
 });

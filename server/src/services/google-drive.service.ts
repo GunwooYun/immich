@@ -359,12 +359,58 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Failed to link Google account');
     }
 
-    await this.googleDriveRepository.upsertCredentials(userId, refreshToken);
+    // Which Google account did we just get a token for? The ledger is keyed (userId, assetId) and
+    // carries no notion of a destination account, so re-linking a *different* account would leave
+    // every asset reading "already uploaded" and the new Drive empty forever, with the UI happily
+    // reporting the whole library synced. Drive's `permissionId` is the account's stable id and is
+    // readable under the drive.file scope, the same call the storage gauge already makes.
+    const previous = await this.googleDriveRepository.getCredentials(userId);
+    const driveAccountId = await this.getDriveAccountId(refreshToken);
+    const accountChanged = !!previous?.driveAccountId && !!driveAccountId && previous.driveAccountId !== driveAccountId;
+
+    await this.googleDriveRepository.upsertCredentials(userId, refreshToken, driveAccountId);
+
+    if (accountChanged) {
+      // Forget what was uploaded, because it was uploaded somewhere else. The files in the old
+      // account are left untouched; this only resets what *this* server believes it has sent.
+      this.logger.log(`Google Drive account changed for user ${userId}; resetting the upload ledger`);
+      await this.googleDriveRepository.deleteUploads(userId);
+
+      // Every failure class is stale for the same reason, not just the revoked ones: a quota that
+      // was full or a folder that went missing belonged to the previous account, and leaving those
+      // rows behind would keep the *new* account blocked at the worker's entrance with nothing in
+      // the reconnect flow saying to press Resume.
+      await this.googleDriveRepository.clearErrors(userId, [...Object.values(GoogleDriveUploadErrorClass)]);
+      return;
+    }
 
     // A fresh grant makes any `revoked` failure rows stale — those assets are still pending (no
     // ledger row), so the next sync or backfill will retry them; the rows would only sit around
     // misreporting "failed" in the UI.
     await this.googleDriveRepository.clearErrors(userId, [GoogleDriveUploadErrorClass.Revoked]);
+  }
+
+  /**
+   * Reads the linked account's Drive `permissionId`, or null if Drive won't say.
+   *
+   * Null is deliberately non-fatal: failing the whole link because an identity probe failed would
+   * turn a working connection into an error, and a null simply means the next link has nothing to
+   * compare against — the same position every row was in before this column existed.
+   */
+  private async getDriveAccountId(refreshToken: string): Promise<string | null> {
+    try {
+      const oauth2Client = await this.getOAuth2Client();
+      oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+      const { data } = await google
+        .drive({ version: 'v3', auth: oauth2Client })
+        .about.get({ fields: 'user(permissionId)' });
+
+      return data.user?.permissionId ?? null;
+    } catch (error) {
+      this.logger.warn(`Could not read the Google Drive account id after linking: ${error}`);
+      return null;
+    }
   }
 
   /**

@@ -38,7 +38,7 @@ export class GoogleDriveRepository {
   getCredentials(userId: string) {
     return this.db
       .selectFrom('user_google_drive')
-      .select(['userId', 'refreshToken', 'folderId', 'folderName', 'connectedAt'])
+      .select(['userId', 'refreshToken', 'driveAccountId', 'folderId', 'folderName', 'connectedAt'])
       .where('userId', '=', userId)
       .executeTakeFirst();
   }
@@ -52,12 +52,25 @@ export class GoogleDriveRepository {
    * picked.
    */
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
-  upsertCredentials(userId: string, refreshToken: string) {
+  upsertCredentials(userId: string, refreshToken: string, driveAccountId: string | null) {
     return this.db
       .insertInto('user_google_drive')
-      .values({ userId, refreshToken })
-      .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken }))
+      .values({ userId, refreshToken, driveAccountId })
+      .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken, driveAccountId }))
       .execute();
+  }
+
+  /**
+   * Forgets everything this user has uploaded, so the backlog is recomputed from scratch.
+   *
+   * Only called when the linked Google account changes: the ledger records that an asset reached
+   * *a* Drive, not *which* one, so those rows are meaningless once the destination account is a
+   * different one. Nothing in Drive is touched — the files already sent to the old account stay
+   * where they are, which is the point of keeping the reset on this side.
+   */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  deleteUploads(userId: string) {
+    return this.db.deleteFrom('google_drive_upload').where('userId', '=', userId).execute();
   }
 
   /**

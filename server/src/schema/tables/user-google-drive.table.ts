@@ -34,6 +34,19 @@ export class UserGoogleDriveTable {
   @Column()
   refreshToken!: string;
 
+  // Which Google account this row's token belongs to — Drive's own `permissionId` for the user,
+  // read once at link time. It exists because the upload ledger is keyed (userId, assetId) with no
+  // notion of *which* Drive an asset went to: without this, connecting a different Google account
+  // leaves every asset reading "already uploaded", so the new Drive stays empty forever while the
+  // UI reports completion. Comparing this on each link is what lets us notice and reset.
+  //
+  // Nullable because rows created before this column existed cannot know their account. A null is
+  // "unknown", not "no account": the first link after this ships records the id without resetting
+  // anything, since we have nothing to compare against and wiping a ledger on a guess would mean
+  // re-uploading someone's whole library.
+  @Column({ nullable: true })
+  driveAccountId!: string | null;
+
   // The Drive folder id uploads should go into. Null = upload to the root of the user's "My Drive".
   @Column({ nullable: true })
   folderId!: string | null;

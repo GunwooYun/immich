@@ -4,6 +4,7 @@
 select
   "userId",
   "refreshToken",
+  "driveAccountId",
   "folderId",
   "folderName",
   "connectedAt"
@@ -20,6 +21,11 @@ values
 on conflict ("userId") do update
 set
   "refreshToken" = $3
+
+-- GoogleDriveRepository.deleteUploads
+delete from "google_drive_upload"
+where
+  "userId" = $1
 
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"
