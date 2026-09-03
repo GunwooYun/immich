@@ -15,12 +15,13 @@ where
 
 -- GoogleDriveRepository.upsertCredentials
 insert into
-  "user_google_drive" ("userId", "refreshToken")
+  "user_google_drive" ("userId", "refreshToken", "driveAccountId")
 values
-  ($1, $2)
+  ($1, $2, $3)
 on conflict ("userId") do update
 set
-  "refreshToken" = $3
+  "refreshToken" = $4,
+  "driveAccountId" = $5
 
 -- GoogleDriveRepository.setDriveAccountId
 update "user_google_drive"

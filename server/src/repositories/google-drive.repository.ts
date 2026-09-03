@@ -11,7 +11,7 @@ import { DB } from 'src/schema';
  * `user_google_drive` holds per-user connection state (OAuth refresh token + chosen destination
  * folder). One row per connected user; no row means "this user hasn't linked Google Drive".
  *
- * `google_drive_upload` is our "upload ledger": one row per (userId, assetId) pair that has
+ * `google_drive_upload` is our "upload ledger": one row per (userId, assetId, driveAccountId) that has
  * successfully been uploaded to that user's Google Drive, plus the Drive-assigned file id. It
  * exists purely to answer one question cheaply: "has this asset already been uploaded for this
  * user?" — so that GoogleDriveService never uploads (and therefore duplicates) the same photo
@@ -65,7 +65,7 @@ export class GoogleDriveRepository {
    * `folderId`: re-authorizing shouldn't silently reset a destination folder the user already
    * picked.
    */
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
   upsertCredentials(userId: string, refreshToken: string, driveAccountId: string | null) {
     return this.db
       .insertInto('user_google_drive')
@@ -591,9 +591,9 @@ export class GoogleDriveRepository {
    * as already synced and skip it.
    *
    * Uses an upsert (`onConflict ... doUpdateSet`) rather than a plain insert: in the rare case
-   * this ever gets called twice for the same (userId, assetId) — e.g. a retried job racing with
+   * this ever gets called twice for the same (userId, assetId, driveAccountId) — e.g. a retried job racing with
    * itself — we simply overwrite the recorded driveFileId with the latest one instead of
-   * throwing a duplicate-key error. The (userId, assetId) pair is the table's primary key (see
+   * throwing a duplicate-key error. That triple is the table's primary key (see
    * the GoogleDriveUploadTable schema definition), which is what makes this upsert possible.
    */
   recordUpload(userId: string, assetId: string, driveFileId: string, driveAccountId: string) {

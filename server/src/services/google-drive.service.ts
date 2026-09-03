@@ -793,7 +793,9 @@ export class GoogleDriveService extends BaseService {
     // Before gate 2 reads the ledger: if this connection has never been identified, name it and
     // adopt the rows written before the account column existed. Gate 2 compares against the
     // connected account, so an unidentified connection would otherwise keep matching only the ''
-    // bucket forever. Costs one probe, once, and only while the id is unknown.
+    // bucket forever. One probe per job while the id is unknown — it stops as soon as one
+    // succeeds, and a permanently unidentifiable account pays it every time, which the warning in
+    // getDriveAccountId makes visible rather than silent.
     const uploadAccountId = credentials.driveAccountId
       ? credentials.driveAccountId
       : await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
@@ -802,7 +804,7 @@ export class GoogleDriveService extends BaseService {
     //    again — that would create a duplicate file in their Drive. Checked first among the
     //    per-asset gates because idempotent re-queueing (add to two albums, re-run a backfill,
     //    press sync again) makes "already uploaded" the highest-hit-rate reject, and it's a plain
-    //    (userId, assetId) primary-key lookup — cheaper than the join below.
+    //    primary-key lookup on (userId, assetId, driveAccountId) — cheaper than the join below.
     if (await this.googleDriveRepository.hasUpload(userId, assetId)) {
       return 'skipped';
     }

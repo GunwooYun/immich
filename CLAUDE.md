@@ -376,11 +376,23 @@ web/src/**/*.spec.ts             웹 유닛
   다시 연결하면** 그 행들이 매칭에 실패해 라이브러리 전체가 중복으로 다시 올라간다. 그래서:
 
   ```bash
-  # 1) 배포 후 설정 화면을 한 번 연다 (storage 호출이 입양을 트리거한다)
-  # 2) 남은 미상 행이 0인지 확인한다 — 0이 되기 전에는 연결 해제 금지
-  ssh 랩탑 "docker exec immich_postgres psql -U postgres -d immich -tAc \
-    'select count(*) from google_drive_upload where \"driveAccountId\" = '\''\''' "
+  # 1) 배포 후 설정 화면을 한 번 연다.
+  #    입양을 트리거하는 것은 getStatus이고, 설정 화면이 로드 시 부르는 것이 그것이다.
+  #    (앨범 메뉴의 storage 호출도 트리거하지만, 설정 화면은 storage를 부르지 않는다.)
+  # 2) 사용자별로 미상 행이 남았는지 본다 — 0이 되기 전에는 연결 해제 금지.
+  #    합계가 아니라 사용자별로 보는 이유: 한 사용자가 0이어도 다른 사용자가 남아 있을 수 있고,
+  #    "누구를 기다리는가"를 알아야 다음 행동이 정해진다.
+  ssh 랩탑 "docker exec immich_postgres psql -U postgres -d immich -c '
+    select u.\"userId\", u.\"driveAccountId\" is null as unidentified, count(g.*) as unstamped
+    from user_google_drive u
+    left join google_drive_upload g on g.\"userId\" = u.\"userId\" and g.\"driveAccountId\" = '\''\''
+    group by 1, 2;'"
   ```
+
+  `unstamped`가 0이 되지 않는 원인은 셋뿐이고 서로 구별된다:
+  `unidentified = true`면 아직 설정 화면을 안 열었거나 **신원 프로브가 실패**하는 것이다
+  (서버 로그의 `did not report a permissionId` / `Could not read the Google Drive account id`를 본다).
+  `unidentified = false`인데 행이 남아 있으면 입양이 돌다 말았다는 뜻이다.
 
   입양은 **기존 토큰이 살아 있는 동안에만** 일어난다(연결 경로에서는 절대 하지 않는다 — 그때
   토큰은 새것이고 다른 계정일 수 있다).
