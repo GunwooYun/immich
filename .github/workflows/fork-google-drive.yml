@@ -148,19 +148,15 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v3
 
-      # continue-on-error sits on the steps, not the job. On the job it would mark the whole job
-      # successful in the checks list, which hides exactly what this job exists to show. Here the
-      # job still goes green while these two are settling in, but the summary below says out loud
-      # which one failed. Flip both to blocking (delete the two continue-on-error lines) after one
-      # run where both are green.
+      # Blocking as of runs 33715025550 and 33758496224, both green. They started non-blocking
+      # because neither had ever executed on this fork; the summary below is kept anyway, since a
+      # named outcome per step is cheaper to read than opening the log.
       - name: server — format, lint, check, unit tests
         id: server
-        continue-on-error: true
         run: mise run //server:ci-unit
 
       - name: web — format, check, unit tests
         id: web
-        continue-on-error: true
         run: mise run //web:ci-unit
 
       - name: Report outcomes
@@ -198,13 +194,10 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v3
 
-      # Non-blocking for the same reason as the sweep above, and flipped the same way: the 56-spec
-      # medium suite is far wider than the single spec run.sh --medium runs locally, and it has
-      # never executed on this fork. The feature's own database spec is inside it, so a red here
-      # still needs reading — hence the summary line rather than silence.
+      # Blocking now, for the same reason as the sweep: two green runs. The feature's own database
+      # spec lives inside this 56-spec suite, so a red here was never something to shrug at.
       - name: server — medium tests
         id: medium
-        continue-on-error: true
         run: mise run //server:ci-medium
 
       - name: Report outcome

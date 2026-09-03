@@ -49,8 +49,19 @@ from
   inner join "user_google_drive" on "user_google_drive"."userId" = "google_drive_album"."userId"
   inner join "album_user" on "album_user"."albumId" = "google_drive_album"."albumId"
   and "album_user"."userId" = "google_drive_album"."userId"
+  inner join "album" on "album"."id" = "google_drive_album"."albumId"
 where
   "google_drive_album"."albumId" in ($1)
+  and "album"."deletedAt" is null
+  and not exists (
+    select
+      1 as "one"
+    from
+      "google_drive_upload_error"
+    where
+      "google_drive_upload_error"."userId" = "google_drive_album"."userId"
+      and "google_drive_upload_error"."error" in ($2, $3)
+  )
 
 -- GoogleDriveRepository.isSubscribed
 select

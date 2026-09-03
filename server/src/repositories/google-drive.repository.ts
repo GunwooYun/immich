@@ -110,15 +110,23 @@ export class GoogleDriveRepository {
   /**
    * The users who back this album up to their own Drive *right now*.
    *
-   * Three conditions, and the third is the one that is easy to forget and expensive to get wrong:
+   * Five conditions, and the third is the one that is easy to forget and expensive to get wrong:
    *   1. they selected the album,
    *   2. they have Drive connected (queueing for someone unconnected only creates jobs the worker
    *      skips),
-   *   3. **they can still see the album** — joined through `album_user`.
+   *   3. **they can still see the album** — joined through `album_user`,
+   *   4. the album has not been soft-deleted,
+   *   5. the account is not blocked (quota exhausted, destination folder gone).
    *
    * A selection row deliberately outlives an unshare (so re-sharing resumes without re-picking),
    * which means the row by itself is not evidence of access. Without the membership join, a user
    * would keep receiving copies of an album they can no longer open, silently and indefinitely.
+   *
+   * 4 and 5 were missing while the two sibling queries — streamPendingUploads and
+   * isAssetInSubscribedAlbum — both had them, so the automatic path queued jobs the worker was
+   * always going to skip. That is not merely wasteful: the per-asset jobs and the admin "queue
+   * all" job share one queue, so a blocked user's flood makes the queue look active and the admin
+   * button refuses with "Job is already running".
    *
    * Takes an array because `addAssetsToAlbums` touches several albums at once: one query with
    * `in (...)` rather than one per album in a loop.
@@ -133,7 +141,19 @@ export class GoogleDriveRepository {
           .onRef('album_user.albumId', '=', 'google_drive_album.albumId')
           .onRef('album_user.userId', '=', 'google_drive_album.userId'),
       )
+      .innerJoin('album', 'album.id', 'google_drive_album.albumId')
       .where('google_drive_album.albumId', 'in', albumIds)
+      .where('album.deletedAt', 'is', null)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('google_drive_upload_error')
+              .select(sql`1`.as('one'))
+              .whereRef('google_drive_upload_error.userId', '=', 'google_drive_album.userId')
+              .where('google_drive_upload_error.error', 'in', [...GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES]),
+          ),
+        ),
+      )
       .select(['google_drive_album.albumId as albumId', 'google_drive_album.userId as userId'])
       .execute();
   }

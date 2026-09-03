@@ -229,4 +229,82 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.isAssetInSubscribedAlbum(user.id, asset.id)).resolves.toBe(true);
     });
   });
+
+  /**
+   * The automatic path's entry point. Every asset added to an album goes through this, and it was
+   * the only one of the three access queries missing the soft-delete and blocking filters — so it
+   * queued jobs the worker would always skip, and a blocked user's flood made the shared queue
+   * look active enough that the admin "queue all" button refused to start.
+   */
+  describe('getSubscribers', () => {
+    it('should return the user who selected an album they can still see', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { album } = await ctx.newAlbum({ ownerId: user.id });
+      await ctx.database.insertInto('user_google_drive').values({ userId: user.id, refreshToken: 'token' }).execute();
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual([{ albumId: album.id, userId: user.id }]);
+    });
+
+    it('should not return a user whose album has been soft-deleted', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { album } = await ctx.newAlbum({ ownerId: user.id });
+      await ctx.database.insertInto('user_google_drive').values({ userId: user.id, refreshToken: 'token' }).execute();
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+
+      // Witness first: without this the empty result below could come from a broken fixture rather
+      // than from the filter under test.
+      await expect(sut.getSubscribers([album.id])).resolves.toHaveLength(1);
+
+      await ctx.database.updateTable('album').set({ deletedAt: new Date() }).where('id', '=', album.id).execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual([]);
+    });
+
+    it('should not return a user blocked by a quota or a missing folder', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database.insertInto('user_google_drive').values({ userId: user.id, refreshToken: 'token' }).execute();
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toHaveLength(1);
+
+      await ctx.database
+        .insertInto('google_drive_upload_error')
+        .values({ userId: user.id, assetId: asset.id, error: 'quota_exceeded' })
+        .execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual([]);
+    });
+
+    it('should still return a user whose only failures are ordinary ones', async () => {
+      // Only the account-level classes gate the whole user. A single unreadable file must not stop
+      // every other asset in every album from being queued.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await ctx.database.insertInto('user_google_drive').values({ userId: user.id, refreshToken: 'token' }).execute();
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      await ctx.database
+        .insertInto('google_drive_upload_error')
+        .values({ userId: user.id, assetId: asset.id, error: 'source_unreadable' })
+        .execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual([{ albumId: album.id, userId: user.id }]);
+    });
+
+    it('should not return a user who has not connected Drive', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { album } = await ctx.newAlbum({ ownerId: user.id });
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual([]);
+    });
+  });
 });
