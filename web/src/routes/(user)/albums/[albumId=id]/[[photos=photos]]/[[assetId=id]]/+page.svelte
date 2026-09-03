@@ -56,6 +56,7 @@
     getAlbumInfo,
     getGoogleDriveAlbumStatus,
     getGoogleDriveStatus,
+    getMyGoogleDriveStatus,
     getGoogleDriveStorage,
     subscribeGoogleDriveAlbum,
     syncAlbumToGoogleDrive,
@@ -360,6 +361,7 @@
   let driveMenuLoading = $state(false);
   let driveTogglePending = $state(false);
   let driveConnected = $state(false);
+  let driveBlockedReason = $state<string | null>(null);
 
   const loadGoogleDriveMenu = async () => {
     driveMenuLoading = true;
@@ -369,10 +371,14 @@
       // from the storage call. Under Promise.all that single rejection would sink the whole batch,
       // throwing away the album and status data that did come back and showing an error toast for
       // a state that is simply "not connected yet".
-      const [albumStatus, storage, status] = await Promise.allSettled([
+      const [albumStatus, storage, status, myStatus] = await Promise.allSettled([
         getGoogleDriveAlbumStatus({ id: album.id }),
         getGoogleDriveStorage(),
         getGoogleDriveStatus(),
+        // Read fresh rather than from googleDriveProgressManager: that only polls while
+        // something is watching it, so its blockedReason can be stale — or never loaded — at
+        // the moment this menu opens.
+        getMyGoogleDriveStatus(),
       ]);
 
       driveConnected = status.status === 'fulfilled' && status.value.connected;
@@ -383,6 +389,7 @@
       // Absent rather than zeroed when unavailable — a gauge reading 0 would be a lie, where a
       // missing gauge is just a missing gauge.
       driveStorage = storage.status === 'fulfilled' ? storage.value : null;
+      driveBlockedReason = myStatus.status === 'fulfilled' ? (myStatus.value.blockedReason ?? null) : null;
     } catch (error) {
       handleError(error, $t('errors.unable_to_load_google_drive_status'));
     } finally {
@@ -690,6 +697,7 @@
                   <GoogleDriveAlbumMenu
                     loading={driveMenuLoading}
                     connected={driveConnected}
+                    blockedReason={driveBlockedReason}
                     backedUp={driveBackedUp}
                     togglePending={driveTogglePending}
                     uploaded={driveUploaded}

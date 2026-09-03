@@ -25,6 +25,7 @@ const baseProps = {
   total: 10,
   storage: { limitBytes: 100, usageBytes: 96, usageInDriveTrashBytes: 0 },
   folderId: 'folder-1',
+  blockedReason: null as string | null,
   onToggle: vi.fn(),
   onSyncNow: vi.fn(),
 };
@@ -205,6 +206,34 @@ describe('GoogleDriveAlbumMenu', () => {
       await user.click(getByText('Sync to Google Drive'));
       expect(onSyncNow).toHaveBeenCalledTimes(1);
       expect(queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('blocked account', () => {
+    it('should say why uploads are paused when the quota is exhausted', () => {
+      // The corner card's own comment says blocked states belong here, and they were nowhere in
+      // this menu: an album could show its backup toggle on while every upload was skipped at the
+      // worker's entrance, with nothing explaining it.
+      const { getByText, queryByText } = renderMenu({ blockedReason: 'quota_exceeded' });
+
+      expect(getByText(/Uploads are paused because your Google Drive storage is full/)).toBeInTheDocument();
+      expect(queryByText(/destination folder no longer exists in Google Drive/)).not.toBeInTheDocument();
+    });
+
+    it('should say so when the destination folder is gone', () => {
+      const { getByText } = renderMenu({ blockedReason: 'folder_missing' });
+
+      expect(getByText(/destination folder no longer exists in Google Drive/)).toBeInTheDocument();
+    });
+
+    it('should say nothing about blocking when nothing is blocked', () => {
+      const { getByText, queryByText } = renderMenu({ blockedReason: null });
+
+      expect(queryByText(/Uploads are paused because your Google Drive storage is full/)).not.toBeInTheDocument();
+      expect(queryByText(/destination folder no longer exists in Google Drive/)).not.toBeInTheDocument();
+      // Witness that the menu rendered at all, so the two negatives above cannot pass on an empty
+      // render.
+      expect(getByText('Drive storage')).toBeInTheDocument();
     });
   });
 });

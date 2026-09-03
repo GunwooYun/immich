@@ -19,7 +19,7 @@
   import { generateId } from '$lib/utils/generate-id';
   import { getByteUnitString } from '$lib/utils/byte-units';
   import { Icon, Switch } from '@immich/ui';
-  import { mdiChartArc, mdiCloudOffOutline, mdiCloudSyncOutline, mdiOpenInNew } from '@mdi/js';
+  import { mdiAlertCircleOutline, mdiChartArc, mdiCloudOffOutline, mdiCloudSyncOutline, mdiOpenInNew } from '@mdi/js';
   import { goto } from '$app/navigation';
   import { locale } from 'svelte-i18n';
   import { t } from 'svelte-i18n';
@@ -33,12 +33,31 @@
     total: number;
     storage: { limitBytes: number | null; usageBytes: number; usageInDriveTrashBytes: number } | null;
     folderId: string | null;
+    /**
+     * Account-level pause — 'quota_exceeded' or 'folder_missing' — or null.
+     *
+     * The corner card's own comment says blocked states belong in this menu, and until now they
+     * were nowhere in it: an album could sit there showing a backup toggle switched on while
+     * every upload was being skipped at the worker's entrance, with nothing here saying why.
+     */
+    blockedReason: string | null;
     onToggle: () => void;
     onSyncNow: () => void;
   }
 
-  let { loading, connected, backedUp, togglePending, uploaded, total, storage, folderId, onToggle, onSyncNow }: Props =
-    $props();
+  let {
+    loading,
+    connected,
+    backedUp,
+    togglePending,
+    uploaded,
+    total,
+    storage,
+    folderId,
+    blockedReason,
+    onToggle,
+    onSyncNow,
+  }: Props = $props();
 
   // One stable id per possible row, generated once. contextMenuNavigation resolves the current
   // selection with `container.querySelector('#' + id)`, so these must be valid, stable ids.
@@ -46,6 +65,7 @@
   const connectRowId = generateId();
   const toggleRowId = generateId();
   const syncRowId = generateId();
+  const blockedRowId = generateId();
   const storageRowId = generateId();
   const openRowId = generateId();
 
@@ -196,6 +216,20 @@
             : $t('google_drive_pending_count', { values: { count: pending } })}
         </div>
       </div>
+    </li>
+  {/if}
+
+  {#if blockedReason}
+    <!-- Same wording as the corner card (GoogleDriveProgressPanel) on purpose: one fact should not
+         be phrased two ways depending on where you happen to read it. Informational row, so it
+         carries an id for the same load-bearing reason the storage row does. -->
+    <li id={blockedRowId} role="menuitem" class={`${rowClass} ${dividerClass} text-amber-600 dark:text-amber-500`}>
+      <Icon icon={mdiAlertCircleOutline} size="18" />
+      <span class="min-w-0 flex-1">
+        {blockedReason === 'quota_exceeded'
+          ? $t('google_drive_uploads_blocked_quota')
+          : $t('google_drive_uploads_blocked_folder')}
+      </span>
     </li>
   {/if}
 

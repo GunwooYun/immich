@@ -24,6 +24,7 @@
     total={10}
     storage={{ limitBytes: 100, usageBytes: 50, usageInDriveTrashBytes: 0 }}
     folderId="folder-1"
+    blockedReason={null}
     {onToggle}
     {onSyncNow}
   />
