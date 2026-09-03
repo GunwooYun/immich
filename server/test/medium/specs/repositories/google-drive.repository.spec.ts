@@ -32,6 +32,15 @@ beforeAll(async () => {
  * correctness boundary (feeding someone copies of an album they lost access to), so it is worth
  * proving against Postgres rather than a mock.
  */
+const connect = (ctx: any, userId: string, driveAccountId: string | null) =>
+  ctx.database.insertInto('user_google_drive').values({ userId, refreshToken: 'token', driveAccountId }).execute();
+
+const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: string) =>
+  ctx.database
+    .insertInto('google_drive_upload')
+    .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId })
+    .execute();
+
 describe(`${GoogleDriveRepository.name} (medium)`, () => {
   describe('streamPendingUploads', () => {
     it('should stream assets of an album the user selected and can still see', async () => {
@@ -329,15 +338,6 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
    * must keep meaning that across a disconnect, a switch, and a switch back.
    */
   describe('account-scoped ledger', () => {
-    const connect = (ctx: any, userId: string, driveAccountId: string | null) =>
-      ctx.database.insertInto('user_google_drive').values({ userId, refreshToken: 'token', driveAccountId }).execute();
-
-    const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: string) =>
-      ctx.database
-        .insertInto('google_drive_upload')
-        .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId })
-        .execute();
-
     it('should hide a row written for another account', async () => {
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();

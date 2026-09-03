@@ -118,6 +118,38 @@ const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
   return asset;
 };
 
+/**
+ * Arranges a callback that will pass the state checks, so the link tests can be about what linking
+ * *does* rather than about JWT plumbing. Defined out here because the lint rule that keeps helpers
+ * out of describe bodies is right: this one is reusable and has no business closing over a suite.
+ */
+const arrangeLink =
+  (mocks: ServiceMocks, sut: GoogleDriveService) =>
+  ({ newAccountId }: { newAccountId: string | null }) => {
+    const userId = newUuid();
+
+    mocks.systemMetadata.get.mockImplementation((key: string) =>
+      Promise.resolve(
+        key === SystemMetadataKey.GoogleDriveState ? { secret: 'state-secret' } : { googleDrive: enabledConfig },
+      ),
+    );
+    mocks.crypto.verifyJwt.mockReturnValue({ userId });
+    oauth2GetToken.mockResolvedValue({ tokens: { refresh_token: 'new-refresh-token' } });
+    driveAboutGet.mockResolvedValue({ data: { user: { permissionId: newAccountId } } });
+
+    return { userId, run: () => sut.handleCallback('auth-code', 'state', 'state', userId) };
+  };
+
+/** A connection that exists but has never had its Google account identified. */
+const unidentified = (userId: string) => ({
+  userId,
+  refreshToken: 'refresh-token',
+  driveAccountId: null,
+  folderId: null,
+  folderName: null,
+  connectedAt: new Date(),
+});
+
 describe(GoogleDriveService.name, () => {
   let sut: GoogleDriveService;
   let mocks: ServiceMocks;
@@ -1154,29 +1186,10 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('handleCallback', () => {
-    /**
-     * Arranges a callback that will pass the state checks, so the tests below can be about what
-     * linking *does* rather than about JWT plumbing.
-     */
-    const arrangeLink = ({ newAccountId }: { newAccountId: string | null }) => {
-      const userId = newUuid();
-
-      mocks.systemMetadata.get.mockImplementation((key: string) =>
-        Promise.resolve(
-          key === SystemMetadataKey.GoogleDriveState ? { secret: 'state-secret' } : { googleDrive: enabledConfig },
-        ),
-      );
-      mocks.crypto.verifyJwt.mockReturnValue({ userId });
-      oauth2GetToken.mockResolvedValue({ tokens: { refresh_token: 'new-refresh-token' } });
-      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: newAccountId } } });
-
-      return { userId, run: () => sut.handleCallback('auth-code', 'state', 'state', userId) };
-    };
-
     it('should record which account the token belongs to', async () => {
       // This is what scopes the ledger. Without it every row falls into the '' bucket and a
       // different account reads as "already uploaded" — the original bug.
-      const { userId, run } = arrangeLink({ newAccountId: 'account-b' });
+      const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
 
       await run();
 
@@ -1187,7 +1200,7 @@ describe(GoogleDriveService.name, () => {
       // The safety property of the whole design. At link time the token is brand new and may
       // belong to a *different* account than the one those rows were written for; adopting here
       // would stamp another account's uploads with this one and recreate the original bug.
-      const { run } = arrangeLink({ newAccountId: 'account-b' });
+      const { run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
 
       await run();
 
@@ -1201,7 +1214,7 @@ describe(GoogleDriveService.name, () => {
       // If the condition still holds for the account connected now, the next upload re-blocks
       // after one attempt; leaving the rows would instead block a fresh connection with nothing
       // in the flow saying to press Resume.
-      const { userId, run } = arrangeLink({ newAccountId: 'account-b' });
+      const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
 
       await run();
 
@@ -1219,7 +1232,7 @@ describe(GoogleDriveService.name, () => {
       // Best effort: failing a working connection over an identity probe would be a worse trade.
       // The user keeps reading and writing the '' bucket, which is the same place their existing
       // rows live, so nothing re-uploads.
-      const { userId, run } = arrangeLink({ newAccountId: null });
+      const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: null });
 
       await run();
 
@@ -1228,15 +1241,6 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('adoption of pre-column uploads', () => {
-    const unidentified = (userId: string) => ({
-      userId,
-      refreshToken: 'refresh-token',
-      driveAccountId: null,
-      folderId: null,
-      folderName: null,
-      connectedAt: new Date(),
-    });
-
     it('should identify the account and adopt its rows when the settings page loads', async () => {
       // getStatus, not getStorage: the settings page calls this one and never calls that one, so
       // this is the hook the documented post-deploy step actually reaches.

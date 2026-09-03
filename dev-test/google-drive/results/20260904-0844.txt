@@ -1,0 +1,166 @@
+Google Drive — unit test run
+date:   2026-09-04T08:44:45+09:00
+commit: 1d1ce48ab (feat/google-drive-album-sync-v3.1.0)
+
+── server (unit) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+ ✓ |server:unit| src/utils/google-drive.spec.ts (16 tests) 8ms
+ ✓ |server:unit| src/utils/misc.spec.ts (26 tests) 8ms
+(node:15263) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15252) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15253) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15246) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15245) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15259) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:unit| src/services/queue.service.spec.ts (18 tests) 273ms
+ ✓ |server:unit| src/services/server.service.spec.ts (16 tests) 262ms
+ ✓ |server:unit| src/services/system-config.service.spec.ts (31 tests) 605ms
+ ✓ |server:unit| src/config.spec.ts (4 tests) 692ms
+   ✓ updateConfig with credentials from the environment > should not persist a cleared credential that the environment supplies  607ms
+ ✓ |server:unit| src/services/google-drive.service.spec.ts (67 tests) 920ms
+ ✓ |server:unit| src/services/album.service.spec.ts (70 tests) 952ms
+
+ Test Files  8 passed (8)
+      Tests  248 passed (248)
+   Start at  08:44:45
+   Duration  5.24s (transform 2.46s, setup 0ms, collect 24.22s, tests 3.72s, environment 2ms, prepare 747ms)
+
+
+── web (unit) ──────────────────────────────────────────────
+
+ RUN  v4.1.10 /home/gwyun/workspace/immich/web
+
+
+ Test Files  4 passed (4)
+      Tests  39 passed (39)
+   Start at  08:44:52
+   Duration  8.28s (transform 12.98s, setup 1.51s, import 14.84s, tests 818ms, environment 944ms)
+
+
+── web (svelte-check, baseline-gated) ──────────────────────────────────────────────
+no svelte-check regressions vs baseline (3 pre-existing files)
+
+── server (medium, needs a database) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:18 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mRunning migrations[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[Migrations][39m [32mConverting database file paths from relative to absolute (source=upload/*, target=/usr/src/app/upload/*)[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1744910873969-InitialMigration" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1744991379464-AddNotificationsTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1745244781846-AddUserAvatarColorColumn" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1745902563899-AddAssetVisibilityColumn" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746636476623-DropExtraIndexes" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746768490606-AddUserPincode" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746844028242-AddLockedVisibilityEnum" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746987967923-AddPinExpiresAtColumn" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747329504572-AddNewSessionColumns" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747338664832-SessionRename" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747664684909-AddAlbumAuditTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1749067526135-UserOnboardingDefault" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750107668827-PartnerCreateId" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750189909087-AddAlbumUserCreateFields" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750323941566-UnsetPrewarmDimParameter" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750676477029-AlbumAssetUpdateId" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750694237564-AlbumAssetAuditTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750780093818-AddAlbumToAssetDeleteTrigger" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751035357937-MemorySyncChanges" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751304834247-StackSyncChanges" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751924596408-AddOverrides" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752004072340-UpdateIndexOverrides" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752152941084-PeopleAuditTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752161055253-RenameGeodataPKConstraint" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752161055254-AddActivityAssetFk" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752169992364-AddIsPendingSyncReset" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752250924342-UserMetadataSync" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752267649968-StandardizeNames" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752759108283-ConvertToAbsolutePaths" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753104909784-AssetFaceUpdateIdAndAuditTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753464178233-RenameApiKeyPermissions" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753471866748-AddSharedLinkSlug" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753800911775-ProfileImageCheckpointRemoval" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1754389095885-ResetAlbumAssetSync" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1756318797207-AssetMetadataTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705774125-CreateAssetOCRTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705789125-CreateOCRSearchTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705804128-UpsertOcrAssetJobStatus" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1761078763279-AddAppVersionColumnToSession" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1761755618862-FixColumnNames" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1762297277677-AddPluginAndWorkflowTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764483051488-OCRBigramsForCJK" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764698859174-SidecarInAssetFile" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764705680041-ChangeWorkflowTableColumnsName" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764957138636-AddLockedPropertiesToAssetExif" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336661963-AddAssetWidthHeight" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336671610-CreateAssetEditTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336694315-CreateIsVisibleColumns" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768587436457-AddEditCountToAsset" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768757482271-SwitchToIsEdited" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768828334807-AddIsEditedToAssetFile" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768847456553-AddTagsToExif" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769105700133-AddAssetEditSequence" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769441657564-AddIsProgressiveColumn" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769635093204-DropThumbnailJobStatusColumns" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771478781948-PeopleSearchIndex" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771535611395-ConvertRating0ToNull" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771639515206-AddIsTransparentColumn" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771873044511-ChangesTokensToBuffers" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771873813973-AssetEditSync" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772121424533-AddAssetExifGistEarthcoord" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772129818245-FixStupidWhiteSpace" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772609167000-UpdateOpusCodecName" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1773242919341-EncodedVideoAssetFiles" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1773956345315-DuplicateSharedLinkAssets" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1774393726320-AssetFaceSyncReset" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1774548649115-AddChecksumAlgorithm.ts" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1775165531374-AddPersonNameTrigramIndex" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776217577402-DropAuditTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776263790468-DropDeviceIdAndDeviceAssetId" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776332807985-SetOAuthAllowInsecureRequests" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776442031775-AddOauthSidToSession" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776792304485-ReconcileSqlToolsUpgradeChanges" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776848612954-MigrateAlbumOwnerIdToAlbumUser" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777415973792-AddVideoStreamTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777654048096-CreateAudioVideoTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777667825574-ChangeDurationToInteger" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777897107000-PartnerAssetSyncReset" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1778614946174-UpdateWorkflowTables" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1779806699547-AddPluginTemplates" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780435471692-DeleteMismatchedAssetFaces" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780592070031-ConvertNegativeRatingToNull" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780592071031-AssetOcrSync" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1781089983296-CreateIntegrityReportTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1782414436633-AddPluginMethodAllowedHosts" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1782500000000-RestoreLivePhotoStillVisibility" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1784647658615-AddOAuthBearerTokenToSession" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1784836013770-MinFacePreferenceMigration" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785423600000-AddGoogleDriveFieldsToUser" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785423600001-CreateGoogleDriveUploadTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785475800000-CreateUserGoogleDriveTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785769790549-AddGoogleDriveUploadIndexes" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786100000000-AddGoogleDriveFolderName" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786800000000-CreateGoogleDriveUploadErrorTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786900000000-CreateGoogleDriveAlbumTable" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1787000000000-AddGoogleDriveAccountId" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1787100000000-AddGoogleDriveUploadAccountId" succeeded[39m
+[32m[Nest] 16095  - [39m09/04/2026, 8:45:19 AM [32m    LOG[39m [33m[DatabaseRepository][39m [32mFinished running migrations[39m
+(node:16196) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:medium| test/medium/specs/repositories/google-drive.repository.spec.ts (20 tests) 330ms
+
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+   Start at  08:45:15
+   Duration  7.28s (transform 1.37s, setup 0ms, collect 2.41s, tests 330ms, environment 0ms, prepare 66ms)
+
+
+════════════════════════════════════════════════════════════
+RESULT: PASS

@@ -13,6 +13,7 @@ import { EventRepository } from 'src/repositories/event.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PluginRepository } from 'src/repositories/plugin.repository';
 import { StorageRepository } from 'src/repositories/storage.repository';
+import { SystemMetadataRepository } from 'src/repositories/system-metadata.repository';
 import { UserRepository } from 'src/repositories/user.repository';
 import { WorkflowRepository } from 'src/repositories/workflow.repository';
 import { DB } from 'src/schema';
@@ -37,6 +38,13 @@ class WorkflowTestContext extends MediumTestContext<WorkflowExecutionService> {
         LoggingRepository,
         PluginRepository,
         StorageRepository,
+        // Fork-only: adding an asset to an album now asks whether Google Drive backup is enabled
+        // (AlbumService#queueGoogleDriveUploadsForAlbums -> isGoogleDriveEnabled -> getConfig), and
+        // that read needs the system metadata table. Without it every assetAddToAlbums case dies
+        // with "Cannot read properties of undefined (reading 'get')" inside buildConfig. Real
+        // rather than mocked so the config comes back with the feature off by default, which is
+        // what makes the call return before it touches anything Drive-related.
+        SystemMetadataRepository,
         UserRepository,
         WorkflowRepository,
       ],

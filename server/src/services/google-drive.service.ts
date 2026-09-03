@@ -378,7 +378,7 @@ export class GoogleDriveService extends BaseService {
     // attempt, which is cheap and self-correcting. Leaving them would instead keep a newly
     // connected account blocked at the worker's entrance with nothing in the flow saying to press
     // Resume.
-    await this.googleDriveRepository.clearErrors(userId, [...Object.values(GoogleDriveUploadErrorClass)]);
+    await this.googleDriveRepository.clearErrors(userId, Object.values(GoogleDriveUploadErrorClass));
   }
 
   /**
@@ -796,9 +796,9 @@ export class GoogleDriveService extends BaseService {
     // bucket forever. One probe per job while the id is unknown — it stops as soon as one
     // succeeds, and a permanently unidentifiable account pays it every time, which the warning in
     // getDriveAccountId makes visible rather than silent.
-    const uploadAccountId = credentials.driveAccountId
-      ? credentials.driveAccountId
-      : await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
+    const uploadAccountId =
+      credentials.driveAccountId ??
+      (await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken)));
 
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive. Checked first among the
