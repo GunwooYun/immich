@@ -1,5 +1,6 @@
 <script lang="ts">
   import { clickOutside } from '$lib/actions/click-outside';
+  import { computeMenuPosition } from '$lib/components/shared-components/context-menu/context-menu-position';
   import { languageManager } from '$lib/managers/language-manager.svelte';
   import type { Snippet } from 'svelte';
 
@@ -36,23 +37,54 @@
   const swap = (direction: string) => (direction === 'left' ? 'right' : 'left');
 
   const layoutDirection = $derived(languageManager.rtl ? swap(direction) : direction);
-  const position = $derived.by(() => {
+  // Annotated because the two branches differ: before the element refs bind there is nothing to
+  // measure, and that branch deliberately leaves maxHeight/needScrollBar unset so the template
+  // applies no height constraint for that one frame — the behaviour this component already had.
+  // Without the annotation the union makes both properties unreadable in the markup.
+  const position: { left: number; top: number; maxHeight?: number; needScrollBar?: boolean } = $derived.by(() => {
     if (!menuScrollView || !menuElement) {
       return { left: 0, top: 0 };
     }
 
-    const rect = menuScrollView.getBoundingClientRect();
-    const directionWidth = layoutDirection === 'left' ? rect.width : 0;
+    // The observed size is preferred over reading the DOM here, and the reason is the bug this
+    // fixes: a `$derived` re-runs when something *reactive* changes — x, y, the window size, the
+    // element refs — and element geometry is none of those. A menu whose contents arrive
+    // asynchronously kept the coordinates computed for its first frame. The Google Drive album
+    // menu opens as a one-row "Loading" box and then grows to five rows plus a footer, so it was
+    // placed as if it were still that small box: overflowing the right edge, and its top riding up
+    // over the toolbar. The direct reads remain as the fallback for the very first frame, before
+    // the observer has reported.
+    return computeMenuPosition({
+      x,
+      y,
+      width: observedWidth || menuScrollView.getBoundingClientRect().width,
+      height: observedHeight || menuElement.clientHeight,
+      windowInnerWidth,
+      windowInnerHeight,
+      direction: layoutDirection,
+    });
+  });
 
-    const margin = 8;
+  // Kept in state so the clamp above can depend on them. ButtonContextMenu already re-clamps on
+  // *window* resize; this is the same idea for the menu resizing itself.
+  let observedWidth: number = $state(0);
+  let observedHeight: number = $state(0);
 
-    const left = Math.max(margin, Math.min(windowInnerWidth - rect.width - margin, x - directionWidth));
-    const top = Math.max(margin, Math.min(windowInnerHeight - menuElement.clientHeight, y));
-    const maxHeight = windowInnerHeight - top - margin;
+  $effect(() => {
+    const scrollView = menuScrollView;
+    const list = menuElement;
+    if (!scrollView || !list || typeof ResizeObserver === 'undefined') {
+      return;
+    }
 
-    const needScrollBar = menuElement.clientHeight > maxHeight;
+    const observer = new ResizeObserver(() => {
+      observedWidth = scrollView.getBoundingClientRect().width;
+      observedHeight = list.clientHeight;
+    });
+    observer.observe(scrollView);
+    observer.observe(list);
 
-    return { left, top, maxHeight, needScrollBar };
+    return () => observer.disconnect();
   });
 
   let windowInnerHeight: number = $state(0);

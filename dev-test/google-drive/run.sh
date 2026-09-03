@@ -98,6 +98,10 @@ WEB_SPECS=(
   # Wave 5 fixes (W1 guard, F1 focus, F2 onOpen-once) live here, so a regression is a feature
   # regression even though the file is named for something shared.
   src/lib/components/shared-components/context-menu/ButtonContextMenu.spec.ts
+  # Same reasoning one level down: the album menu is the thing that exposed the positioning bug
+  # (it opens as a one-row "Loading" box and then grows), so the clamp it depends on is covered
+  # here even though ContextMenu is shared.
+  src/lib/components/shared-components/context-menu/context-menu-position.spec.ts
 )
 MEDIUM_SPECS=(test/medium/specs/repositories/google-drive.repository.spec.ts)
 
