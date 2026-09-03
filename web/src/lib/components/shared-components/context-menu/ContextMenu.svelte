@@ -65,27 +65,13 @@
     });
   });
 
-  // Kept in state so the clamp above can depend on them. ButtonContextMenu already re-clamps on
-  // *window* resize; this is the same idea for the menu resizing itself.
+  // Bound below with Svelte's own size bindings rather than a hand-rolled ResizeObserver. Svelte
+  // routes every such binding through one shared ResizeObserverSingleton, so this costs one
+  // observer for the whole app instead of one per menu — and there are many menus mounted at once.
+  // offsetWidth, not clientWidth: it includes the scrollbar, matching the getBoundingClientRect()
+  // width this used to read.
   let observedWidth: number = $state(0);
   let observedHeight: number = $state(0);
-
-  $effect(() => {
-    const scrollView = menuScrollView;
-    const list = menuElement;
-    if (!scrollView || !list || typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    const observer = new ResizeObserver(() => {
-      observedWidth = scrollView.getBoundingClientRect().width;
-      observedHeight = list.clientHeight;
-    });
-    observer.observe(scrollView);
-    observer.observe(list);
-
-    return () => observer.disconnect();
-  });
 
   let windowInnerHeight: number = $state(0);
   let windowInnerWidth: number = $state(0);
@@ -95,6 +81,7 @@
 
 <div
   bind:this={menuScrollView}
+  bind:offsetWidth={observedWidth}
   class={[
     'fixed z-70 w-max max-w-75 min-w-50 immich-scrollbar rounded-lg bg-slate-100 shadow-lg duration-250 ease-in-out',
     position.needScrollBar ? 'overflow-auto' : 'overflow-hidden',
@@ -113,6 +100,7 @@
     aria-label={ariaLabel}
     aria-labelledby={ariaLabelledBy}
     bind:this={menuElement}
+    bind:clientHeight={observedHeight}
     class="flex flex-col outline-none"
     role="menu"
     tabindex="-1"

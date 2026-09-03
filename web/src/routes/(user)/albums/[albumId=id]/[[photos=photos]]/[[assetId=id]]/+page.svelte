@@ -671,11 +671,19 @@
                      on a single click with no indication of how much that was, and left no room
                      for the things that belong beside it: whether this album is backed up at all,
                      how full the destination is, and a way to go look at it. -->
+                <!--
+                  align="bottom-left" rather than the default "top-left": the anchor is
+                  `rect.y + rect.height` instead of `rect.y` (utils/context-menu.ts), so the menu
+                  hangs below the button instead of starting level with its top — which put it
+                  inside the toolbar. The other menus on this page get away with the default
+                  because they are short; this one grows to five rows plus a footer.
+                -->
                 <ButtonContextMenu
                   icon={mdiGoogleDrive}
                   title={$t('google_drive_sync')}
                   color="secondary"
-                  offset={{ x: 175, y: 25 }}
+                  align="bottom-left"
+                  offset={{ x: 175, y: 8 }}
                   hideContent
                   onOpen={loadGoogleDriveMenu}
                 >
