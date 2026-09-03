@@ -392,18 +392,36 @@ export class GoogleDriveService extends BaseService {
    * Best effort throughout. A failure leaves the rows in the '' bucket, which still matches a
    * connected-but-unidentified account, so nothing re-uploads because of it.
    */
+  /**
+   * Names a connection that has never been identified and adopts the ledger rows written before
+   * the account column existed. Returns the account the caller should record uploads under.
+   *
+   * Safe here and nowhere near linkAccount: this runs with the token the user is *already*
+   * connected with, so whatever those unstamped rows were uploaded to is, by definition, this
+   * account. Adopting on the link path would stamp another account's uploads with this one.
+   *
+   * Returning the id rather than only writing it is not a convenience. The caller is holding a
+   * credentials object read before this ran, and the first version of this let that stale object
+   * decide what `recordUpload` stamped — so the very upload that triggered adoption filed itself
+   * under '' and the deploy gate could never reach zero.
+   */
   private async adoptIfNewlyIdentified(
     userId: string,
     credentials: { refreshToken: string; driveAccountId: string | null },
     driveAccountId: string | null,
-  ): Promise<void> {
-    if (credentials.driveAccountId || !driveAccountId) {
-      return;
+  ): Promise<string> {
+    if (credentials.driveAccountId) {
+      return credentials.driveAccountId;
+    }
+    if (!driveAccountId) {
+      return '';
     }
 
-    await this.googleDriveRepository.upsertCredentials(userId, credentials.refreshToken, driveAccountId);
+    await this.googleDriveRepository.setDriveAccountId(userId, driveAccountId);
     await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
     this.logger.log(`Identified the Google Drive account for user ${userId} and adopted its existing uploads`);
+
+    return driveAccountId;
   }
 
   /**
@@ -482,6 +500,14 @@ export class GoogleDriveService extends BaseService {
     const pickerAvailable = !!googleDrive.apiKey;
 
     const credentials = await this.googleDriveRepository.getCredentials(userId);
+
+    // Identify a connection that predates the account column, and adopt its ledger rows, here of
+    // all places: the settings page calls this endpoint on load and never calls the storage one,
+    // so this is the only hook the documented post-deploy step actually reaches. Costs one probe,
+    // and only while the id is still unknown.
+    if (credentials?.driveAccountId === null) {
+      await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
+    }
     if (!credentials) {
       // Disconnected users still get their failure summary: after an automatic disconnect
       // (revoked grant) the credentials row is gone, but the `revoked` error rows are exactly
@@ -744,9 +770,9 @@ export class GoogleDriveService extends BaseService {
     // adopt the rows written before the account column existed. Gate 2 compares against the
     // connected account, so an unidentified connection would otherwise keep matching only the ''
     // bucket forever. Costs one probe, once, and only while the id is unknown.
-    if (!credentials.driveAccountId) {
-      await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
-    }
+    const uploadAccountId = credentials.driveAccountId
+      ? credentials.driveAccountId
+      : await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
 
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive. Checked first among the
@@ -946,7 +972,7 @@ export class GoogleDriveService extends BaseService {
       // Record this upload in our ledger table so future calls to uploadAsset() for the same
       // (userId, assetId) pair know to skip instead of re-uploading (see step 2 above).
       if (data.id) {
-        await this.googleDriveRepository.recordUpload(userId, assetId, data.id, credentials.driveAccountId ?? '');
+        await this.googleDriveRepository.recordUpload(userId, assetId, data.id, uploadAccountId);
       }
 
       this.logger.debug(`Successfully uploaded asset ${assetId} to Google Drive`);

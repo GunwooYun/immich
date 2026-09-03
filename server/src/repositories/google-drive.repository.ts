@@ -75,6 +75,23 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * Names the account a connection belongs to, without touching anything else on the row.
+   *
+   * Separate from `upsertCredentials` on purpose: adoption runs from read paths that are holding a
+   * credentials object read moments earlier, and re-writing the refresh token from that stale copy
+   * would clobber a token a concurrent re-link had just stored.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
+  setDriveAccountId(userId: string, driveAccountId: string) {
+    return this.db
+      .updateTable('user_google_drive')
+      .set({ driveAccountId })
+      .where('userId', '=', userId)
+      .where('driveAccountId', 'is', null)
+      .execute();
+  }
+
+  /**
    * Stamps a user's pre-column ledger rows with the account that has just been identified.
    *
    * Only ever called while the *pre-existing* token is in place, never during a link: at link time

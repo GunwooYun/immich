@@ -1226,4 +1226,60 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', null);
     });
   });
+
+  describe('adoption of pre-column uploads', () => {
+    const unidentified = (userId: string) => ({
+      userId,
+      refreshToken: 'refresh-token',
+      driveAccountId: null,
+      folderId: null,
+      folderName: null,
+      connectedAt: new Date(),
+    });
+
+    it('should identify the account and adopt its rows when the settings page loads', async () => {
+      // getStatus, not getStorage: the settings page calls this one and never calls that one, so
+      // this is the hook the documented post-deploy step actually reaches.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
+
+      await sut.getStatus(userId);
+
+      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'account-x');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-x');
+    });
+
+    it('should record an upload that triggered adoption under the identified account', async () => {
+      // The bug this pins: adoption wrote the id to the database but the caller was still holding
+      // the credentials it read a moment earlier, so the very upload that triggered adoption filed
+      // itself under '' — re-uploading later, and leaving the deploy gate unable to reach zero.
+      const userId = newUuid();
+      const asset = arrangeReadyToUpload(mocks, userId);
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
+      driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+    });
+
+    it('should still record under the empty bucket when Drive will not identify the account', async () => {
+      // The deliberate fallback: an unidentifiable connection keeps reading and writing the same
+      // bucket its existing rows live in, so nothing re-uploads because of a failed probe.
+      const userId = newUuid();
+      const asset = arrangeReadyToUpload(mocks, userId);
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      driveAboutGet.mockResolvedValue({ data: { user: {} } });
+      driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+    });
+  });
 });

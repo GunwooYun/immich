@@ -22,6 +22,14 @@ on conflict ("userId") do update
 set
   "refreshToken" = $3
 
+-- GoogleDriveRepository.setDriveAccountId
+update "user_google_drive"
+set
+  "driveAccountId" = $1
+where
+  "userId" = $2
+  and "driveAccountId" is null
+
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"
 set
