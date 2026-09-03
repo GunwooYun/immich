@@ -359,35 +359,51 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Failed to link Google account');
     }
 
-    // Which Google account did we just get a token for? The ledger is keyed (userId, assetId) and
-    // carries no notion of a destination account, so re-linking a *different* account would leave
-    // every asset reading "already uploaded" and the new Drive empty forever, with the UI happily
-    // reporting the whole library synced. Drive's `permissionId` is the account's stable id and is
-    // readable under the drive.file scope, the same call the storage gauge already makes.
-    const previous = await this.googleDriveRepository.getCredentials(userId);
+    // Record which Google account this token belongs to. The ledger is keyed by account, so this
+    // is what makes "already uploaded" mean "already uploaded *to this Drive*" — connect a
+    // different account and none of the old rows match, so the backlog recomputes by itself. No
+    // reset happens anywhere, which is deliberate: `files.create` has no idempotency marker, so a
+    // wrongly triggered reset would mean thousands of duplicate files with no way back.
+    //
+    // Deliberately does NOT adopt unstamped rows. Here the token is brand new and may belong to a
+    // different account than the one those rows were written for; adopting on this path would
+    // recreate the original bug one last time. Adoption happens only while the pre-existing token
+    // is still in place — see ensureAccountIdentified.
     const driveAccountId = await this.getDriveAccountId(refreshToken);
-    const accountChanged = !!previous?.driveAccountId && !!driveAccountId && previous.driveAccountId !== driveAccountId;
-
     await this.googleDriveRepository.upsertCredentials(userId, refreshToken, driveAccountId);
 
-    if (accountChanged) {
-      // Forget what was uploaded, because it was uploaded somewhere else. The files in the old
-      // account are left untouched; this only resets what *this* server believes it has sent.
-      this.logger.log(`Google Drive account changed for user ${userId}; resetting the upload ledger`);
-      await this.googleDriveRepository.deleteUploads(userId);
+    // Every failure class is stale after a fresh grant, not just the revoked ones. A quota block
+    // or a missing folder described the account that was connected a moment ago; if the same
+    // condition still holds for the account connected now, the next upload re-blocks after one
+    // attempt, which is cheap and self-correcting. Leaving them would instead keep a newly
+    // connected account blocked at the worker's entrance with nothing in the flow saying to press
+    // Resume.
+    await this.googleDriveRepository.clearErrors(userId, [...Object.values(GoogleDriveUploadErrorClass)]);
+  }
 
-      // Every failure class is stale for the same reason, not just the revoked ones: a quota that
-      // was full or a folder that went missing belonged to the previous account, and leaving those
-      // rows behind would keep the *new* account blocked at the worker's entrance with nothing in
-      // the reconnect flow saying to press Resume.
-      await this.googleDriveRepository.clearErrors(userId, [...Object.values(GoogleDriveUploadErrorClass)]);
+  /**
+   * Fills in a connected account's `driveAccountId` if it is still unknown, and adopts the ledger
+   * rows written before the column existed.
+   *
+   * Safe here and nowhere else: this runs with the token the user is *already* connected with, so
+   * whatever those unstamped rows were uploaded to is, by definition, this account. Doing the same
+   * inside linkAccount would be unsafe — that token is new and may belong to somebody else.
+   *
+   * Best effort throughout. A failure leaves the rows in the '' bucket, which still matches a
+   * connected-but-unidentified account, so nothing re-uploads because of it.
+   */
+  private async adoptIfNewlyIdentified(
+    userId: string,
+    credentials: { refreshToken: string; driveAccountId: string | null },
+    driveAccountId: string | null,
+  ): Promise<void> {
+    if (credentials.driveAccountId || !driveAccountId) {
       return;
     }
 
-    // A fresh grant makes any `revoked` failure rows stale — those assets are still pending (no
-    // ledger row), so the next sync or backfill will retry them; the rows would only sit around
-    // misreporting "failed" in the UI.
-    await this.googleDriveRepository.clearErrors(userId, [GoogleDriveUploadErrorClass.Revoked]);
+    await this.googleDriveRepository.upsertCredentials(userId, credentials.refreshToken, driveAccountId);
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
+    this.logger.log(`Identified the Google Drive account for user ${userId} and adopted its existing uploads`);
   }
 
   /**
@@ -542,10 +558,16 @@ export class GoogleDriveService extends BaseService {
     oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
 
     let quota;
+    let driveUser;
     try {
+      // `user(permissionId)` rides along on the call the gauge already makes rather than costing a
+      // second round trip: the settings page is the first thing opened after a deploy, which makes
+      // it the natural place to identify a connection that predates the account column.
       ({
-        data: { storageQuota: quota },
-      } = await google.drive({ version: 'v3', auth: oauth2Client }).about.get({ fields: 'storageQuota' }));
+        data: { storageQuota: quota, user: driveUser },
+      } = await google.drive({ version: 'v3', auth: oauth2Client }).about.get({
+        fields: 'storageQuota,user(permissionId)',
+      }));
     } catch (error) {
       // A revoked grant must read as "disconnected", not as a server fault: the settings page
       // polls this, and a 500 there would look like the feature is broken rather than unlinked.
@@ -555,6 +577,11 @@ export class GoogleDriveService extends BaseService {
       }
       throw error;
     }
+
+    // Safe here and nowhere near linkAccount: this ran with the token the user is *already*
+    // connected with, so whatever their unstamped rows were uploaded to is, by definition, this
+    // account. Adopting on the link path would stamp another account's uploads with this one.
+    await this.adoptIfNewlyIdentified(userId, credentials, driveUser?.permissionId ?? null);
 
     const value: GoogleDriveStorage = {
       limitBytes: toByteCount(quota?.limit),
@@ -713,6 +740,14 @@ export class GoogleDriveService extends BaseService {
       return 'skipped';
     }
 
+    // Before gate 2 reads the ledger: if this connection has never been identified, name it and
+    // adopt the rows written before the account column existed. Gate 2 compares against the
+    // connected account, so an unidentified connection would otherwise keep matching only the ''
+    // bucket forever. Costs one probe, once, and only while the id is unknown.
+    if (!credentials.driveAccountId) {
+      await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
+    }
+
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive. Checked first among the
     //    per-asset gates because idempotent re-queueing (add to two albums, re-run a backfill,
@@ -826,6 +861,11 @@ export class GoogleDriveService extends BaseService {
     const fileMetadata: drive_v3.Schema$File = {
       name: asset.originalFileName,
       parents: folderId ? [folderId] : [],
+      // Not read by anything today. It exists so a future reconciliation can ask Drive "do you
+      // already have this asset?" and adopt the answer into the ledger instead of uploading a
+      // second copy — the only real cure if a ledger is ever lost or mis-stamped. appProperties is
+      // private to this OAuth client and invisible in the user's Drive UI.
+      appProperties: { immichAssetId: assetId },
     };
 
     const media = {
@@ -906,7 +946,7 @@ export class GoogleDriveService extends BaseService {
       // Record this upload in our ledger table so future calls to uploadAsset() for the same
       // (userId, assetId) pair know to skip instead of re-uploading (see step 2 above).
       if (data.id) {
-        await this.googleDriveRepository.recordUpload(userId, assetId, data.id);
+        await this.googleDriveRepository.recordUpload(userId, assetId, data.id, credentials.driveAccountId ?? '');
       }
 
       this.logger.debug(`Successfully uploaded asset ${assetId} to Google Drive`);

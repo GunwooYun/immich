@@ -23,6 +23,20 @@ import { DB } from 'src/schema';
  * *when* an upload should happen — that decision-making lives in GoogleDriveService and
  * AlbumService.
  */
+/**
+ * The Google account a user's ledger rows have to match to count as "already uploaded".
+ *
+ * `coalesce(..., '')` folds three states into one comparison: connected and identified (the real
+ * permissionId), connected but not yet identified (NULL -> ''), and rows written before the column
+ * existed (already ''). The last two share a bucket on purpose — that is what stops a deploy from
+ * re-uploading everyone's library before the adoption pass has run.
+ */
+const currentAccountOf = (userId: string) =>
+  sql<string>`coalesce((select "driveAccountId" from "user_google_drive" where "userId" = ${userId}), '')`;
+
+/** Same comparison for queries that already join `user_google_drive`. */
+const LEDGER_MATCHES_CURRENT_ACCOUNT = sql<boolean>`"google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')`;
+
 @Injectable()
 export class GoogleDriveRepository {
   constructor(@InjectKysely() private db: Kysely<DB>) {}
@@ -61,16 +75,39 @@ export class GoogleDriveRepository {
   }
 
   /**
-   * Forgets everything this user has uploaded, so the backlog is recomputed from scratch.
+   * Stamps a user's pre-column ledger rows with the account that has just been identified.
    *
-   * Only called when the linked Google account changes: the ledger records that an asset reached
-   * *a* Drive, not *which* one, so those rows are meaningless once the destination account is a
-   * different one. Nothing in Drive is touched — the files already sent to the old account stay
-   * where they are, which is the point of keeping the reset on this side.
+   * Only ever called while the *pre-existing* token is in place, never during a link: at link time
+   * the token is brand new and may belong to a different account, and adopting there would recreate
+   * the very bug this design removes.
+   *
+   * The delete first is not optional — an asset can already have a stamped row (uploaded again
+   * after the column shipped), and updating the '' row on top of it would violate the primary key.
    */
-  @GenerateSql({ params: [DummyValue.UUID] })
-  deleteUploads(userId: string) {
-    return this.db.deleteFrom('google_drive_upload').where('userId', '=', userId).execute();
+  adoptUnstampedUploads(userId: string, driveAccountId: string) {
+    return this.db.transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('google_drive_upload')
+        .where('userId', '=', userId)
+        .where('driveAccountId', '=', '')
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom('google_drive_upload as stamped')
+              .select(sql`1`.as('one'))
+              .whereRef('stamped.userId', '=', 'google_drive_upload.userId')
+              .whereRef('stamped.assetId', '=', 'google_drive_upload.assetId')
+              .where('stamped.driveAccountId', '=', driveAccountId),
+          ),
+        )
+        .execute();
+
+      await trx
+        .updateTable('google_drive_upload')
+        .set({ driveAccountId })
+        .where('userId', '=', userId)
+        .where('driveAccountId', '=', '')
+        .execute();
+    });
   }
 
   /**
@@ -248,7 +285,8 @@ export class GoogleDriveRepository {
             .innerJoin('google_drive_upload', (join) =>
               join
                 .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-                .on('google_drive_upload.userId', '=', userId),
+                .on('google_drive_upload.userId', '=', userId)
+                .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
             )
             .whereRef('album_asset.albumId', '=', 'album.id')
             .where('asset.deletedAt', 'is', null)
@@ -301,7 +339,8 @@ export class GoogleDriveRepository {
           .innerJoin('google_drive_upload', (join) =>
             join
               .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-              .on('google_drive_upload.userId', '=', userId),
+              .on('google_drive_upload.userId', '=', userId)
+              .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
           )
           .whereRef('album_asset.albumId', '=', 'album.id')
           .where('asset.deletedAt', 'is', null)
@@ -336,7 +375,8 @@ export class GoogleDriveRepository {
       .leftJoin('google_drive_upload', (join) =>
         join
           .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-          .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId'),
+          .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId')
+          .on(LEDGER_MATCHES_CURRENT_ACCOUNT),
       )
       .where('google_drive_album.userId', '=', userId)
       .where('album.deletedAt', 'is', null)
@@ -395,7 +435,8 @@ export class GoogleDriveRepository {
         .leftJoin('google_drive_upload', (join) =>
           join
             .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
-            .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId'),
+            .onRef('google_drive_upload.userId', '=', 'google_drive_album.userId')
+            .on(LEDGER_MATCHES_CURRENT_ACCOUNT),
         )
         .where('album.deletedAt', 'is', null)
         .where('asset.deletedAt', 'is', null)
@@ -446,6 +487,7 @@ export class GoogleDriveRepository {
       .select('assetId')
       .where('userId', '=', userId)
       .where('assetId', 'in', assetIds)
+      .where('driveAccountId', '=', currentAccountOf(userId))
       .execute();
 
     return new Set(rows.map((row) => row.assetId));
@@ -518,6 +560,7 @@ export class GoogleDriveRepository {
       .select('assetId')
       .where('userId', '=', userId)
       .where('assetId', '=', assetId)
+      .where('driveAccountId', '=', currentAccountOf(userId))
       .limit(1)
       .executeTakeFirst();
 
@@ -536,7 +579,7 @@ export class GoogleDriveRepository {
    * throwing a duplicate-key error. The (userId, assetId) pair is the table's primary key (see
    * the GoogleDriveUploadTable schema definition), which is what makes this upsert possible.
    */
-  recordUpload(userId: string, assetId: string, driveFileId: string) {
+  recordUpload(userId: string, assetId: string, driveFileId: string, driveAccountId: string) {
     // One transaction for the ledger write *and* the error-row delete. These are the two halves
     // of "this asset is now safely in Drive", and doing them separately leaves a crash window
     // where an asset has both a success row and a failure row — the UI would show an uploaded
@@ -547,9 +590,11 @@ export class GoogleDriveRepository {
     return this.db.transaction().execute(async (trx) => {
       await trx
         .insertInto('google_drive_upload')
-        .values({ userId, assetId, driveFileId })
+        .values({ userId, assetId, driveFileId, driveAccountId })
         .onConflict((oc) =>
-          oc.columns(['userId', 'assetId']).doUpdateSet({ driveFileId: (eb) => eb.ref('excluded.driveFileId') }),
+          oc
+            .columns(['userId', 'assetId', 'driveAccountId'])
+            .doUpdateSet({ driveFileId: (eb) => eb.ref('excluded.driveFileId') }),
         )
         .execute();
       await trx
@@ -696,7 +741,8 @@ export class GoogleDriveRepository {
         .leftJoin('google_drive_upload', (join) =>
           join
             .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
-            .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId'),
+            .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
+            .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
         )
         .where('google_drive_upload_error.userId', '=', userId)
         .where('asset.deletedAt', 'is', null)

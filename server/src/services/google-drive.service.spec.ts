@@ -360,8 +360,49 @@ describe(GoogleDriveService.name, () => {
 
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
-        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id');
+        // The fourth argument is the account the file went to. '' here because this fixture's
+        // connection has never been identified, which is the same bucket the pre-column rows live
+        // in — see the medium specs for what that buys on a deploy.
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
         expect(driveFilesDelete).not.toHaveBeenCalled();
+      });
+
+      it('should stamp the ledger row with the account the file went to', async () => {
+        // Without this the row lands in the '' bucket and a later account switch reads it as
+        // "already uploaded" — the original bug, one level down.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          userId,
+          refreshToken: 'refresh-token',
+          driveAccountId: 'account-x',
+          folderId: null,
+          folderName: null,
+          connectedAt: new Date(),
+        });
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+      });
+
+      it('should tag the created file with the asset id', async () => {
+        // Not read by anything today. It is the only thing that would let a future reconciliation
+        // find an already-uploaded file instead of sending a second copy, which is the sole cure
+        // if a ledger is ever lost or mis-stamped.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await sut.uploadAsset(userId, asset.id);
+
+        expect(driveFilesCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            requestBody: expect.objectContaining({ appProperties: { immichAssetId: asset.id } }),
+          }),
+          expect.anything(),
+        );
       });
 
       it('should refuse to record a truncated upload, and remove the partial file', async () => {
@@ -1115,16 +1156,9 @@ describe(GoogleDriveService.name, () => {
   describe('handleCallback', () => {
     /**
      * Arranges a callback that will pass the state checks, so the tests below can be about what
-     * linking *does* rather than about JWT plumbing. `previousAccountId` is what the database
-     * already holds for this user; `newAccountId` is what Drive reports for the token just issued.
+     * linking *does* rather than about JWT plumbing.
      */
-    const arrangeLink = ({
-      previousAccountId,
-      newAccountId,
-    }: {
-      previousAccountId: string | null;
-      newAccountId: string | null;
-    }) => {
+    const arrangeLink = ({ newAccountId }: { newAccountId: string | null }) => {
       const userId = newUuid();
 
       mocks.systemMetadata.get.mockImplementation((key: string) =>
@@ -1135,34 +1169,42 @@ describe(GoogleDriveService.name, () => {
       mocks.crypto.verifyJwt.mockReturnValue({ userId });
       oauth2GetToken.mockResolvedValue({ tokens: { refresh_token: 'new-refresh-token' } });
       driveAboutGet.mockResolvedValue({ data: { user: { permissionId: newAccountId } } });
-      mocks.googleDrive.getCredentials.mockResolvedValue(
-        previousAccountId === null && newAccountId === null
-          ? undefined
-          : {
-              userId,
-              refreshToken: 'old-refresh-token',
-              driveAccountId: previousAccountId,
-              folderId: null,
-              folderName: null,
-              connectedAt: new Date(),
-            },
-      );
 
       return { userId, run: () => sut.handleCallback('auth-code', 'state', 'state', userId) };
     };
 
-    it('should forget what was uploaded when a different Google account is linked', async () => {
-      // The bug this pins: the ledger is keyed (userId, assetId) and says nothing about *which*
-      // Drive received an asset, so re-linking another account used to leave every asset reading
-      // "already uploaded" — the new Drive stays empty while the UI reports the library synced.
-      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: 'account-b' });
+    it('should record which account the token belongs to', async () => {
+      // This is what scopes the ledger. Without it every row falls into the '' bucket and a
+      // different account reads as "already uploaded" — the original bug.
+      const { userId, run } = arrangeLink({ newAccountId: 'account-b' });
 
       await run();
 
-      expect(mocks.googleDrive.deleteUploads).toHaveBeenCalledWith(userId);
-      // Every failure class, not just the revoked ones: a quota or a missing folder belonged to the
-      // account that is no longer connected, and leaving those rows blocks the new account at the
-      // worker's entrance.
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-b');
+    });
+
+    it('should never adopt unstamped uploads while linking', async () => {
+      // The safety property of the whole design. At link time the token is brand new and may
+      // belong to a *different* account than the one those rows were written for; adopting here
+      // would stamp another account's uploads with this one and recreate the original bug.
+      const { run } = arrangeLink({ newAccountId: 'account-b' });
+
+      await run();
+
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      // Witness: the link itself went through, so the negative above cannot pass by bailing early.
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalled();
+    });
+
+    it('should clear every failure class, not only the revoked ones', async () => {
+      // A quota block or a missing folder described whichever account was connected a moment ago.
+      // If the condition still holds for the account connected now, the next upload re-blocks
+      // after one attempt; leaving the rows would instead block a fresh connection with nothing
+      // in the flow saying to press Resume.
+      const { userId, run } = arrangeLink({ newAccountId: 'account-b' });
+
+      await run();
+
       expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(
         userId,
         expect.arrayContaining([
@@ -1171,41 +1213,16 @@ describe(GoogleDriveService.name, () => {
           GoogleDriveUploadErrorClass.Revoked,
         ]),
       );
-      // Non-vacuous: the reset only means something if the link itself went through and recorded
-      // the account it switched to.
-      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-b');
-    });
-
-    it('should keep the ledger when the same account is linked again', async () => {
-      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: 'account-a' });
-
-      await run();
-
-      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
-      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(userId, [GoogleDriveUploadErrorClass.Revoked]);
-      // Witness that the flow ran at all, so the negative above cannot pass by bailing out early.
-      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-a');
-    });
-
-    it('should record the account without resetting when the previous one is unknown', async () => {
-      // Rows created before driveAccountId existed carry null. Null is "unknown", not "a different
-      // account" — wiping a ledger on that guess would re-upload someone's whole library.
-      const { userId, run } = arrangeLink({ previousAccountId: null, newAccountId: 'account-a' });
-
-      await run();
-
-      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
-      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', 'account-a');
     });
 
     it('should link successfully when Drive will not say which account it is', async () => {
-      // The identity probe is best-effort: failing the whole connection because it came back empty
-      // would turn a working link into an error for no gain.
-      const { userId, run } = arrangeLink({ previousAccountId: 'account-a', newAccountId: null });
+      // Best effort: failing a working connection over an identity probe would be a worse trade.
+      // The user keeps reading and writing the '' bucket, which is the same place their existing
+      // rows live, so nothing re-uploads.
+      const { userId, run } = arrangeLink({ newAccountId: null });
 
       await run();
 
-      expect(mocks.googleDrive.deleteUploads).not.toHaveBeenCalled();
       expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'new-refresh-token', null);
     });
   });

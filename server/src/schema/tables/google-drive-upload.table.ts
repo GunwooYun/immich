@@ -16,9 +16,16 @@ import { UserTable } from 'src/schema/tables/user.table';
  * records a row here. That turns "upload this asset" into an idempotent operation from Immich's
  * point of view, even though the underlying Google API call isn't.
  *
- * (userId, assetId) together form the primary key — see the `primary: true` option on both
- * @ForeignKeyColumn decorators below — since a given user should only ever have at most one
- * "did we upload this asset for this user" record.
+ * (userId, assetId, driveAccountId) together form the primary key. The account is part of the key
+ * on purpose: a row records that an asset reached *a particular* Google Drive, and the same asset
+ * can legitimately have been sent to two different accounts. Keying on (userId, assetId) alone was
+ * the bug — connecting a different Google account left every asset reading "already uploaded",
+ * so the new Drive stayed empty forever while the UI reported the library synced.
+ *
+ * Keeping the old rows rather than resetting them is what makes switching *back* to a previous
+ * account free: those rows still match, so nothing re-uploads. It also means no code path ever has
+ * to delete the ledger, which matters because `files.create` has no idempotency marker — a reset
+ * would mean thousands of duplicate files in someone's Drive, irreversibly.
  */
 @Table('google_drive_upload')
 export class GoogleDriveUploadTable {
@@ -34,6 +41,16 @@ export class GoogleDriveUploadTable {
   // section of dev-docs/google-drive/album-sync-plan.md for why deletion sync is out of scope).
   @ForeignKeyColumn(() => AssetTable, { onDelete: 'CASCADE', onUpdate: 'CASCADE', nullable: false, primary: true })
   assetId!: string;
+
+  // Which Google account received the file — Drive's `permissionId` for the connected account.
+  //
+  // '' means "written before this column existed, provenance unknown". Those rows are adopted into
+  // the real account id the first time we successfully identify it while the *pre-existing* token
+  // is still in place (see GoogleDriveService#ensureAccountIdentified). Empty rather than nullable
+  // because a nullable column cannot sit in a primary key, and '' reads the same way through the
+  // `coalesce(..., '')` the queries use for a connected-but-unidentified account.
+  @Column({ primary: true, default: '' })
+  driveAccountId!: Generated<string>;
 
   // The file id Google's Drive API assigned to the uploaded file (returned from `files.create`).
   // Not currently used for anything beyond bookkeeping, but keeping it around means a future

@@ -690,7 +690,7 @@
                   title={$t('google_drive_sync')}
                   color="secondary"
                   align="bottom-left"
-                  offset={{ x: 175, y: 8 }}
+                  offset={{ x: 175, y: 12 }}
                   hideContent
                   onOpen={loadGoogleDriveMenu}
                 >

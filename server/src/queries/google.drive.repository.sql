@@ -22,11 +22,6 @@ on conflict ("userId") do update
 set
   "refreshToken" = $3
 
--- GoogleDriveRepository.deleteUploads
-delete from "google_drive_upload"
-where
-  "userId" = $1
-
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"
 set
@@ -114,6 +109,17 @@ select
       inner join "asset" on "asset"."id" = "album_asset"."assetId"
       inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
       and "google_drive_upload"."userId" = $2
+      and "google_drive_upload"."driveAccountId" = coalesce(
+        (
+          select
+            "driveAccountId"
+          from
+            "user_google_drive"
+          where
+            "userId" = $3
+        ),
+        ''
+      )
     where
       "album_asset"."albumId" = "album"."id"
       and "asset"."deletedAt" is null
@@ -121,12 +127,12 @@ select
 from
   "album"
   left join "album_user" on "album_user"."albumId" = "album"."id"
-  and "album_user"."userId" = $3
+  and "album_user"."userId" = $4
   inner join "album_user" as "owner_user" on "owner_user"."albumId" = "album"."id"
-  and "owner_user"."role" = $4
+  and "owner_user"."role" = $5
   inner join "user" as "owner" on "owner"."id" = "owner_user"."userId"
   left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
-  and "google_drive_album"."userId" = $5
+  and "google_drive_album"."userId" = $6
 where
   (
     "album_user"."userId" is not null
@@ -161,6 +167,17 @@ select
       inner join "asset" on "asset"."id" = "album_asset"."assetId"
       inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
       and "google_drive_upload"."userId" = $1
+      and "google_drive_upload"."driveAccountId" = coalesce(
+        (
+          select
+            "driveAccountId"
+          from
+            "user_google_drive"
+          where
+            "userId" = $2
+        ),
+        ''
+      )
     where
       "album_asset"."albumId" = "album"."id"
       and "asset"."deletedAt" is null
@@ -168,11 +185,11 @@ select
 from
   "album"
   left join "album_user" on "album_user"."albumId" = "album"."id"
-  and "album_user"."userId" = $2
+  and "album_user"."userId" = $3
   left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
-  and "google_drive_album"."userId" = $3
+  and "google_drive_album"."userId" = $4
 where
-  "album"."id" = $4
+  "album"."id" = $5
   and "album"."deletedAt" is null
   and (
     "album_user"."userId" is not null
@@ -192,6 +209,7 @@ from
   inner join "asset" on "asset"."id" = "album_asset"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
   and "google_drive_upload"."userId" = "google_drive_album"."userId"
+  and "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
 where
   "google_drive_album"."userId" = $1
   and "album"."deletedAt" is null
@@ -212,6 +230,7 @@ from
   inner join "asset" on "asset"."id" = "album_asset"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
   and "google_drive_upload"."userId" = "google_drive_album"."userId"
+  and "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
 where
   "album"."deletedAt" is null
   and "asset"."deletedAt" is null
@@ -234,6 +253,17 @@ from
 where
   "userId" = $1
   and "assetId" in ($2)
+  and "driveAccountId" = coalesce(
+    (
+      select
+        "driveAccountId"
+      from
+        "user_google_drive"
+      where
+        "userId" = $3
+    ),
+    ''
+  )
 
 -- GoogleDriveRepository.isAssetInSubscribedAlbum
 select
@@ -259,8 +289,19 @@ from
 where
   "userId" = $1
   and "assetId" = $2
+  and "driveAccountId" = coalesce(
+    (
+      select
+        "driveAccountId"
+      from
+        "user_google_drive"
+      where
+        "userId" = $3
+    ),
+    ''
+  )
 limit
-  $3
+  $4
 
 -- GoogleDriveRepository.upsertError
 with
@@ -357,21 +398,18 @@ from
   inner join "asset" on "asset"."id" = "google_drive_upload_error"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "google_drive_upload_error"."assetId"
   and "google_drive_upload"."userId" = "google_drive_upload_error"."userId"
+  and "google_drive_upload"."driveAccountId" = coalesce(
+    (
+      select
+        "driveAccountId"
+      from
+        "user_google_drive"
+      where
+        "userId" = $1
+    ),
+    ''
+  )
 where
-  "google_drive_upload_error"."userId" = $1
+  "google_drive_upload_error"."userId" = $2
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
-select
-  "error"
-from
-  "google_drive_upload_error"
-where
-  "userId" = $1
-  and "error" in ($2, $3)
-order by
-  case "error"
-    when $4 then 0
-    else 1
-  end
-limit
-  $5

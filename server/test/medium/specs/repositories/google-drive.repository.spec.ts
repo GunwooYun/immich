@@ -1,4 +1,5 @@
 import { Kysely } from 'kysely';
+import { GoogleDriveUploadErrorClass } from 'src/enum';
 import { GoogleDriveRepository } from 'src/repositories/google-drive.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { DB } from 'src/schema';
@@ -275,7 +276,14 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
 
       await ctx.database
         .insertInto('google_drive_upload_error')
-        .values({ userId: user.id, assetId: asset.id, error: 'quota_exceeded' })
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          error: GoogleDriveUploadErrorClass.QuotaExceeded,
+          detail: null,
+          attempts: 1,
+          lastFailedAt: new Date(),
+        })
         .execute();
 
       await expect(sut.getSubscribers([album.id])).resolves.toEqual([]);
@@ -292,7 +300,14 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
       await ctx.database
         .insertInto('google_drive_upload_error')
-        .values({ userId: user.id, assetId: asset.id, error: 'source_unreadable' })
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          error: GoogleDriveUploadErrorClass.SourceUnreadable,
+          detail: null,
+          attempts: 1,
+          lastFailedAt: new Date(),
+        })
         .execute();
 
       await expect(sut.getSubscribers([album.id])).resolves.toEqual([{ albumId: album.id, userId: user.id }]);
@@ -305,6 +320,134 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
 
       await expect(sut.getSubscribers([album.id])).resolves.toEqual([]);
+    });
+  });
+
+  /**
+   * The account-scoped ledger. These are the tests that prove the design rather than the code:
+   * "already uploaded" must mean "already uploaded *to the account currently connected*", and it
+   * must keep meaning that across a disconnect, a switch, and a switch back.
+   */
+  describe('account-scoped ledger', () => {
+    const connect = (ctx: any, userId: string, driveAccountId: string | null) =>
+      ctx.database.insertInto('user_google_drive').values({ userId, refreshToken: 'token', driveAccountId }).execute();
+
+    const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: string) =>
+      ctx.database
+        .insertInto('google_drive_upload')
+        .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId })
+        .execute();
+
+    it('should hide a row written for another account', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await ledger(ctx, user.id, asset.id, 'account-x');
+
+      // Witness first: under the account it was written for, it is visible. Without this the
+      // negative below could come from a fixture that never inserted anything.
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+
+      await ctx.database
+        .updateTable('user_google_drive')
+        .set({ driveAccountId: 'account-y' })
+        .where('userId', '=', user.id)
+        .execute();
+
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(false);
+      await expect(sut.getUploadedAssetIds(user.id, [asset.id])).resolves.toEqual(new Set());
+    });
+
+    it('should show it again after switching back', async () => {
+      // The property that makes this design better than resetting the ledger: switching back to a
+      // previous account re-uploads nothing. A reset would have destroyed these rows.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-y');
+      await ledger(ctx, user.id, asset.id, 'account-x');
+
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(false);
+
+      await ctx.database
+        .updateTable('user_google_drive')
+        .set({ driveAccountId: 'account-x' })
+        .where('userId', '=', user.id)
+        .execute();
+
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should move the pending count with the connected account', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await connect(ctx, user.id, 'account-x');
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      await ledger(ctx, user.id, asset.id, 'account-x');
+
+      await expect(sut.countPendingUploads(user.id)).resolves.toBe(0);
+      await expect(drain(sut.streamPendingUploads(user.id))).resolves.toEqual([]);
+
+      await ctx.database
+        .updateTable('user_google_drive')
+        .set({ driveAccountId: 'account-y' })
+        .where('userId', '=', user.id)
+        .execute();
+
+      await expect(sut.countPendingUploads(user.id)).resolves.toBe(1);
+      await expect(drain(sut.streamPendingUploads(user.id))).resolves.toEqual([{ userId: user.id, assetId: asset.id }]);
+    });
+
+    it('should still treat pre-column rows as uploaded while the account is unidentified', async () => {
+      // The deploy-safety test. Existing rows carry '' and a connection that has not been probed
+      // yet carries null; they have to match, or the first deploy re-uploads everyone's library.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null);
+      await ledger(ctx, user.id, asset.id, '');
+
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should adopt pre-column rows without colliding with rows already stamped', async () => {
+      // An asset can already have a stamped row — uploaded again after the column shipped — and
+      // the '' row for it cannot simply be updated onto that primary key.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset: both } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: onlyUnstamped } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: otherUsers } = await ctx.newAsset({ ownerId: other.id });
+      await connect(ctx, user.id, 'account-x');
+      await ledger(ctx, user.id, both.id, '');
+      await ledger(ctx, user.id, both.id, 'account-x');
+      await ledger(ctx, user.id, onlyUnstamped.id, '');
+      await ledger(ctx, other.id, otherUsers.id, '');
+
+      await sut.adoptUnstampedUploads(user.id, 'account-x');
+
+      // Scoped to these two users: the medium suite shares one database, so an unscoped count
+      // would include rows other tests in this file left behind.
+      const rows = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select(['userId', 'assetId', 'driveAccountId'])
+        .where('userId', 'in', [user.id, other.id])
+        .orderBy('userId')
+        .execute();
+
+      // The colliding '' row is gone, the lone one is stamped, and the other user is untouched.
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          { userId: user.id, assetId: both.id, driveAccountId: 'account-x' },
+          { userId: user.id, assetId: onlyUnstamped.id, driveAccountId: 'account-x' },
+          { userId: other.id, assetId: otherUsers.id, driveAccountId: '' },
+        ]),
+      );
+      expect(rows).toHaveLength(3);
     });
   });
 });
