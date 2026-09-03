@@ -414,6 +414,10 @@ export class GoogleDriveService extends BaseService {
       return credentials.driveAccountId;
     }
     if (!driveAccountId) {
+      // Nothing to adopt into. The rows stay in the '' bucket, which still matches this
+      // connection, so nothing re-uploads — but the bucket is shared, so this is also the state in
+      // which a different account would inherit them.
+      this.logger.warn(`Google Drive account for user ${userId} is still unidentified; uploads stay unstamped`);
       return '';
     }
 
@@ -427,9 +431,16 @@ export class GoogleDriveService extends BaseService {
   /**
    * Reads the linked account's Drive `permissionId`, or null if Drive won't say.
    *
-   * Null is deliberately non-fatal: failing the whole link because an identity probe failed would
-   * turn a working connection into an error, and a null simply means the next link has nothing to
-   * compare against — the same position every row was in before this column existed.
+   * Null is deliberately non-fatal: failing a link because an identity probe failed would turn a
+   * working connection into an error. What it costs is that the connection keeps sharing the ''
+   * bucket with any other unidentified connection this user has had, so a *different* account
+   * linked while the probe is failing inherits the previous one's ledger rows and uploads nothing.
+   *
+   * That is the accepted trade. The alternative — minting a unique id per link — turns the same
+   * failure into re-uploading the entire library with duplicates when the *same* account
+   * reconnects, and duplicates in someone's Drive cannot be taken back while an empty new Drive is
+   * one reconnect away from being fixed. Both branches log, because a silent null is the one thing
+   * that makes this undiagnosable: if uploads stop after a reconnect, these lines are what say why.
    */
   private async getDriveAccountId(refreshToken: string): Promise<string | null> {
     try {
@@ -440,9 +451,22 @@ export class GoogleDriveService extends BaseService {
         .drive({ version: 'v3', auth: oauth2Client })
         .about.get({ fields: 'user(permissionId)' });
 
-      return data.user?.permissionId ?? null;
+      const permissionId = data.user?.permissionId ?? null;
+      if (!permissionId) {
+        // Reached without an exception: Drive answered, and simply did not include the field.
+        this.logger.warn(
+          'Google Drive did not report a permissionId for this account; its uploads will be recorded ' +
+            'against the unidentified bucket, and a different account linked in this state would ' +
+            'inherit them',
+        );
+      }
+
+      return permissionId;
     } catch (error) {
-      this.logger.warn(`Could not read the Google Drive account id after linking: ${error}`);
+      this.logger.warn(
+        `Could not read the Google Drive account id: ${error}. Uploads will be recorded against the ` +
+          'unidentified bucket until a later probe succeeds',
+      );
       return null;
     }
   }

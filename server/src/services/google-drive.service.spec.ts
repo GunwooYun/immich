@@ -1280,6 +1280,11 @@ describe(GoogleDriveService.name, () => {
 
       expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
       expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      // The state is accepted, not silent. An unidentified connection shares the '' bucket with any
+      // other unidentified connection this user has had, so if uploads ever stop after a reconnect
+      // these lines are the only thing that says why.
+      expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining('did not report a permissionId'));
+      expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining('still unidentified'));
     });
   });
 });
