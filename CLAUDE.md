@@ -369,6 +369,21 @@ web/src/**/*.spec.ts             웹 유닛
   ```
   compose에서 우리가 바꾸는 것은 `immich-server`의 `image:` **한 줄뿐**이다. 나머지 3개
   컨테이너(postgres/redis/ML)는 공식 이미지를 그대로 쓴다.
+
+  **⚠ 계정 스코프 원장(`driveAccountId`)이 들어간 뒤로는 배포 직후 순서가 중요하다.** 기존
+  원장 행은 `''`(계정 미상)이고, 아직 식별되지 않은 연결도 `''`로 읽혀 서로 매칭된다 — 그래서
+  배포만으로는 아무것도 재업로드되지 않는다. 하지만 **입양(adoption)이 돌기 전에 연결을 해제하고
+  다시 연결하면** 그 행들이 매칭에 실패해 라이브러리 전체가 중복으로 다시 올라간다. 그래서:
+
+  ```bash
+  # 1) 배포 후 설정 화면을 한 번 연다 (storage 호출이 입양을 트리거한다)
+  # 2) 남은 미상 행이 0인지 확인한다 — 0이 되기 전에는 연결 해제 금지
+  ssh 랩탑 "docker exec immich_postgres psql -U postgres -d immich -tAc \
+    'select count(*) from google_drive_upload where \"driveAccountId\" = '\''\''' "
+  ```
+
+  입양은 **기존 토큰이 살아 있는 동안에만** 일어난다(연결 경로에서는 절대 하지 않는다 — 그때
+  토큰은 새것이고 다른 계정일 수 있다).
 - **구글 OAuth 연결은 Tailscale HTTPS 주소로 한다** (Wave 6). 구글이 redirect URI로 사설 IP를
   거부하고 공개 HTTPS 또는 `localhost`만 받기 때문이다. 랩탑의 tailnet 주소
   `https://ha-server.tail68cec7.ts.net`가 그 조건을 만족한다.
