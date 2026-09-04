@@ -566,4 +566,109 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       expect(rows).toHaveLength(3);
     });
   });
+
+  /**
+   * The bespoke SQL. `upsertError` is a hand-written CTE, `getErrorSummary` is an anti-join, and
+   * `recordUpload` clears the error row inside the same transaction — none of which a mocked unit
+   * test can say anything about, and all of which decide what the settings page reports.
+   */
+  describe('failure bookkeeping', () => {
+    it('should call only the first failure of a class first, and count attempts after that', async () => {
+      // firstOfClass gates the notification. Wrong in one direction it spams on every retry; wrong
+      // in the other the user is never told their backups stopped.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: first } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: second } = await ctx.newAsset({ ownerId: user.id });
+
+      await expect(
+        sut.upsertError(user.id, first.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),
+      ).resolves.toEqual({ firstOfClass: true });
+
+      // A second asset, same class: no longer the first.
+      await expect(
+        sut.upsertError(user.id, second.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),
+      ).resolves.toEqual({ firstOfClass: false });
+
+      // The same asset again: still not first, and the attempt counter moves.
+      await expect(
+        sut.upsertError(user.id, first.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),
+      ).resolves.toEqual({ firstOfClass: false });
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload_error')
+        .select('attempts')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', first.id)
+        .executeTakeFirst();
+      expect(row?.attempts).toBe(2);
+    });
+
+    it('should treat a different class as first again', async () => {
+      // Per class, not per user: a folder going missing after a quota problem is news.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
+
+      await expect(
+        sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.FolderMissing, 'gone'),
+      ).resolves.toEqual({ firstOfClass: true });
+    });
+
+    it('should clear the failure row when the upload finally succeeds', async () => {
+      // The only path that clears a failure, and it runs in the same transaction as the ledger
+      // write so an asset can never be both uploaded and failed.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+
+      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x');
+
+      // The row itself has to be gone, not merely hidden: getErrorSummary's anti-join would report
+      // zero either way once the ledger row exists, so asking it proves nothing about the delete.
+      const remaining = await ctx.database
+        .selectFrom('google_drive_upload_error')
+        .select('assetId')
+        .where('userId', '=', user.id)
+        .execute();
+      expect(remaining).toEqual([]);
+    });
+
+    it('should not count a failure whose asset has since been uploaded', async () => {
+      // The anti-join. A stale error row beside a ledger row must read as zero, or the settings
+      // page reports failures for photos that are already in Drive.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await ledger(ctx, user.id, asset.id, 'account-x');
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 0, blockedReason: null });
+
+      // Witness: without the ledger row the same fixture counts one, so the zero above is the
+      // anti-join and not an empty table.
+      const { asset: other } = await ctx.newAsset({ ownerId: user.id });
+      await sut.upsertError(user.id, other.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+    });
+
+    it('should report quota ahead of a missing folder when both are recorded', async () => {
+      // Both block the account; the tie-break decides which message the user gets.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: a } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: b } = await ctx.newAsset({ ownerId: user.id });
+      await sut.upsertError(user.id, a.id, GoogleDriveUploadErrorClass.FolderMissing, 'gone');
+      await sut.upsertError(user.id, b.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
+
+      await expect(sut.getBlockingError(user.id)).resolves.toBe(GoogleDriveUploadErrorClass.QuotaExceeded);
+    });
+  });
 });

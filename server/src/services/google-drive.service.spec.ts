@@ -157,6 +157,18 @@ const unidentified = (userId: string) => ({
   connectedAt: new Date(),
 });
 
+// The shape streamPendingUploads returns. Module scope and the `await` are the house style for
+// these (see trash.service.spec.ts): ESLint rejects a nested generator that never awaits.
+async function* pendingUploads(
+  userId: string,
+  count: number,
+): AsyncIterableIterator<{ userId: string; assetId: string }> {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve();
+    yield { userId, assetId: `asset-${i}` };
+  }
+}
+
 describe(GoogleDriveService.name, () => {
   let sut: GoogleDriveService;
   let mocks: ServiceMocks;
@@ -1425,13 +1437,6 @@ describe(GoogleDriveService.name, () => {
     // The manual backup's entry point, and the only producer of this job — the admin Jobs page.
     // It had no test at all, which matters because it is also the recovery path: when uploads
     // stall, this is the button that restarts them.
-    const pending = (userId: string, count: number) =>
-      (async function* () {
-        for (let i = 0; i < count; i++) {
-          yield { userId, assetId: `asset-${i}` };
-        }
-      })();
-
     it('should not touch the stream when the feature is off', async () => {
       // The default config has it off. Reaching the repository here would mean the job holds a
       // database cursor open across the whole backlog for a feature nobody enabled.
@@ -1446,7 +1451,7 @@ describe(GoogleDriveService.name, () => {
       // off-by-one either drops the tail or flushes an empty batch.
       const userId = newUuid();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
-      mocks.googleDrive.streamPendingUploads.mockReturnValue(pending(userId, 1001));
+      mocks.googleDrive.streamPendingUploads.mockReturnValue(pendingUploads(userId, 1001));
 
       await expect(sut.handleGoogleDriveUploadQueueAll()).resolves.toBe(JobStatus.Success);
 
@@ -1463,7 +1468,7 @@ describe(GoogleDriveService.name, () => {
     it('should still flush the final partial batch when the backlog is small', async () => {
       const userId = newUuid();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
-      mocks.googleDrive.streamPendingUploads.mockReturnValue(pending(userId, 3));
+      mocks.googleDrive.streamPendingUploads.mockReturnValue(pendingUploads(userId, 3));
 
       await sut.handleGoogleDriveUploadQueueAll();
 
