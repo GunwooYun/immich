@@ -240,6 +240,15 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v3
 
+      # Same install block as the feature job, and for the same reason: nest build resolves through
+      # node_modules, and @immich/sdk's output is needed before plugin-sdk can be bundled. The
+      # first version of this job went straight to the build and died with exit 127.
+      - name: Install workspaces
+        run: |
+          pnpm --filter @immich/sdk --filter @immich/plugin-sdk install --frozen-lockfile
+          pnpm --filter @immich/sdk --filter @immich/plugin-sdk build
+          pnpm --filter immich install --frozen-lockfile
+
       - name: Build the server
         run: mise run //server:build
 

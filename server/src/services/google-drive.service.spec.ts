@@ -891,6 +891,13 @@ describe(GoogleDriveService.name, () => {
       );
 
       await expect(sut.getStorage(userId)).rejects.toBeInstanceOf(BadRequestException);
+      // And it reaches the same conclusion the upload path does. Without this, a user whose grant
+      // expired — the seven-day clock on a Testing-mode app — kept seeing "Connected" while every
+      // gauge on the page errored, because nothing had ever queued an upload to notice.
+      expect(mocks.googleDrive.deleteCredentials).toHaveBeenCalledWith(userId);
+      // Witness: the call was actually made, so the assertion above is about the revoked branch
+      // rather than about bailing out earlier.
+      expect(driveAboutGet).toHaveBeenCalled();
     });
   });
 
@@ -1411,6 +1418,82 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
       // The witness that makes the negative mean something: the disconnect still happened.
       expect(mocks.googleDrive.deleteCredentials).toHaveBeenCalledWith(userId);
+    });
+  });
+
+  describe('handleGoogleDriveUploadQueueAll', () => {
+    // The manual backup's entry point, and the only producer of this job — the admin Jobs page.
+    // It had no test at all, which matters because it is also the recovery path: when uploads
+    // stall, this is the button that restarts them.
+    const pending = (userId: string, count: number) =>
+      (async function* () {
+        for (let i = 0; i < count; i++) {
+          yield { userId, assetId: `asset-${i}` };
+        }
+      })();
+
+    it('should not touch the stream when the feature is off', async () => {
+      // The default config has it off. Reaching the repository here would mean the job holds a
+      // database cursor open across the whole backlog for a feature nobody enabled.
+      await expect(sut.handleGoogleDriveUploadQueueAll()).resolves.toBe(JobStatus.Skipped);
+
+      expect(mocks.googleDrive.streamPendingUploads).not.toHaveBeenCalled();
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
+    it('should queue the backlog in batches at the pagination boundary', async () => {
+      // 1001 is the interesting number: one full batch plus the remainder, which is where an
+      // off-by-one either drops the tail or flushes an empty batch.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.streamPendingUploads.mockReturnValue(pending(userId, 1001));
+
+      await expect(sut.handleGoogleDriveUploadQueueAll()).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.job.queueAll).toHaveBeenCalledTimes(2);
+      expect(mocks.job.queueAll.mock.calls[0][0]).toHaveLength(1000);
+      expect(mocks.job.queueAll.mock.calls[1][0]).toHaveLength(1);
+      // The shape matters as much as the count: the worker keys its dedup on exactly this pair.
+      expect(mocks.job.queueAll.mock.calls[1][0][0]).toEqual({
+        name: JobName.GoogleDriveUpload,
+        data: { userId, assetId: 'asset-1000' },
+      });
+    });
+
+    it('should still flush the final partial batch when the backlog is small', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.streamPendingUploads.mockReturnValue(pending(userId, 3));
+
+      await sut.handleGoogleDriveUploadQueueAll();
+
+      expect(mocks.job.queueAll).toHaveBeenCalledTimes(1);
+      expect(mocks.job.queueAll.mock.calls[0][0]).toHaveLength(3);
+    });
+  });
+
+  describe('trashed assets', () => {
+    it('should skip an asset that is in the trash', async () => {
+      // A photo can be trashed between the job being queued and the worker reaching it. Uploading
+      // it anyway would put something in the user's Drive that they had just deleted here.
+      const userId = newUuid();
+      const asset = arrangeReadyToUpload(mocks, userId);
+      mocks.asset.getById.mockResolvedValue({ ...getForAsset(asset), deletedAt: new Date() });
+      // driveFilesCreate is hoisted at module scope, so it carries calls from earlier tests in
+      // this file; the assertion below is about this test only.
+      driveFilesCreate.mockClear();
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+      expect(driveFilesCreate).not.toHaveBeenCalled();
+      // Not an error either: a trashed asset is an ordinary outcome, and recording it would put a
+      // permanent failure in the settings page for something the user did on purpose.
+      expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+      // The witness that places the skip at this gate rather than an earlier one: nothing ever
+      // opened the file. Without it the assertions above would also pass if the feature were off,
+      // or the credentials missing, or the ledger already satisfied.
+      expect(mocks.storage.createReadStream).not.toHaveBeenCalled();
+      expect(mocks.asset.getById).toHaveBeenCalled();
     });
   });
 });

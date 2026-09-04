@@ -398,6 +398,30 @@ export class GoogleDriveService extends BaseService {
    * connected-but-unidentified account, so nothing re-uploads because of it.
    */
   /**
+   * What a *read* path does when Google says the grant is gone.
+   *
+   * The upload path already clears the stored credentials on `invalid_grant`, so the settings page
+   * can show "not connected" and invite a reconnect. The read paths used to only throw, which left
+   * a user whose grant expired — the seven-day clock on a Testing-mode app does this — looking at
+   * "Connected" indefinitely while every gauge on the page errored. Whichever path notices first
+   * should reach the same conclusion.
+   *
+   * No notification here, unlike the upload path: the user is looking at the page that is about to
+   * tell them, and a background job is not. The ledger is deliberately untouched, so reconnecting
+   * the same account re-uploads nothing.
+   *
+   * Deliberately does not drain the unstamped bucket first. That needs a working token by
+   * definition, and here it is the one thing we know we do not have.
+   */
+  private async clearRevokedGrant(userId: string, context: string): Promise<never> {
+    this.logger.warn(
+      `Google Drive access for user ${userId} was revoked or expired (${context}); clearing credentials`,
+    );
+    await this.googleDriveRepository.deleteCredentials(userId);
+    throw new BadRequestException('Google Drive access was revoked. Please reconnect your account.');
+  }
+
+  /**
    * Empties the unstamped ledger bucket into the account that is about to stop being connected.
    *
    * Runs at the two moments a connection ends — just before a re-link replaces it, and just before
@@ -724,8 +748,7 @@ export class GoogleDriveService extends BaseService {
       // A revoked grant must read as "disconnected", not as a server fault: the settings page
       // polls this, and a 500 there would look like the feature is broken rather than unlinked.
       if (this.isInvalidGrant(error)) {
-        this.logger.warn(`Google Drive access for user ${userId} was revoked; storage is unavailable`);
-        throw new BadRequestException('Google Drive access was revoked. Please reconnect your account.');
+        await this.clearRevokedGrant(userId, 'reading storage');
       }
       throw error;
     }
@@ -809,8 +832,7 @@ export class GoogleDriveService extends BaseService {
       ({ token: accessToken } = await oauth2Client.getAccessToken());
     } catch (error) {
       if (this.isInvalidGrant(error)) {
-        this.logger.warn(`Google Drive access for user ${userId} was revoked; they need to reconnect`);
-        throw new BadRequestException('Google Drive access was revoked. Please reconnect your account.');
+        await this.clearRevokedGrant(userId, 'building the picker config');
       }
       throw error;
     }
