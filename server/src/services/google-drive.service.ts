@@ -435,7 +435,7 @@ export class GoogleDriveService extends BaseService {
       return;
     }
 
-    await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.refreshToken, driveAccountId);
   }
 
   /**
@@ -486,7 +486,7 @@ export class GoogleDriveService extends BaseService {
       return '';
     }
 
-    await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.refreshToken, driveAccountId);
     this.logger.log(`Identified the Google Drive account for user ${userId} and adopted its existing uploads`);
 
     return driveAccountId;

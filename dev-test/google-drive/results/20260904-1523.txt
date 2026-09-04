@@ -1,0 +1,365 @@
+Google Drive — unit test run
+date:   2026-09-04T15:23:23+09:00
+commit: e56776855 (feat/google-drive-album-sync-v3.1.0)
+
+── server (unit) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+ ✓ |server:unit| src/utils/google-drive.spec.ts (16 tests) 9ms
+ ✓ |server:unit| src/utils/misc.spec.ts (26 tests) 10ms
+(node:75891) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:75898) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:75892) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:75890) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:75907) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:75904) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:unit| src/services/server.service.spec.ts (16 tests) 261ms
+ ✓ |server:unit| src/services/queue.service.spec.ts (18 tests) 328ms
+ ✓ |server:unit| src/services/system-config.service.spec.ts (31 tests) 694ms
+ ✓ |server:unit| src/config.spec.ts (4 tests) 813ms
+   ✓ updateConfig with credentials from the environment > should not persist a cleared credential that the environment supplies  707ms
+ ✓ |server:unit| src/services/album.service.spec.ts (70 tests) 1012ms
+ ❯ |server:unit| src/services/google-drive.service.spec.ts (73 tests | 3 failed) 1095ms
+   ✓ GoogleDriveService > should work 21ms
+   ✓ GoogleDriveService > getAuthUrl (redirect URL) > should derive the redirect URL from the external domain when none is configured 35ms
+   ✓ GoogleDriveService > getAuthUrl (redirect URL) > should prefer an explicitly configured redirect URL over the external domain 12ms
+   ✓ GoogleDriveService > getAuthUrl (redirect URL) > should refuse with an actionable message when there is no redirect URL and none can be derived 14ms
+   ✓ GoogleDriveService > uploadAsset > should skip when the feature is disabled 13ms
+   ✓ GoogleDriveService > uploadAsset > should skip when the user has not connected Google Drive 22ms
+   ✓ GoogleDriveService > uploadAsset > should skip an asset that is already in the upload ledger 20ms
+   ✓ GoogleDriveService > uploadAsset > should skip a blocked user without touching the asset or calling Drive 75ms
+   ✓ GoogleDriveService > uploadAsset > should skip an asset no longer in any selected album, before calling Drive 18ms
+   ✓ GoogleDriveService > uploadAsset > should check the ledger before the selection join 16ms
+   ✓ GoogleDriveService > uploadAsset > should skip when the original file is missing from disk 18ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should record the upload when the stored size matches 16ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should stamp the ledger row with the account the file went to 13ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should tag the created file with the asset id 16ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should refuse to record a truncated upload, and remove the partial file 18ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should classify a quota failure, record it, and notify exactly once 42ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should block on a notFound 404 when a folder is configured, and notify 13ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should record a bare 404 (expired resumable session) as unknown, not an account block 15ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should not notify again for subsequent failures of the same class 8ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should record a revoked grant, notify, and clear the credentials 15ms
+   ✓ GoogleDriveService > uploadAsset > upload verification > should treat a missing size as unverifiable rather than assume success 13ms
+   ✓ GoogleDriveService > handleGoogleDriveUpload > should report a skipped upload as JobStatus.Skipped 12ms
+   ✓ GoogleDriveService > setFolderId > should reject when the user has not connected Google Drive 8ms
+   ✓ GoogleDriveService > setFolderId > should save the folder for a connected user 8ms
+   ✓ GoogleDriveService > setFolderId > should save the folder name when the picker supplies one 51ms
+   ✓ GoogleDriveService > setFolderId > should translate a blank folder into null 11ms
+   ✓ GoogleDriveService > setFolderId > should not keep a folder name when the folder itself is cleared 17ms
+   ✓ GoogleDriveService > getStatus (disconnected) > should report revoked as the reason after an automatic disconnect 16ms
+   ✓ GoogleDriveService > album subscriptions > should refuse to subscribe when Drive is not connected 17ms
+   ✓ GoogleDriveService > album subscriptions > should subscribe and immediately queue the album contents 20ms
+   ✓ GoogleDriveService > album subscriptions > should gate subscribing on download access, not merely read access 31ms
+   ✓ GoogleDriveService > album subscriptions > should unsubscribe without touching the ledger 9ms
+   ✓ GoogleDriveService > album subscriptions > should let a user remove a selection for an album they can no longer see 8ms
+   ✓ GoogleDriveService > album subscriptions > should surface a selection whose album is no longer shared, rather than dropping it 9ms
+   ✓ GoogleDriveService > album subscriptions > should normalise SQL booleans when listing albums 7ms
+   ✓ GoogleDriveService > getStorage > should convert Google string byte counts to numbers 11ms
+   ✓ GoogleDriveService > getStorage > should report an unlimited account as a null limit rather than failing 9ms
+   ✓ GoogleDriveService > getStorage > should serve a second call from cache rather than calling Google again 8ms
+   ✓ GoogleDriveService > getStorage > should not serve one user cached values belonging to another 8ms
+   ✓ GoogleDriveService > getStorage > should stop serving cached numbers once the account is disconnected 8ms
+   ✓ GoogleDriveService > getStorage > should report a revoked grant as disconnected, not as a server error 12ms
+   ✓ GoogleDriveService > getMyStatus > should combine the pending count with the failure summary 6ms
+   ✓ GoogleDriveService > getMyStatus > should carry the block alongside the count, not in a separate endpoint 7ms
+   ✓ GoogleDriveService > getAlbumBackupStatus > should report a single album without fetching every album the user can see 5ms
+   ✓ GoogleDriveService > getAlbumBackupStatus > should return zeroes rather than throwing for an album with no row 28ms
+   ✓ GoogleDriveService > resumeUploads > should reject when the feature is disabled 13ms
+   ✓ GoogleDriveService > resumeUploads > should clear the block and immediately re-queue the pending set 12ms
+   ✓ GoogleDriveService > getPickerConfig > should reject when no API key is configured 11ms
+   ✓ GoogleDriveService > getPickerConfig > should reject when the user has not connected Google Drive 17ms
+   ✓ GoogleDriveService > getStatus > should report a disconnected user 43ms
+   ✓ GoogleDriveService > getStatus > should report a connected user without leaking the refresh token 9ms
+   ✓ GoogleDriveService > getStatus > should report pickerAvailable=true when the API key is "'picker-api-key'" 7ms
+   ✓ GoogleDriveService > getStatus > should report pickerAvailable=false when the API key is "''" 9ms
+   ✓ GoogleDriveService > disconnect > should delete the credentials but keep the upload ledger 17ms
+   ✓ GoogleDriveService > syncAlbum > should reject when the feature is disabled 8ms
+   ✓ GoogleDriveService > syncAlbum > should reject an album the caller has not chosen to back up 7ms
+   ✓ GoogleDriveService > syncAlbum > should let a non-owner sync a shared album they back up, into their own Drive 8ms
+   ✓ GoogleDriveService > syncAlbum > should queue only assets missing from the ledger, in one batch, for the owner 10ms
+   ✓ GoogleDriveService > syncAlbum > should not queue anything when every asset is already synced 6ms
+   ✓ GoogleDriveService > syncAlbum > should not queue anything for an empty album 21ms
+   ✓ GoogleDriveService > handleCallback > should record which account the token belongs to 6ms
+   ✓ GoogleDriveService > handleCallback > should never adopt unstamped uploads while linking 5ms
+   ✓ GoogleDriveService > handleCallback > should clear every failure class, not only the revoked ones 6ms
+   ✓ GoogleDriveService > handleCallback > should link successfully when Drive will not say which account it is 6ms
+   × GoogleDriveService > adoption of pre-column uploads > should identify the account and adopt its rows when the settings page loads 22ms
+     → expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "65e0f98e-e332-4e13-a4bc-5eea381eb79d",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-x",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+   ✓ GoogleDriveService > adoption of pre-column uploads > should record an upload that triggered adoption under the identified account 8ms
+   ✓ GoogleDriveService > adoption of pre-column uploads > should record under the account another job already stamped 29ms
+   ✓ GoogleDriveService > adoption of pre-column uploads > should not adopt when the connection changed while the probe was in flight 7ms
+   ✓ GoogleDriveService > adoption of pre-column uploads > should still record under the empty bucket when Drive will not identify the account 7ms
+   × GoogleDriveService > draining the unstamped bucket > should hand an unidentified outgoing connection its rows before a re-link replaces it 10ms
+     → expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "fd002d3b-4f18-4798-b6d8-d9a8085f84d5",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-b",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+   ✓ GoogleDriveService > draining the unstamped bucket > should leave the bucket alone when the outgoing connection is already identified 9ms
+   × GoogleDriveService > draining the unstamped bucket > should drain on disconnect 9ms
+     → expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "05d92349-df27-4e1c-8abc-f771297cf6f7",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-a",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+   ✓ GoogleDriveService > draining the unstamped bucket > should disconnect even when the outgoing account cannot be identified 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |server:unit| src/services/google-drive.service.spec.ts > GoogleDriveService > adoption of pre-column uploads > should identify the account and adopt its rows when the settings page loads
+AssertionError: expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "65e0f98e-e332-4e13-a4bc-5eea381eb79d",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-x",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+ ❯ src/services/google-drive.service.spec.ts:1258:55
+    1256|       // while the probe is in flight must not leave account A's id be…
+    1257|       expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith…
+    1258|       expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalled…
+       |                                                       ^
+    1259|     });
+    1260| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  |server:unit| src/services/google-drive.service.spec.ts > GoogleDriveService > draining the unstamped bucket > should hand an unidentified outgoing connection its rows before a re-link replaces it
+AssertionError: expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "fd002d3b-4f18-4798-b6d8-d9a8085f84d5",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-b",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+ ❯ src/services/google-drive.service.spec.ts:1345:55
+    1343| 
+    1344|       // Probed with the *outgoing* token, and adopted into what that …
+    1345|       expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalled…
+       |                                                       ^
+    1346|       // Order is the point: after the upsert the row carries the new …
+    1347|       // the wrong owner, or to none.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  |server:unit| src/services/google-drive.service.spec.ts > GoogleDriveService > draining the unstamped bucket > should drain on disconnect
+AssertionError: expected "spy" to be called with arguments: [ …(2) ][90m
+
+Received: 
+
+[1m  1st spy call:
+
+[22m[2m  [[22m
+[2m    "05d92349-df27-4e1c-8abc-f771297cf6f7",[22m
+[31m+   "refresh-token",[90m
+[2m    "account-a",[22m
+[2m  ][22m
+[39m[90m
+
+Number of calls: [1m1[22m
+[39m
+ ❯ src/services/google-drive.service.spec.ts:1383:55
+    1381|       await sut.disconnect(userId);
+    1382| 
+    1383|       expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalled…
+       |                                                       ^
+    1384|       expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCa…
+    1385|         mocks.googleDrive.deleteCredentials.mock.invocationCallOrder[0…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed | 7 passed (8)
+      Tests  3 failed | 251 passed (254)
+   Start at  15:23:23
+   Duration  5.79s (transform 2.88s, setup 0ms, collect 26.40s, tests 4.22s, environment 2ms, prepare 897ms)
+
+
+── web (unit) ──────────────────────────────────────────────
+
+ RUN  v4.1.10 /home/gwyun/workspace/immich/web
+
+
+ Test Files  4 passed (4)
+      Tests  39 passed (39)
+   Start at  15:23:31
+   Duration  8.79s (transform 13.65s, setup 1.80s, import 15.57s, tests 874ms, environment 1.24s)
+
+
+── web (svelte-check, baseline-gated) ──────────────────────────────────────────────
+no svelte-check regressions vs baseline (3 pre-existing files)
+
+── server (medium, needs a database) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+[32m[Nest] 76897  - [39m09/04/2026, 3:23:59 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mRunning migrations[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:23:59 PM [32m    LOG[39m [33m[Migrations][39m [32mConverting database file paths from relative to absolute (source=upload/*, target=/usr/src/app/upload/*)[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1744910873969-InitialMigration" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1744991379464-AddNotificationsTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1745244781846-AddUserAvatarColorColumn" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1745902563899-AddAssetVisibilityColumn" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746636476623-DropExtraIndexes" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746768490606-AddUserPincode" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746844028242-AddLockedVisibilityEnum" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1746987967923-AddPinExpiresAtColumn" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747329504572-AddNewSessionColumns" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747338664832-SessionRename" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1747664684909-AddAlbumAuditTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1749067526135-UserOnboardingDefault" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750107668827-PartnerCreateId" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750189909087-AddAlbumUserCreateFields" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750323941566-UnsetPrewarmDimParameter" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750676477029-AlbumAssetUpdateId" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750694237564-AlbumAssetAuditTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1750780093818-AddAlbumToAssetDeleteTrigger" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751035357937-MemorySyncChanges" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751304834247-StackSyncChanges" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1751924596408-AddOverrides" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752004072340-UpdateIndexOverrides" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752152941084-PeopleAuditTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752161055253-RenameGeodataPKConstraint" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752161055254-AddActivityAssetFk" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752169992364-AddIsPendingSyncReset" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752250924342-UserMetadataSync" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752267649968-StandardizeNames" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1752759108283-ConvertToAbsolutePaths" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753104909784-AssetFaceUpdateIdAndAuditTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753464178233-RenameApiKeyPermissions" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753471866748-AddSharedLinkSlug" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1753800911775-ProfileImageCheckpointRemoval" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1754389095885-ResetAlbumAssetSync" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1756318797207-AssetMetadataTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705774125-CreateAssetOCRTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705789125-CreateOCRSearchTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1758705804128-UpsertOcrAssetJobStatus" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1761078763279-AddAppVersionColumnToSession" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1761755618862-FixColumnNames" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1762297277677-AddPluginAndWorkflowTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764483051488-OCRBigramsForCJK" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764698859174-SidecarInAssetFile" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764705680041-ChangeWorkflowTableColumnsName" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1764957138636-AddLockedPropertiesToAssetExif" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336661963-AddAssetWidthHeight" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336671610-CreateAssetEditTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768336694315-CreateIsVisibleColumns" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768587436457-AddEditCountToAsset" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768757482271-SwitchToIsEdited" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768828334807-AddIsEditedToAssetFile" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1768847456553-AddTagsToExif" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769105700133-AddAssetEditSequence" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769441657564-AddIsProgressiveColumn" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1769635093204-DropThumbnailJobStatusColumns" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771478781948-PeopleSearchIndex" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771535611395-ConvertRating0ToNull" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771639515206-AddIsTransparentColumn" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771873044511-ChangesTokensToBuffers" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1771873813973-AssetEditSync" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772121424533-AddAssetExifGistEarthcoord" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772129818245-FixStupidWhiteSpace" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1772609167000-UpdateOpusCodecName" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1773242919341-EncodedVideoAssetFiles" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1773956345315-DuplicateSharedLinkAssets" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1774393726320-AssetFaceSyncReset" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1774548649115-AddChecksumAlgorithm.ts" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1775165531374-AddPersonNameTrigramIndex" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776217577402-DropAuditTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776263790468-DropDeviceIdAndDeviceAssetId" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776332807985-SetOAuthAllowInsecureRequests" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776442031775-AddOauthSidToSession" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776792304485-ReconcileSqlToolsUpgradeChanges" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1776848612954-MigrateAlbumOwnerIdToAlbumUser" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777415973792-AddVideoStreamTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777654048096-CreateAudioVideoTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777667825574-ChangeDurationToInteger" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1777897107000-PartnerAssetSyncReset" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1778614946174-UpdateWorkflowTables" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1779806699547-AddPluginTemplates" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780435471692-DeleteMismatchedAssetFaces" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780592070031-ConvertNegativeRatingToNull" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1780592071031-AssetOcrSync" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1781089983296-CreateIntegrityReportTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1782414436633-AddPluginMethodAllowedHosts" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1782500000000-RestoreLivePhotoStillVisibility" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1784647658615-AddOAuthBearerTokenToSession" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1784836013770-MinFacePreferenceMigration" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785423600000-AddGoogleDriveFieldsToUser" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785423600001-CreateGoogleDriveUploadTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785475800000-CreateUserGoogleDriveTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1785769790549-AddGoogleDriveUploadIndexes" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786100000000-AddGoogleDriveFolderName" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786800000000-CreateGoogleDriveUploadErrorTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1786900000000-CreateGoogleDriveAlbumTable" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1787000000000-AddGoogleDriveAccountId" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mMigration "1787100000000-AddGoogleDriveUploadAccountId" succeeded[39m
+[32m[Nest] 76897  - [39m09/04/2026, 3:24:00 PM [32m    LOG[39m [33m[DatabaseRepository][39m [32mFinished running migrations[39m
+(node:77064) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:medium| test/medium/specs/repositories/google-drive.repository.spec.ts (25 tests) 443ms
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  15:23:55
+   Duration  8.67s (transform 1.62s, setup 0ms, collect 3.08s, tests 443ms, environment 0ms, prepare 91ms)
+
+
+════════════════════════════════════════════════════════════
+RESULT: FAIL

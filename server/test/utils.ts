@@ -317,6 +317,8 @@ export const getMocks = () => {
   // Stamping an account id settles on that id by default. It returns what the row *holds* for the
   // token — null means the connection moved — and a bare automock resolving to `undefined` reads as
   // "moved", which would silently switch adoption off in every test that is not about it.
+  // Adoption succeeds by default; false means the connection moved under the probe.
+  googleDriveMock.adoptUnstampedUploads.mockResolvedValue(true);
   googleDriveMock.setDriveAccountId.mockImplementation((_userId: string, _token: string, id: string) =>
     Promise.resolve(id),
   );

@@ -1255,7 +1255,7 @@ describe(GoogleDriveService.name, () => {
       // The token is part of the call because the update is conditional on it: a re-link landing
       // while the probe is in flight must not leave account A's id beside account B's token.
       expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'refresh-token', 'account-x');
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-x');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-x');
     });
 
     it('should record an upload that triggered adoption under the identified account', async () => {
@@ -1342,7 +1342,7 @@ describe(GoogleDriveService.name, () => {
       await run();
 
       // Probed with the *outgoing* token, and adopted into what that probe found.
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-b');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-b');
       // Order is the point: after the upsert the row carries the new id and the rows would go to
       // the wrong owner, or to none.
       expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1380,7 +1380,7 @@ describe(GoogleDriveService.name, () => {
 
       await sut.disconnect(userId);
 
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-a');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-a');
       expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.googleDrive.deleteCredentials.mock.invocationCallOrder[0],
       );

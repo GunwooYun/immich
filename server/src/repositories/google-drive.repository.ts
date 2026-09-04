@@ -77,11 +77,15 @@ export class GoogleDriveRepository {
    */
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
   upsertCredentials(userId: string, refreshToken: string, driveAccountId: string | null) {
-    return this.db
-      .insertInto('user_google_drive')
-      .values({ userId, refreshToken, driveAccountId })
-      .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken, driveAccountId }))
-      .execute();
+    return (
+      this.db
+        .insertInto('user_google_drive')
+        .values({ userId, refreshToken, driveAccountId })
+        // connectedAt moves with the connection. Without that a re-link keeps the original
+        // timestamp and adoption cannot tell one connection's uploads from an earlier one's.
+        .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken, driveAccountId, connectedAt: sql`now()` }))
+        .execute()
+    );
   }
 
   /**
@@ -110,11 +114,14 @@ export class GoogleDriveRepository {
     // at a time, so four of them lose the race to fill the blank and would otherwise conclude the
     // account was unknown and file their uploads under ''. What matters to a caller is whether the
     // connection now carries the account it just probed — no matter who put it there.
+    // Deliberately not filtered on the token. The update above is what guards against writing to
+    // a connection that moved; this read only answers "what does the connection hold now", and
+    // scoping it to the old token would return null for a same-account re-link that has already
+    // settled on the right id.
     const row = await this.db
       .selectFrom('user_google_drive')
       .select('driveAccountId')
       .where('userId', '=', userId)
-      .where('refreshToken', '=', refreshToken)
       .executeTakeFirst();
 
     return row?.driveAccountId ?? null;
@@ -130,12 +137,39 @@ export class GoogleDriveRepository {
    * The delete first is not optional — an asset can already have a stamped row (uploaded again
    * after the column shipped), and updating the '' row on top of it would violate the primary key.
    */
-  adoptUnstampedUploads(userId: string, driveAccountId: string) {
+  async adoptUnstampedUploads(userId: string, refreshToken: string, driveAccountId: string): Promise<boolean> {
     return this.db.transaction().execute(async (trx) => {
+      // Compare-and-set on the connection itself, taken under a row lock. The probe that produced
+      // `driveAccountId` is a network round trip; a re-link can land inside it, and adopting after
+      // that would stamp one account's uploads with another's — permanently. Locking the row and
+      // re-checking the token inside the same transaction closes that window rather than narrowing
+      // it, which is what the two previous attempts did.
+      const connection = await trx
+        .selectFrom('user_google_drive')
+        .select(['connectedAt'])
+        .where('userId', '=', userId)
+        .where('refreshToken', '=', refreshToken)
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!connection) {
+        return false;
+      }
+
+      // Only rows this connection could have written. An unstamped row older than the connection
+      // belongs to some earlier one, and claiming it is the mis-attribution this whole design is
+      // about — an account that reconnects later would find its own uploads recorded against
+      // somebody else and send every one of them again.
+      //
+      // Excluding them is affordable precisely because unstamped rows keep matching any connection
+      // (see the ledger predicate): never adopting is a missed tidy-up, not a re-upload.
+      // The delete comes first: an asset can already have a row under this account, and the
+      // unstamped one cannot be moved onto that primary key.
       await trx
         .deleteFrom('google_drive_upload')
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
+        .where('uploadedAt', '>=', connection.connectedAt)
         .where(({ exists, selectFrom }) =>
           exists(
             selectFrom('google_drive_upload as stamped')
@@ -152,7 +186,10 @@ export class GoogleDriveRepository {
         .set({ driveAccountId })
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
+        .where('uploadedAt', '>=', connection.connectedAt)
         .execute();
+
+      return true;
     });
   }
 

@@ -21,7 +21,8 @@ values
 on conflict ("userId") do update
 set
   "refreshToken" = $4,
-  "driveAccountId" = $5
+  "driveAccountId" = $5,
+  "connectedAt" = now()
 
 -- GoogleDriveRepository.setDriveAccountId
 update "user_google_drive"
@@ -37,7 +38,6 @@ from
   "user_google_drive"
 where
   "userId" = $1
-  and "refreshToken" = $2
 
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"

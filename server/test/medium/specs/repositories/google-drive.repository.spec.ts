@@ -469,6 +469,64 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, elsewhere.id)).resolves.toBe(false);
     });
 
+    it('should not claim unstamped rows written before this connection existed', async () => {
+      // The mis-attribution this design keeps circling back to: account A uploads while
+      // unidentified and goes away, B connects and is also unidentified at first, and B's later
+      // probe would stamp A's rows as B's. A reconnecting then finds its own uploads recorded
+      // against somebody else and sends every one of them again.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      // Explicit timestamps rather than two defaulted now() calls: the point of the test is that
+      // the upload is older than the connection, and leaving that to clock resolution would make
+      // it pass or fail for reasons unrelated to the code.
+      await ctx.database
+        .insertInto('google_drive_upload')
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          driveFileId: 'file-old',
+          driveAccountId: '',
+          uploadedAt: new Date('2026-01-01T00:00:00Z'),
+        })
+        .execute();
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({
+          userId: user.id,
+          refreshToken: 'token-b',
+          driveAccountId: null,
+          connectedAt: new Date('2026-06-01T00:00:00Z'),
+        })
+        .execute();
+
+      await expect(sut.adoptUnstampedUploads(user.id, 'token-b', 'account-b')).resolves.toBe(true);
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
+      // Left unstamped — and still counted as uploaded by the ledger predicate, so nothing
+      // re-uploads because of it.
+      expect(row?.driveAccountId).toBe('');
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should refuse to adopt when the connection moved during the probe', async () => {
+      // Compare-and-set under a row lock, not a re-read: the probe is a network round trip and a
+      // re-link can land inside it.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({ userId: user.id, refreshToken: 'token-b', driveAccountId: null })
+        .execute();
+
+      await expect(sut.adoptUnstampedUploads(user.id, 'token-a', 'account-a')).resolves.toBe(false);
+    });
+
     it('should adopt pre-column rows without colliding with rows already stamped', async () => {
       // An asset can already have a stamped row — uploaded again after the column shipped — and
       // the '' row for it cannot simply be updated onto that primary key.
@@ -479,12 +537,14 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { asset: onlyUnstamped } = await ctx.newAsset({ ownerId: user.id });
       const { asset: otherUsers } = await ctx.newAsset({ ownerId: other.id });
       await connect(ctx, user.id, 'account-x');
+      // The connection is created first on purpose: adoption only claims rows written after it,
+      // so a fixture that seeds the ledger first would prove nothing.
       await ledger(ctx, user.id, both.id, '');
       await ledger(ctx, user.id, both.id, 'account-x');
       await ledger(ctx, user.id, onlyUnstamped.id, '');
       await ledger(ctx, other.id, otherUsers.id, '');
 
-      await sut.adoptUnstampedUploads(user.id, 'account-x');
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-x');
 
       // Scoped to these two users: the medium suite shares one database, so an unscoped count
       // would include rows other tests in this file left behind.
