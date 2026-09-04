@@ -31,6 +31,13 @@ where
   "userId" = $2
   and "refreshToken" = $3
   and "driveAccountId" is null
+select
+  "driveAccountId"
+from
+  "user_google_drive"
+where
+  "userId" = $1
+  and "refreshToken" = $2
 
 -- GoogleDriveRepository.setFolderId
 update "user_google_drive"
@@ -444,3 +451,17 @@ where
   "google_drive_upload_error"."userId" = $2
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
+select
+  "error"
+from
+  "google_drive_upload_error"
+where
+  "userId" = $1
+  and "error" in ($2, $3)
+order by
+  case "error"
+    when $4 then 0
+    else 1
+  end
+limit
+  $5

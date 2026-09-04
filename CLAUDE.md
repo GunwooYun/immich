@@ -379,14 +379,15 @@ web/src/**/*.spec.ts             웹 유닛
   # 1) 배포 후 설정 화면을 한 번 연다.
   #    입양을 트리거하는 것은 getStatus이고, 설정 화면이 로드 시 부르는 것이 그것이다.
   #    (앨범 메뉴의 storage 호출도 트리거하지만, 설정 화면은 storage를 부르지 않는다.)
-  # 2) 사용자별로 미상 행이 남았는지 본다 — 0이 되기 전에는 연결 해제 금지.
+  # 2) 사용자별로 미상 행이 남았는지 본다. (드레인이 들어온 뒤로 연결 해제가 금지는 아니다 —
+  #    아래 설명 참고. 0은 목표이지 관문이 아니다.)
   #    합계가 아니라 사용자별로 보는 이유: 한 사용자가 0이어도 다른 사용자가 남아 있을 수 있고,
   #    "누구를 기다리는가"를 알아야 다음 행동이 정해진다.
   # 인용이 중첩되지 않도록 heredoc으로 넘긴다. `-c '…'` 안에 SQL의 작은따옴표를 넣으려던
   # 첫 버전은 셸에서 문자열이 끊겨 psql이 `unterminated quoted string`으로 죽었다.
   ssh 랩탑 'docker exec -i immich_postgres psql -U postgres -d immich' <<'SQL'
   select u."userId",
-         u."driveAccountId" is null as unidentified,
+         coalesce(u."driveAccountId", '(unidentified)') as drive_account,
          count(g.*) filter (where g."driveAccountId" = '') as unstamped
   from user_google_drive u
   left join google_drive_upload g on g."userId" = u."userId"
@@ -412,6 +413,11 @@ SQL
 
   **연결 해제·재연결을 먼저 해도 안전하다.** 연결이 끝나는 두 순간(재링크 직전, 연결 해제 직전)에
   떠나는 토큰으로 미상 행을 그 계정에 넘긴다. 그 드레인이 실패해도 위의 안전망이 받는다.
+
+  `drive_account`가 불투명한 숫자로 보이는 것이 정상이다 — Drive의 `permissionId`이고 사람이 읽는
+  주소가 아니다. **확인 방법은 값 자체를 알아보는 것이 아니라, 그 값이 하나뿐이고 배포 전후로
+  바뀌지 않는지 보는 것이다.** 두 개가 나오거나 나중에 달라졌다면 다른 계정이 연결된 것이고,
+  그때가 §1의 "운영 데이터에 손대기 전에 확인" 순간이다.
 
   입양은 **기존 토큰이 살아 있는 동안에만** 일어난다(연결 경로에서는 절대 하지 않는다 — 그때
   토큰은 새것이고 다른 계정일 수 있다).

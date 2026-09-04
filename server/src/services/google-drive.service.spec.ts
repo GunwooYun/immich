@@ -1332,10 +1332,29 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('draining the unstamped bucket', () => {
-    it('should hand the outgoing connection its rows before a re-link replaces it', async () => {
-      // The hazard this closes needs no probe failure and no second account: reconnect first, and
-      // the pre-column rows are orphaned for good, because adoption early-returns once the new
+    it('should hand an unidentified outgoing connection its rows before a re-link replaces it', async () => {
+      // The hazard needs no probe failure and no second account: reconnect first, and the
+      // pre-column rows are orphaned for good, because adoption early-returns once the new
       // connection carries an id. The next backfill then re-uploads them.
+      const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+
+      await run();
+
+      // Probed with the *outgoing* token, and adopted into what that probe found.
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-b');
+      // Order is the point: after the upsert the row carries the new id and the rows would go to
+      // the wrong owner, or to none.
+      expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.googleDrive.upsertCredentials.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('should leave the bucket alone when the outgoing connection is already identified', async () => {
+      // An identified connection's own uploads are stamped, so anything still unstamped was
+      // written by some *earlier* connection. Claiming it here would attribute one account's
+      // uploads to another, permanently — the exact failure the drain exists to prevent, and what
+      // the first version of it did by reaching for the stored id instead of the token.
       const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
       mocks.googleDrive.getCredentials.mockResolvedValue({
         userId,
@@ -1348,25 +1367,16 @@ describe(GoogleDriveService.name, () => {
 
       await run();
 
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-a');
-      // Order is the whole point: after the upsert the row carries account-b and the rows would go
-      // to the wrong owner, or to none.
-      expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
-        mocks.googleDrive.upsertCredentials.mock.invocationCallOrder[0],
-      );
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      // Witness: the link itself went through, so the negative cannot pass by bailing out early.
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalled();
     });
 
     it('should drain on disconnect', async () => {
       const userId = newUuid();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
-      mocks.googleDrive.getCredentials.mockResolvedValue({
-        userId,
-        refreshToken: 'refresh-token',
-        driveAccountId: 'account-a',
-        folderId: null,
-        folderName: null,
-        connectedAt: new Date(),
-      });
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-a' } } });
 
       await sut.disconnect(userId);
 

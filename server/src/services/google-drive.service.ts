@@ -367,8 +367,8 @@ export class GoogleDriveService extends BaseService {
     //
     // Deliberately does NOT adopt unstamped rows. Here the token is brand new and may belong to a
     // different account than the one those rows were written for; adopting on this path would
-    // recreate the original bug one last time. Adoption happens only while the pre-existing token
-    // is still in place — see adoptIfNewlyIdentified.
+    // recreate the original bug one last time. The unstamped rows are handed to their owner by
+    // drainUnstampedUploads just above, while the outgoing token is still on file.
     // Before anything replaces the current connection: hand its unstamped rows to the account it
     // belongs to, while its token is still the one on file. After the upsert below there is no way
     // back — the row carries a new id, adoption early-returns, and those rows belong to nobody.
@@ -418,8 +418,16 @@ export class GoogleDriveService extends BaseService {
       return;
     }
 
-    const driveAccountId =
-      credentials.driveAccountId ?? (await this.getDriveAccountId(userId, credentials.refreshToken));
+    // Only an *unidentified* connection may claim the unstamped rows. If this one already carries
+    // an account then its own uploads are stamped, and whatever is left in the bucket was written
+    // by some earlier connection — claiming it here would attribute one account's uploads to
+    // another, permanently, which is the failure this whole drain exists to prevent. The first
+    // version reached for the stored id before the token and did exactly that.
+    if (credentials.driveAccountId) {
+      return;
+    }
+
+    const driveAccountId = await this.getDriveAccountId(userId, credentials.refreshToken);
     if (!driveAccountId) {
       this.logger.warn(
         `Could not identify the outgoing Google Drive account for user ${userId}; leaving its uploads unstamped`,
@@ -503,9 +511,11 @@ export class GoogleDriveService extends BaseService {
       const oauth2Client = await this.getOAuth2Client();
       oauth2Client.setCredentials({ refresh_token: refreshToken });
 
+      // Bounded, because one caller is `disconnect`. Unlinking an integration is the user saying
+      // "stop talking to Google", and it must not be a request Google can hold open indefinitely.
       const { data } = await google
         .drive({ version: 'v3', auth: oauth2Client })
-        .about.get({ fields: 'user(permissionId)' });
+        .about.get({ fields: 'user(permissionId)' }, { timeout: GoogleDriveService.ACCOUNT_PROBE_TIMEOUT_MS });
 
       const permissionId = data.user?.permissionId ?? null;
       if (!permissionId) {
@@ -651,6 +661,7 @@ export class GoogleDriveService extends BaseService {
    */
   private accountProbeAt = new Map<string, number>();
   private static readonly ACCOUNT_PROBE_COOLDOWN_MS = 60_000;
+  private static readonly ACCOUNT_PROBE_TIMEOUT_MS = 10_000;
 
   private probeAllowed(userId: string): boolean {
     const last = this.accountProbeAt.get(userId);
