@@ -2,20 +2,6 @@
 
 -- IntegrityRepository.getById
 select
-  "error"
-from
-  "google_drive_upload_error"
-where
-  "userId" = $1
-  and "error" in ($2, $3)
-order by
-  case "error"
-    when $4 then 0
-    else 1
-  end
-limit
-  $5
-select
   "integrity_report".*
 from
   "integrity_report"

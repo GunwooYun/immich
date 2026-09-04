@@ -29,6 +29,7 @@ set
   "driveAccountId" = $1
 where
   "userId" = $2
+  and "refreshToken" = $3
   and "driveAccountId" is null
 
 -- GoogleDriveRepository.setFolderId

@@ -382,11 +382,16 @@ web/src/**/*.spec.ts             웹 유닛
   # 2) 사용자별로 미상 행이 남았는지 본다 — 0이 되기 전에는 연결 해제 금지.
   #    합계가 아니라 사용자별로 보는 이유: 한 사용자가 0이어도 다른 사용자가 남아 있을 수 있고,
   #    "누구를 기다리는가"를 알아야 다음 행동이 정해진다.
-  ssh 랩탑 "docker exec immich_postgres psql -U postgres -d immich -c '
-    select u.\"userId\", u.\"driveAccountId\" is null as unidentified, count(g.*) as unstamped
-    from user_google_drive u
-    left join google_drive_upload g on g.\"userId\" = u.\"userId\" and g.\"driveAccountId\" = '\''\''
-    group by 1, 2;'"
+  # 인용이 중첩되지 않도록 heredoc으로 넘긴다. `-c '…'` 안에 SQL의 작은따옴표를 넣으려던
+  # 첫 버전은 셸에서 문자열이 끊겨 psql이 `unterminated quoted string`으로 죽었다.
+  ssh 랩탑 'docker exec -i immich_postgres psql -U postgres -d immich' <<'SQL'
+  select u."userId",
+         u."driveAccountId" is null as unidentified,
+         count(g.*) filter (where g."driveAccountId" = '') as unstamped
+  from user_google_drive u
+  left join google_drive_upload g on g."userId" = u."userId"
+  group by 1, 2;
+SQL
   ```
 
   `unstamped`가 0이 되지 않는 원인은 셋뿐이고 서로 구별된다:

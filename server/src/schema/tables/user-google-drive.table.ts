@@ -34,16 +34,15 @@ export class UserGoogleDriveTable {
   @Column()
   refreshToken!: string;
 
-  // Which Google account this row's token belongs to — Drive's own `permissionId` for the user,
-  // read once at link time. It exists because the upload ledger is keyed (userId, assetId) with no
-  // notion of *which* Drive an asset went to: without this, connecting a different Google account
-  // leaves every asset reading "already uploaded", so the new Drive stays empty forever while the
-  // UI reports completion. Comparing this on each link is what lets us notice and reset.
+  // Which Google account this connection belongs to — Drive's own `permissionId`, read at link
+  // time. The upload ledger is keyed by this same value, so it is what makes "already uploaded"
+  // mean "already uploaded *to this Drive*": connect a different account and none of the old rows
+  // match, so the backlog recomputes by itself. Nothing is ever reset.
   //
-  // Nullable because rows created before this column existed cannot know their account. A null is
-  // "unknown", not "no account": the first link after this ships records the id without resetting
-  // anything, since we have nothing to compare against and wiping a ledger on a guess would mean
-  // re-uploading someone's whole library.
+  // Nullable means "connected but not yet identified" — a connection made before this column
+  // existed, or one whose identity probe has not succeeded yet. It reads as '' in the ledger
+  // comparison, which is the same bucket pre-column rows sit in, so those rows keep counting as
+  // uploaded until the account is named and they are adopted.
   @Column({ nullable: true })
   driveAccountId!: string | null;
 

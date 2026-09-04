@@ -10,6 +10,7 @@ import { ConfigRepository } from 'src/repositories/config.repository';
 import { CryptoRepository } from 'src/repositories/crypto.repository';
 import { DatabaseRepository } from 'src/repositories/database.repository';
 import { EventRepository } from 'src/repositories/event.repository';
+import { GoogleDriveRepository } from 'src/repositories/google-drive.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PluginRepository } from 'src/repositories/plugin.repository';
 import { StorageRepository } from 'src/repositories/storage.repository';
@@ -45,6 +46,10 @@ class WorkflowTestContext extends MediumTestContext<WorkflowExecutionService> {
         // rather than mocked so the config comes back with the feature off by default, which is
         // what makes the call return before it touches anything Drive-related.
         SystemMetadataRepository,
+        // Same reason one step further: with the feature switched on, the same path reaches
+        // GoogleDriveRepository. Present so these tests do not depend on the default config
+        // staying off to survive.
+        GoogleDriveRepository,
         UserRepository,
         WorkflowRepository,
       ],

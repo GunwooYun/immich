@@ -1252,7 +1252,9 @@ describe(GoogleDriveService.name, () => {
 
       await sut.getStatus(userId);
 
-      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'account-x');
+      // The token is part of the call because the update is conditional on it: a re-link landing
+      // while the probe is in flight must not leave account A's id beside account B's token.
+      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'refresh-token', 'account-x');
       expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-x');
     });
 
@@ -1269,6 +1271,26 @@ describe(GoogleDriveService.name, () => {
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
       expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+    });
+
+    it('should not adopt when the connection changed while the probe was in flight', async () => {
+      // setDriveAccountId is conditional on the token still being the one we probed with, and
+      // returns whether it actually updated. False means somebody re-linked underneath us, and
+      // whatever those unstamped rows belong to, it is no longer safe to call it this account.
+      const userId = newUuid();
+      const asset = arrangeReadyToUpload(mocks, userId);
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      mocks.googleDrive.setDriveAccountId.mockResolvedValue(false);
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
+      driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      // And the upload files itself in the unidentified bucket rather than under an account it
+      // cannot vouch for. Witness that the probe really ran, so the negative above is not vacuous.
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
+      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalled();
     });
 
     it('should still record under the empty bucket when Drive will not identify the account', async () => {

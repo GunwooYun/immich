@@ -46,7 +46,7 @@ export class GoogleDriveUploadTable {
   //
   // '' means "written before this column existed, provenance unknown". Those rows are adopted into
   // the real account id the first time we successfully identify it while the *pre-existing* token
-  // is still in place (see GoogleDriveService#ensureAccountIdentified). Empty rather than nullable
+  // is still in place (see GoogleDriveService#adoptIfNewlyIdentified). Empty rather than nullable
   // because a nullable column cannot sit in a primary key, and '' reads the same way through the
   // `coalesce(..., '')` the queries use for a connected-but-unidentified account.
   @Column({ primary: true, default: '' })

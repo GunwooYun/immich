@@ -44,8 +44,9 @@ describe('computeMenuPosition', () => {
   });
 
   it('should lift a tall menu up so its bottom stays on screen', () => {
-    // The other half of the report: the menu overlapped the toolbar above it. That happens when the
-    // clamp runs against a height smaller than the menu ends up being, so the lift is too small.
+    // Not the reported toolbar overlap — that came from the anchor, and `top` moves a taller menu
+    // *up*, never down. What this pins is the lift itself: a menu tall enough to run off the bottom
+    // is raised so its end stays on screen.
     const shortBox = computeMenuPosition({ ...viewport, x: 100, y: 700, width: 200, height: 40, direction: 'right' });
     const grown = computeMenuPosition({ ...viewport, x: 100, y: 700, width: 200, height: 400, direction: 'right' });
 

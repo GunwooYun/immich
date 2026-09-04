@@ -81,14 +81,21 @@ export class GoogleDriveRepository {
    * credentials object read moments earlier, and re-writing the refresh token from that stale copy
    * would clobber a token a concurrent re-link had just stored.
    */
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING] })
-  setDriveAccountId(userId: string, driveAccountId: string) {
-    return this.db
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
+  async setDriveAccountId(userId: string, refreshToken: string, driveAccountId: string): Promise<boolean> {
+    // Matching on the token, not just on the user, is what makes this safe against a re-link that
+    // lands while the probe is in flight. Without it the row could end up holding account A's id
+    // beside account B's token — permanently wrong, and wrong in the direction that silently
+    // stops uploads. Still requires the id to be null, so this can only ever fill in a blank.
+    const result = await this.db
       .updateTable('user_google_drive')
       .set({ driveAccountId })
       .where('userId', '=', userId)
+      .where('refreshToken', '=', refreshToken)
       .where('driveAccountId', 'is', null)
       .execute();
+
+    return result.some((row) => row.numUpdatedRows > 0n);
   }
 
   /**
@@ -751,23 +758,28 @@ export class GoogleDriveRepository {
   async getErrorSummary(
     userId: string,
   ): Promise<{ failedCount: number; blockedReason: (typeof GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES)[number] | null }> {
-    const [countRow, blockedReason] = await Promise.all([
-      this.db
-        .selectFrom('google_drive_upload_error')
-        .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
-        .leftJoin('google_drive_upload', (join) =>
-          join
-            .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
-            .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
-            .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
-        )
-        .where('google_drive_upload_error.userId', '=', userId)
-        .where('asset.deletedAt', 'is', null)
-        .where('google_drive_upload.assetId', 'is', null)
-        .select((eb) => eb.fn.countAll<number>().as('count'))
-        .executeTakeFirst(),
-      this.getBlockingError(userId),
-    ]);
+    // Sequential rather than Promise.all, and the reason is the SQL generator rather than the
+    // database: it captures statements through a kysely log callback and attributes them to
+    // whichever @GenerateSql method it is currently walking. Two queries in flight at once get
+    // attributed by whoever logs first, which is how a Google Drive query ended up filed under
+    // `IntegrityRepository.getById` in the generated reference SQL. The two round trips cost a few
+    // milliseconds on a settings-page read; a reference file that lies about which query belongs to
+    // which method costs a reader much more.
+    const countRow = await this.db
+      .selectFrom('google_drive_upload_error')
+      .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
+      .leftJoin('google_drive_upload', (join) =>
+        join
+          .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
+          .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
+          .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
+      )
+      .where('google_drive_upload_error.userId', '=', userId)
+      .where('asset.deletedAt', 'is', null)
+      .where('google_drive_upload.assetId', 'is', null)
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .executeTakeFirst();
+    const blockedReason = await this.getBlockingError(userId);
 
     return { failedCount: Number(countRow?.count ?? 0), blockedReason };
   }

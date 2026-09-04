@@ -368,8 +368,8 @@ export class GoogleDriveService extends BaseService {
     // Deliberately does NOT adopt unstamped rows. Here the token is brand new and may belong to a
     // different account than the one those rows were written for; adopting on this path would
     // recreate the original bug one last time. Adoption happens only while the pre-existing token
-    // is still in place — see ensureAccountIdentified.
-    const driveAccountId = await this.getDriveAccountId(refreshToken);
+    // is still in place — see adoptIfNewlyIdentified.
+    const driveAccountId = await this.getDriveAccountId(userId, refreshToken);
     await this.googleDriveRepository.upsertCredentials(userId, refreshToken, driveAccountId);
 
     // Every failure class is stale after a fresh grant, not just the revoked ones. A quota block
@@ -421,7 +421,21 @@ export class GoogleDriveService extends BaseService {
       return '';
     }
 
-    await this.googleDriveRepository.setDriveAccountId(userId, driveAccountId);
+    // If nothing was updated the connection moved under us — re-linked, or disconnected — while
+    // the probe was in flight. Whatever those unstamped rows belong to, it is no longer safe to
+    // say it is this account, so leave them alone and let the next pass decide.
+    const stamped = await this.googleDriveRepository.setDriveAccountId(
+      userId,
+      credentials.refreshToken,
+      driveAccountId,
+    );
+    if (!stamped) {
+      this.logger.warn(
+        `Google Drive connection for user ${userId} changed while identifying it; not adopting existing uploads`,
+      );
+      return '';
+    }
+
     await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
     this.logger.log(`Identified the Google Drive account for user ${userId} and adopted its existing uploads`);
 
@@ -442,7 +456,7 @@ export class GoogleDriveService extends BaseService {
    * one reconnect away from being fixed. Both branches log, because a silent null is the one thing
    * that makes this undiagnosable: if uploads stop after a reconnect, these lines are what say why.
    */
-  private async getDriveAccountId(refreshToken: string): Promise<string | null> {
+  private async getDriveAccountId(userId: string, refreshToken: string): Promise<string | null> {
     try {
       const oauth2Client = await this.getOAuth2Client();
       oauth2Client.setCredentials({ refresh_token: refreshToken });
@@ -455,7 +469,7 @@ export class GoogleDriveService extends BaseService {
       if (!permissionId) {
         // Reached without an exception: Drive answered, and simply did not include the field.
         this.logger.warn(
-          'Google Drive did not report a permissionId for this account; its uploads will be recorded ' +
+          `Google Drive did not report a permissionId for user ${userId}; its uploads will be recorded ` +
             'against the unidentified bucket, and a different account linked in this state would ' +
             'inherit them',
         );
@@ -464,7 +478,7 @@ export class GoogleDriveService extends BaseService {
       return permissionId;
     } catch (error) {
       this.logger.warn(
-        `Could not read the Google Drive account id: ${error}. Uploads will be recorded against the ` +
+        `Could not read the Google Drive account id for user ${userId}: ${error}. Uploads will be recorded against the ` +
           'unidentified bucket until a later probe succeeds',
       );
       return null;
@@ -529,8 +543,12 @@ export class GoogleDriveService extends BaseService {
     // all places: the settings page calls this endpoint on load and never calls the storage one,
     // so this is the only hook the documented post-deploy step actually reaches. Costs one probe,
     // and only while the id is still unknown.
-    if (credentials?.driveAccountId === null) {
-      await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken));
+    if (credentials?.driveAccountId === null && this.probeAllowed(userId)) {
+      await this.adoptIfNewlyIdentified(
+        userId,
+        credentials,
+        await this.getDriveAccountId(userId, credentials.refreshToken),
+      );
     }
     if (!credentials) {
       // Disconnected users still get their failure summary: after an automatic disconnect
@@ -577,6 +595,29 @@ export class GoogleDriveService extends BaseService {
    */
   private storageCache = new Map<string, { at: number; value: GoogleDriveStorage }>();
   private static readonly STORAGE_CACHE_MS = 60_000;
+
+  /**
+   * When each user's account was last probed for its identity.
+   *
+   * getStatus is called on every settings-page load *and* every time the album Drive menu opens,
+   * so an account that cannot be identified would otherwise send an about.get on each of those.
+   * The cooldown bounds that to one probe a minute per user without changing what happens once the
+   * probe succeeds — the id is stored then and this map stops being consulted.
+   *
+   * In-process like the storage cache above: it has no correctness role, and a per-replica cache
+   * being independently warm is fine.
+   */
+  private accountProbeAt = new Map<string, number>();
+  private static readonly ACCOUNT_PROBE_COOLDOWN_MS = 60_000;
+
+  private probeAllowed(userId: string): boolean {
+    const last = this.accountProbeAt.get(userId);
+    if (last && Date.now() - last < GoogleDriveService.ACCOUNT_PROBE_COOLDOWN_MS) {
+      return false;
+    }
+    this.accountProbeAt.set(userId, Date.now());
+    return true;
+  }
 
   /**
    * How full the user's Drive is.
@@ -796,9 +837,15 @@ export class GoogleDriveService extends BaseService {
     // bucket forever. One probe per job while the id is unknown — it stops as soon as one
     // succeeds, and a permanently unidentifiable account pays it every time, which the warning in
     // getDriveAccountId makes visible rather than silent.
+    // No cooldown on this one: an upload that cannot name its destination account files itself in
+    // the '' bucket, so it is worth a probe every time rather than a cheaper wrong answer.
     const uploadAccountId =
       credentials.driveAccountId ??
-      (await this.adoptIfNewlyIdentified(userId, credentials, await this.getDriveAccountId(credentials.refreshToken)));
+      (await this.adoptIfNewlyIdentified(
+        userId,
+        credentials,
+        await this.getDriveAccountId(userId, credentials.refreshToken),
+      ));
 
     // 2) Has this asset already been uploaded for this user before? If so, don't upload it
     //    again — that would create a duplicate file in their Drive. Checked first among the
