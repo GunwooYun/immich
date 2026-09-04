@@ -26,16 +26,26 @@ import { DB } from 'src/schema';
 /**
  * The Google account a user's ledger rows have to match to count as "already uploaded".
  *
- * `coalesce(..., '')` folds three states into one comparison: connected and identified (the real
- * permissionId), connected but not yet identified (NULL -> ''), and rows written before the column
- * existed (already ''). The last two share a bucket on purpose — that is what stops a deploy from
- * re-uploading everyone's library before the adoption pass has run.
+ * `coalesce(..., '')` folds two of those states together: connected and identified (the real
+ * permissionId) and connected but not yet identified (NULL -> ''). The `or … = ''` folds in the
+ * third — rows written before the column existed — and it is deliberately *permanent* rather than
+ * only holding while a connection is unidentified.
+ *
+ * That last part is a safety net rather than a nicety. Those rows are drained into the real account
+ * when a connection ends (GoogleDriveService#drainUnstampedUploads), but a drain can fail — a
+ * revoked grant, a network blip — and the alternative to matching them is treating thousands of
+ * already-uploaded files as pending. `files.create` has no idempotency check, so that means
+ * duplicates in someone's Drive that cannot be taken back. Skipping a bounded set of assets on a
+ * *new* account is the recoverable failure; re-uploading a library is not.
  */
 const currentAccountOf = (userId: string) =>
   sql<string>`coalesce((select "driveAccountId" from "user_google_drive" where "userId" = ${userId}), '')`;
 
+const ledgerMatches = (userId: string) =>
+  sql<boolean>`("google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)} or "google_drive_upload"."driveAccountId" = '')`;
+
 /** Same comparison for queries that already join `user_google_drive`. */
-const LEDGER_MATCHES_CURRENT_ACCOUNT = sql<boolean>`"google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')`;
+const LEDGER_MATCHES_CURRENT_ACCOUNT = sql<boolean>`("google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '') or "google_drive_upload"."driveAccountId" = '')`;
 
 @Injectable()
 export class GoogleDriveRepository {
@@ -322,7 +332,7 @@ export class GoogleDriveRepository {
               join
                 .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
                 .on('google_drive_upload.userId', '=', userId)
-                .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
+                .on(ledgerMatches(userId)),
             )
             .whereRef('album_asset.albumId', '=', 'album.id')
             .where('asset.deletedAt', 'is', null)
@@ -376,7 +386,7 @@ export class GoogleDriveRepository {
             join
               .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
               .on('google_drive_upload.userId', '=', userId)
-              .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
+              .on(ledgerMatches(userId)),
           )
           .whereRef('album_asset.albumId', '=', 'album.id')
           .where('asset.deletedAt', 'is', null)
@@ -523,7 +533,7 @@ export class GoogleDriveRepository {
       .select('assetId')
       .where('userId', '=', userId)
       .where('assetId', 'in', assetIds)
-      .where('driveAccountId', '=', currentAccountOf(userId))
+      .where(ledgerMatches(userId))
       .execute();
 
     return new Set(rows.map((row) => row.assetId));
@@ -596,7 +606,7 @@ export class GoogleDriveRepository {
       .select('assetId')
       .where('userId', '=', userId)
       .where('assetId', '=', assetId)
-      .where('driveAccountId', '=', currentAccountOf(userId))
+      .where(ledgerMatches(userId))
       .limit(1)
       .executeTakeFirst();
 
@@ -784,7 +794,7 @@ export class GoogleDriveRepository {
         join
           .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
           .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
-          .on(sql`"google_drive_upload"."driveAccountId" = ${currentAccountOf(userId)}`),
+          .on(ledgerMatches(userId)),
       )
       .where('google_drive_upload_error.userId', '=', userId)
       .where('asset.deletedAt', 'is', null)

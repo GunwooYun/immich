@@ -1330,4 +1330,66 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining('still unidentified'));
     });
   });
+
+  describe('draining the unstamped bucket', () => {
+    it('should hand the outgoing connection its rows before a re-link replaces it', async () => {
+      // The hazard this closes needs no probe failure and no second account: reconnect first, and
+      // the pre-column rows are orphaned for good, because adoption early-returns once the new
+      // connection carries an id. The next backfill then re-uploads them.
+      const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'old-refresh-token',
+        driveAccountId: 'account-a',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+
+      await run();
+
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-a');
+      // Order is the whole point: after the upsert the row carries account-b and the rows would go
+      // to the wrong owner, or to none.
+      expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.googleDrive.upsertCredentials.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('should drain on disconnect', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue({
+        userId,
+        refreshToken: 'refresh-token',
+        driveAccountId: 'account-a',
+        folderId: null,
+        folderName: null,
+        connectedAt: new Date(),
+      });
+
+      await sut.disconnect(userId);
+
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'account-a');
+      expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.googleDrive.deleteCredentials.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('should disconnect even when the outgoing account cannot be identified', async () => {
+      // A revoked grant makes the probe fail exactly here. Unlinking an integration must not be
+      // something Google can hold up, so the drain is allowed to give up — the rows stay unstamped,
+      // which the ledger predicate still treats as uploaded.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      driveAboutGet.mockRejectedValue(new Error('invalid_grant'));
+
+      await sut.disconnect(userId);
+
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      // The witness that makes the negative mean something: the disconnect still happened.
+      expect(mocks.googleDrive.deleteCredentials).toHaveBeenCalledWith(userId);
+    });
+  });
 });

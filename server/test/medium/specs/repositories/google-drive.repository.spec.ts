@@ -451,6 +451,24 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.setDriveAccountId(user.id, 'token-a', 'account-x')).resolves.toBe('account-x');
     });
 
+    it('should keep treating unstamped rows as uploaded even once the account is known', async () => {
+      // The safety net (R3). A drain can fail — a revoked grant, a network blip — and the
+      // alternative to matching these rows is calling thousands of already-uploaded files pending.
+      // files.create has no idempotency check, so that means duplicates nobody can take back.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: legacy } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: elsewhere } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await ledger(ctx, user.id, legacy.id, '');
+      await ledger(ctx, user.id, elsewhere.id, 'account-y');
+
+      await expect(sut.hasUpload(user.id, legacy.id)).resolves.toBe(true);
+      // The other half, and what stops this from being degenerately true: a row belonging to a
+      // *different* named account still does not match.
+      await expect(sut.hasUpload(user.id, elsewhere.id)).resolves.toBe(false);
+    });
+
     it('should adopt pre-column rows without colliding with rows already stamped', async () => {
       // An asset can already have a stamped row — uploaded again after the column shipped — and
       // the '' row for it cannot simply be updated onto that primary key.

@@ -369,6 +369,11 @@ export class GoogleDriveService extends BaseService {
     // different account than the one those rows were written for; adopting on this path would
     // recreate the original bug one last time. Adoption happens only while the pre-existing token
     // is still in place — see adoptIfNewlyIdentified.
+    // Before anything replaces the current connection: hand its unstamped rows to the account it
+    // belongs to, while its token is still the one on file. After the upsert below there is no way
+    // back — the row carries a new id, adoption early-returns, and those rows belong to nobody.
+    await this.drainUnstampedUploads(userId);
+
     const driveAccountId = await this.getDriveAccountId(userId, refreshToken);
     await this.googleDriveRepository.upsertCredentials(userId, refreshToken, driveAccountId);
 
@@ -392,6 +397,39 @@ export class GoogleDriveService extends BaseService {
    * Best effort throughout. A failure leaves the rows in the '' bucket, which still matches a
    * connected-but-unidentified account, so nothing re-uploads because of it.
    */
+  /**
+   * Empties the unstamped ledger bucket into the account that is about to stop being connected.
+   *
+   * Runs at the two moments a connection ends — just before a re-link replaces it, and just before
+   * a disconnect deletes it — and always with the *outgoing* token, which is the only moment we can
+   * say with certainty whose uploads those rows are. Waiting for the next identification cannot:
+   * once a new connection is stamped, `adoptIfNewlyIdentified` returns early and the rows are
+   * orphaned for good, so the next backfill re-uploads them into whichever Drive is connected then.
+   * With ~7,000 rows and no idempotency on files.create, that is thousands of duplicate files that
+   * cannot be taken back.
+   *
+   * Best effort by design. A revoked grant makes the probe fail here, and neither linking nor
+   * disconnecting may be blocked by that — the rows simply stay unstamped, which the ledger
+   * predicate still treats as uploaded.
+   */
+  private async drainUnstampedUploads(userId: string): Promise<void> {
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
+      return;
+    }
+
+    const driveAccountId =
+      credentials.driveAccountId ?? (await this.getDriveAccountId(userId, credentials.refreshToken));
+    if (!driveAccountId) {
+      this.logger.warn(
+        `Could not identify the outgoing Google Drive account for user ${userId}; leaving its uploads unstamped`,
+      );
+      return;
+    }
+
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, driveAccountId);
+  }
+
   /**
    * Names a connection that has never been identified and adopts the ledger rows written before
    * the account column existed. Returns the account the caller should record uploads under.
@@ -777,6 +815,11 @@ export class GoogleDriveService extends BaseService {
    * GoogleDriveRepository#deleteCredentials).
    */
   async disconnect(userId: string): Promise<void> {
+    // Same reason as in linkAccount, and the last chance: the ledger outlives the credentials, so
+    // rows left unstamped here have no owner once the row is gone. Never allowed to block the
+    // disconnect itself — a user unlinking an integration must not be held up by Google.
+    await this.drainUnstampedUploads(userId);
+
     await this.googleDriveRepository.deleteCredentials(userId);
   }
 

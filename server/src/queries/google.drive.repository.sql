@@ -119,16 +119,19 @@ select
       inner join "asset" on "asset"."id" = "album_asset"."assetId"
       inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
       and "google_drive_upload"."userId" = $2
-      and "google_drive_upload"."driveAccountId" = coalesce(
-        (
-          select
-            "driveAccountId"
-          from
-            "user_google_drive"
-          where
-            "userId" = $3
-        ),
-        ''
+      and (
+        "google_drive_upload"."driveAccountId" = coalesce(
+          (
+            select
+              "driveAccountId"
+            from
+              "user_google_drive"
+            where
+              "userId" = $3
+          ),
+          ''
+        )
+        or "google_drive_upload"."driveAccountId" = ''
       )
     where
       "album_asset"."albumId" = "album"."id"
@@ -177,16 +180,19 @@ select
       inner join "asset" on "asset"."id" = "album_asset"."assetId"
       inner join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
       and "google_drive_upload"."userId" = $1
-      and "google_drive_upload"."driveAccountId" = coalesce(
-        (
-          select
-            "driveAccountId"
-          from
-            "user_google_drive"
-          where
-            "userId" = $2
-        ),
-        ''
+      and (
+        "google_drive_upload"."driveAccountId" = coalesce(
+          (
+            select
+              "driveAccountId"
+            from
+              "user_google_drive"
+            where
+              "userId" = $2
+          ),
+          ''
+        )
+        or "google_drive_upload"."driveAccountId" = ''
       )
     where
       "album_asset"."albumId" = "album"."id"
@@ -219,7 +225,10 @@ from
   inner join "asset" on "asset"."id" = "album_asset"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
   and "google_drive_upload"."userId" = "google_drive_album"."userId"
-  and "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
+    or "google_drive_upload"."driveAccountId" = ''
+  )
 where
   "google_drive_album"."userId" = $1
   and "album"."deletedAt" is null
@@ -240,7 +249,10 @@ from
   inner join "asset" on "asset"."id" = "album_asset"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
   and "google_drive_upload"."userId" = "google_drive_album"."userId"
-  and "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce("user_google_drive"."driveAccountId", '')
+    or "google_drive_upload"."driveAccountId" = ''
+  )
 where
   "album"."deletedAt" is null
   and "asset"."deletedAt" is null
@@ -263,16 +275,19 @@ from
 where
   "userId" = $1
   and "assetId" in ($2)
-  and "driveAccountId" = coalesce(
-    (
-      select
-        "driveAccountId"
-      from
-        "user_google_drive"
-      where
-        "userId" = $3
-    ),
-    ''
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce(
+      (
+        select
+          "driveAccountId"
+        from
+          "user_google_drive"
+        where
+          "userId" = $3
+      ),
+      ''
+    )
+    or "google_drive_upload"."driveAccountId" = ''
   )
 
 -- GoogleDriveRepository.isAssetInSubscribedAlbum
@@ -299,16 +314,19 @@ from
 where
   "userId" = $1
   and "assetId" = $2
-  and "driveAccountId" = coalesce(
-    (
-      select
-        "driveAccountId"
-      from
-        "user_google_drive"
-      where
-        "userId" = $3
-    ),
-    ''
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce(
+      (
+        select
+          "driveAccountId"
+        from
+          "user_google_drive"
+        where
+          "userId" = $3
+      ),
+      ''
+    )
+    or "google_drive_upload"."driveAccountId" = ''
   )
 limit
   $4
@@ -408,16 +426,19 @@ from
   inner join "asset" on "asset"."id" = "google_drive_upload_error"."assetId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "google_drive_upload_error"."assetId"
   and "google_drive_upload"."userId" = "google_drive_upload_error"."userId"
-  and "google_drive_upload"."driveAccountId" = coalesce(
-    (
-      select
-        "driveAccountId"
-      from
-        "user_google_drive"
-      where
-        "userId" = $1
-    ),
-    ''
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce(
+      (
+        select
+          "driveAccountId"
+        from
+          "user_google_drive"
+        where
+          "userId" = $1
+      ),
+      ''
+    )
+    or "google_drive_upload"."driveAccountId" = ''
   )
 where
   "google_drive_upload_error"."userId" = $2
