@@ -82,12 +82,12 @@ export class GoogleDriveRepository {
    * would clobber a token a concurrent re-link had just stored.
    */
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
-  async setDriveAccountId(userId: string, refreshToken: string, driveAccountId: string): Promise<boolean> {
+  async setDriveAccountId(userId: string, refreshToken: string, driveAccountId: string): Promise<string | null> {
     // Matching on the token, not just on the user, is what makes this safe against a re-link that
     // lands while the probe is in flight. Without it the row could end up holding account A's id
-    // beside account B's token — permanently wrong, and wrong in the direction that silently
-    // stops uploads. Still requires the id to be null, so this can only ever fill in a blank.
-    const result = await this.db
+    // beside account B's token — permanently wrong, and wrong in the direction that silently stops
+    // uploads. Requiring the id to be null means this can only ever fill in a blank.
+    await this.db
       .updateTable('user_google_drive')
       .set({ driveAccountId })
       .where('userId', '=', userId)
@@ -95,7 +95,19 @@ export class GoogleDriveRepository {
       .where('driveAccountId', 'is', null)
       .execute();
 
-    return result.some((row) => row.numUpdatedRows > 0n);
+    // Returns what the row *holds* for this token, not whether this call is the one that wrote it.
+    // Those are different questions and conflating them was a bug: the upload queue runs five jobs
+    // at a time, so four of them lose the race to fill the blank and would otherwise conclude the
+    // account was unknown and file their uploads under ''. What matters to a caller is whether the
+    // connection now carries the account it just probed — no matter who put it there.
+    const row = await this.db
+      .selectFrom('user_google_drive')
+      .select('driveAccountId')
+      .where('userId', '=', userId)
+      .where('refreshToken', '=', refreshToken)
+      .executeTakeFirst();
+
+    return row?.driveAccountId ?? null;
   }
 
   /**

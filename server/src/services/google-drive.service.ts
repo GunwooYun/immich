@@ -424,12 +424,16 @@ export class GoogleDriveService extends BaseService {
     // If nothing was updated the connection moved under us — re-linked, or disconnected — while
     // the probe was in flight. Whatever those unstamped rows belong to, it is no longer safe to
     // say it is this account, so leave them alone and let the next pass decide.
-    const stamped = await this.googleDriveRepository.setDriveAccountId(
+    // Compares what the row *settled on* with what this probe found, rather than asking whether
+    // this call is the one that wrote it. Five upload jobs run at once, so four of them lose the
+    // race to fill the blank; treating that as failure filed their uploads under '' — a
+    // regression of the very bug the previous round fixed.
+    const settled = await this.googleDriveRepository.setDriveAccountId(
       userId,
       credentials.refreshToken,
       driveAccountId,
     );
-    if (!stamped) {
+    if (settled !== driveAccountId) {
       this.logger.warn(
         `Google Drive connection for user ${userId} changed while identifying it; not adopting existing uploads`,
       );

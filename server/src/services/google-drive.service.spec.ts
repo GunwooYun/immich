@@ -1273,6 +1273,23 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
     });
 
+    it('should record under the account another job already stamped', async () => {
+      // The upload queue runs five jobs at a time. Four of them lose the race to fill in the blank,
+      // and an earlier version treated losing that race as "the account is unknown" and filed the
+      // upload under ''. What matters is what the connection now holds, not who wrote it.
+      const userId = newUuid();
+      const asset = arrangeReadyToUpload(mocks, userId);
+      mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      // Already stamped by a sibling job: the update matched nothing, and the read returns the id.
+      mocks.googleDrive.setDriveAccountId.mockResolvedValue('account-x');
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
+      driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+      await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+    });
+
     it('should not adopt when the connection changed while the probe was in flight', async () => {
       // setDriveAccountId is conditional on the token still being the one we probed with, and
       // returns whether it actually updated. False means somebody re-linked underneath us, and
@@ -1280,7 +1297,7 @@ describe(GoogleDriveService.name, () => {
       const userId = newUuid();
       const asset = arrangeReadyToUpload(mocks, userId);
       mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
-      mocks.googleDrive.setDriveAccountId.mockResolvedValue(false);
+      mocks.googleDrive.setDriveAccountId.mockResolvedValue(null);
       driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
       driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
 

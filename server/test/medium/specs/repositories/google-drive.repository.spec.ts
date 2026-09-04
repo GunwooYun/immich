@@ -413,6 +413,44 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
 
+    it('should refuse to stamp an account onto a connection whose token has changed', async () => {
+      // The guard that keeps a probe from attaching account A's id to account B's token. Without
+      // matching on the token, a re-link landing while the probe is in flight leaves the row
+      // permanently mismatched — and mismatched in the direction that silently stops uploads.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({ userId: user.id, refreshToken: 'token-b', driveAccountId: null })
+        .execute();
+
+      await expect(sut.setDriveAccountId(user.id, 'token-a', 'account-x')).resolves.toBeNull();
+
+      const row = await ctx.database
+        .selectFrom('user_google_drive')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .executeTakeFirst();
+      expect(row?.driveAccountId).toBeNull();
+
+      // Witness: with the right token it does settle, so the null above is the guard and not a
+      // broken fixture.
+      await expect(sut.setDriveAccountId(user.id, 'token-b', 'account-x')).resolves.toBe('account-x');
+    });
+
+    it('should report the account a concurrent stamp already settled on', async () => {
+      // Losing the race to fill the blank is not failure: the caller needs to know what the
+      // connection holds, or its upload lands in the '' bucket.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({ userId: user.id, refreshToken: 'token-a', driveAccountId: 'account-x' })
+        .execute();
+
+      await expect(sut.setDriveAccountId(user.id, 'token-a', 'account-x')).resolves.toBe('account-x');
+    });
+
     it('should adopt pre-column rows without colliding with rows already stamped', async () => {
       // An asset can already have a stamped row — uploaded again after the column shipped — and
       // the '' row for it cannot simply be updated onto that primary key.
