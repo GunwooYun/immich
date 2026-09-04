@@ -513,9 +513,17 @@ export class GoogleDriveService extends BaseService {
 
       // Bounded, because one caller is `disconnect`. Unlinking an integration is the user saying
       // "stop talking to Google", and it must not be a request Google can hold open indefinitely.
-      const { data } = await google
-        .drive({ version: 'v3', auth: oauth2Client })
-        .about.get({ fields: 'user(permissionId)' }, { timeout: GoogleDriveService.ACCOUNT_PROBE_TIMEOUT_MS });
+      const { data } = await google.drive({ version: 'v3', auth: oauth2Client }).about.get(
+        { fields: 'user(permissionId)' },
+        // `retry: false` matters as much as the timeout. googleapis retries a no-response twice
+        // by default, so a bare 10s bound is really 30s — and one caller is disconnect, where the
+        // user has just said stop talking to Google. Identity is best effort anyway: giving up
+        // early costs a probe the next call retries, not a failed operation.
+        //
+        // Still unbounded: the OAuth token refresh that runs before this request. It lives inside
+        // google-auth-library and takes no timeout, so the worst case remains that leg plus this.
+        { timeout: GoogleDriveService.ACCOUNT_PROBE_TIMEOUT_MS, retry: false },
+      );
 
       const permissionId = data.user?.permissionId ?? null;
       if (!permissionId) {

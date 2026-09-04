@@ -16,18 +16,23 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
-const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed, oauth2GetToken } = vi.hoisted(() => ({
-  driveFilesCreate: vi.fn(),
-  driveFilesDelete: vi.fn(),
-  driveAboutGet: vi.fn(),
-  // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
-  // account-change reset below cannot be reached without getting a token first.
-  oauth2GetToken: vi.fn(),
-  // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
-  // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
-  // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
-  oauth2Constructed: vi.fn(),
-}));
+const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed, oauth2GetToken, oauth2SetCredentials } =
+  vi.hoisted(() => ({
+    driveFilesCreate: vi.fn(),
+    driveFilesDelete: vi.fn(),
+    driveAboutGet: vi.fn(),
+    // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
+    // account-change reset below cannot be reached without getting a token first.
+    oauth2GetToken: vi.fn(),
+    // Records which refresh token each client was handed. The drain has to probe with the
+    // *outgoing* one, and without this the tests could not tell — swapping it for a literal left
+    // every one of them passing.
+    oauth2SetCredentials: vi.fn(),
+    // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
+    // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
+    // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
+    oauth2Constructed: vi.fn(),
+  }));
 
 vi.mock('googleapis', () => ({
   google: {
@@ -36,7 +41,9 @@ vi.mock('googleapis', () => ({
         constructor(clientId: string, clientSecret: string, redirectUrl: string) {
           oauth2Constructed({ clientId, clientSecret, redirectUrl });
         }
-        setCredentials() {}
+        setCredentials(credentials: { refresh_token?: string }) {
+          oauth2SetCredentials(credentials?.refresh_token);
+        }
         getAccessToken() {
           return { token: 'access-token' };
         }
@@ -1338,10 +1345,14 @@ describe(GoogleDriveService.name, () => {
       // connection carries an id. The next backfill then re-uploads them.
       const { userId, run } = arrangeLink(mocks, sut)({ newAccountId: 'account-b' });
       mocks.googleDrive.getCredentials.mockResolvedValue(unidentified(userId));
+      oauth2SetCredentials.mockClear();
 
       await run();
 
-      // Probed with the *outgoing* token, and adopted into what that probe found.
+      // Probed with the *outgoing* token, and adopted into what that probe found. The token
+      // assertion is what makes this a test of the drain rather than of adoption in general: the
+      // incoming token is 'new-refresh-token', and before this the tests could not tell them apart.
+      expect(oauth2SetCredentials).toHaveBeenCalledWith('refresh-token');
       expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-b');
       // Order is the point: after the upsert the row carries the new id and the rows would go to
       // the wrong owner, or to none.

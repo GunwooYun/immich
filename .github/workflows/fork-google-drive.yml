@@ -207,3 +207,51 @@ jobs:
           if [ "${{ steps.medium.outcome }}" = "failure" ]; then
             echo "::warning::the medium suite failed; it is non-blocking for now"
           fi
+
+  # The generated reference SQL is only correct if the generator ran against a database that has the
+  # migrations applied. Against one that does not, multi-statement methods are silently truncated
+  # and `git diff` comes out empty — which is exactly how a stale file was reported twice as "no
+  # drift". This job is here so that mistake cannot be made quietly again.
+  sql:
+    name: Generated SQL is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: immich
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB_URL: postgres://postgres:postgres@localhost:5432/immich
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@v3
+
+      - name: Build the server
+        run: mise run //server:build
+
+      - name: Apply migrations
+        run: mise run //server:migrations run
+
+      - name: Regenerate
+        run: mise run //:sql
+
+      - name: Fail if the committed SQL is out of date
+        run: |
+          if ! git diff --exit-code -- server/src/queries; then
+            echo "::error::server/src/queries is out of date — run \`mise //:sql\` against a migrated database and commit the result"
+            exit 1
+          fi
