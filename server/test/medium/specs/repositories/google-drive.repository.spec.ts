@@ -558,6 +558,75 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       ]);
     });
 
+    it('should keep an unstamped row whose asset is only stamped under some other account', async () => {
+      // The collision check has to name the account being adopted into. Widened to "any stamped
+      // row", it deletes the unstamped row of an asset that reached a *different* Drive — and
+      // since a row for another account does not match the ledger predicate, the asset then reads
+      // as never uploaded and is sent again, permanently.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
+      // A third account entirely — nothing to collide with under account-b.
+      await ledger(ctx, user.id, asset.id, 'account-c', CONNECTION_A);
+
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+
+      const rows = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .orderBy('driveAccountId')
+        .execute();
+      // Stamped, not deleted: there was no row under account-b for it to collide with.
+      expect(rows).toEqual([{ driveAccountId: 'account-b' }, { driveAccountId: 'account-c' }]);
+    });
+
+    it('should refuse to adopt into an empty account id', async () => {
+      // Not reachable through any caller today, and that is the reason to hold it here rather than
+      // trust it: with '' the collision check matches the rows being adopted, so the delete takes
+      // every one of them. A guard that costs two lines against a failure that costs a library.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
+
+      await expect(sut.adoptUnstampedUploads(user.id, 'token', '')).resolves.toBe(false);
+
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it("should not delete another user's colliding row, even one written under the same id", async () => {
+      // Defence in depth, and the fixture says so: connection ids are per-connection uuids, so two
+      // users sharing one is not a state the application produces. Nothing in the schema forbids
+      // it either, and the failure it would cause — deleting someone else's ledger row — is the
+      // irreversible kind, so the filter is worth a test even though the state is synthetic.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, 'account-b', CONNECTION_A);
+      // Same asset, same connection id, different user — and a collision of its own.
+      await ledger(ctx, other.id, asset.id, '', CONNECTION_B);
+      await ledger(ctx, other.id, asset.id, 'account-b', CONNECTION_A);
+
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+
+      const rows = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', other.id)
+        .where('assetId', '=', asset.id)
+        .orderBy('driveAccountId')
+        .execute();
+      expect(rows).toEqual([{ driveAccountId: '' }, { driveAccountId: 'account-b' }]);
+    });
+
     it('should stop claiming its own rows once it has been re-linked', async () => {
       // The re-mint, asserted through adoption rather than by comparing two ids. Without a fresh
       // identity on re-link the new connection inherits the previous one's rows — the same

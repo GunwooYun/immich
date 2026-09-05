@@ -149,6 +149,15 @@ export class GoogleDriveRepository {
    * after the column shipped), and updating the '' row on top of it would violate the primary key.
    */
   async adoptUnstampedUploads(userId: string, refreshToken: string, driveAccountId: string): Promise<boolean> {
+    // An empty account id would be self-destructive rather than merely useless: the collision
+    // check below looks for a row already stamped with `driveAccountId`, and with '' it matches the
+    // very rows being adopted, so every unstamped row this connection wrote is deleted instead of
+    // stamped — and a deleted ledger row is a re-upload with no way back. Every caller happens to
+    // check first today, which is exactly the kind of guarantee that quietly stops being true.
+    if (!driveAccountId) {
+      return false;
+    }
+
     return this.db.transaction().execute(async (trx) => {
       // Compare-and-set on the connection itself, taken under a row lock. The probe that produced
       // `driveAccountId` is a network round trip; a re-link can land inside it, and adopting after

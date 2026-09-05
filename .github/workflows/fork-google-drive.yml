@@ -284,18 +284,20 @@ jobs:
       # wrong things. Asking for a table that only exists after this fork's migrations closes it.
       - name: Check the migrations actually landed
         run: |
-          # Counting, not probing a table. The first version asked for `google_drive_upload`, which
-          # has existed since the feature's first migration — so it answered yes for a database
-          # stuck several migrations back, which is exactly the state that produces truncated SQL.
-          # (The reviewer hit that state in a worktree with a stale dist/.) Comparing the applied
-          # rows against the files on disk stays true as migrations are added.
-          expected=$(ls server/src/schema/migrations/*.ts | wc -l)
-          applied=$(docker exec immich-postgres psql -U postgres -d immich -tAc 'select count(*) from kysely_migrations')
-          echo "migrations on disk: $expected, applied: $applied"
-          if [ "$expected" != "$applied" ]; then
-            echo "::error::the database is $((expected - applied)) migration(s) behind; the generated SQL would be truncated"
+          # Names, not counts. Two earlier versions of this check were weaker: asking for
+          # `google_drive_upload` answered yes for a database stuck several migrations back (the
+          # table has existed since this feature's first migration), and counting rows fails on a
+          # long-lived database for reasons that are not drift — upstream has deleted a migration
+          # and renamed several, so applied and on-disk counts can differ while the database is in
+          # fact current. Comparing the name sets says *which* migration is missing, and says
+          # nothing when the two agree.
+          ls server/src/schema/migrations/*.ts | xargs -n1 basename | sed 's/\.ts$//' | sort > /tmp/on-disk.txt
+          docker exec immich-postgres psql -U postgres -d immich -tAc 'select name from kysely_migrations' | sort > /tmp/applied.txt
+          if ! diff -u /tmp/on-disk.txt /tmp/applied.txt; then
+            echo "::error::the applied migrations do not match the files on disk; the generated SQL would be truncated"
             exit 1
           fi
+          echo "all $(wc -l < /tmp/on-disk.txt) migrations applied"
 
       - name: Regenerate
         run: mise run //:sql
