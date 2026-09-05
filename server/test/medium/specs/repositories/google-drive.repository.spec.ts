@@ -1100,6 +1100,49 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.countPendingUploads(owner.id)).resolves.toBe(0);
     });
 
+    it('should keep treating pre-column rows as uploaded in the queries that join the connection', async () => {
+      // The `''` fallback, in its second form. `ledgerMatches` is held by the hasUpload tests
+      // above; LEDGER_MATCHES_CURRENT_ACCOUNT — the variant used by the queries that already join
+      // user_google_drive — was held by nothing, and removing its fallback left all 51 green.
+      // It is the safety net the whole deploy rests on: the 6,996 rows written before the account
+      // column existed carry '', and if they stopped matching, an identified account would see the
+      // entire library as pending again.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { album } = await ctx.newAlbum({ ownerId: user.id }, [asset.id]);
+      await connect(ctx, user.id, 'account-x', CONNECTION_A);
+      await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      // Written before the column existed: no account, no connection.
+      await ledger(ctx, user.id, asset.id, '');
+
+      await expect(sut.countPendingUploads(user.id)).resolves.toBe(0);
+      await expect(drain(sut.streamPendingUploads(user.id))).resolves.toEqual([]);
+    });
+
+    it('should exclude only the blocked subscriber, not everyone on the album', async () => {
+      // The blocking-error correlations in getSubscribers and streamPendingUploads. Both are
+      // currently killed by rows earlier describes happen to leave in the shared database — run
+      // either test alone and the mutants live. This states the two users explicitly: one blocked
+      // on quota, one fine, and the second must keep receiving copies.
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      for (const user of [owner, guest]) {
+        await connect(ctx, user.id, 'account-x', user.id === owner.id ? CONNECTION_A : CONNECTION_B);
+        await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      }
+      // Only the owner's Drive is full.
+      await sut.upsertError(owner.id, asset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
+
+      const subscribers = await sut.getSubscribers([album.id]);
+      expect(subscribers.map((row: { userId: string }) => row.userId)).toEqual([guest.id]);
+
+      await expect(drain(sut.streamPendingUploads(guest.id))).resolves.toEqual([
+        { userId: guest.id, assetId: asset.id },
+      ]);
+      await expect(drain(sut.streamPendingUploads(owner.id))).resolves.toEqual([]);
+    });
+
     it('should stop returning a subscriber who has lost access to the album', async () => {
       // getSubscribers decides who receives copies. Its sibling predicates in the stream and the
       // gate both have unshare tests; this one did not, so the correlation that ties a selection
