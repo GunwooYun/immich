@@ -418,6 +418,44 @@ describe(GoogleDriveService.name, () => {
         expect(driveFilesDelete).not.toHaveBeenCalled();
       });
 
+      it('should file an Unknown failure and close the file when the connection drops mid-upload', async () => {
+        // What the user described: the network goes away while a photo is in flight. googleapis
+        // rejects with a bare Error carrying no status, which classifies as Unknown — deliberately
+        // not a blocking class, so the account is not halted for something transient.
+        //
+        // The assertion that matters most is the last one. The upload body is a live fs.ReadStream
+        // holding a descriptor, and on failure googleapis abandons the pipe without closing the
+        // source. A persistent failure at queue concurrency 5 would then leak one descriptor per
+        // job until the microservices process hits EMFILE and unrelated I/O starts failing. Only
+        // the `finally` closes it, and nothing covered that before.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        const destroy = vi.fn();
+        mocks.storage.createReadStream.mockResolvedValue({
+          stream: { destroy } as never,
+          length: 1024,
+          type: 'image/jpeg',
+        });
+        driveFilesCreate.mockRejectedValue(new Error('socket hang up'));
+        mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+
+        await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow('socket hang up');
+
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.Unknown,
+          'socket hang up',
+        );
+        // The asset stays pending — no ledger row — which is what lets the resume path pick it up
+        // again once the network is back.
+        expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+        // firstOfClass is true above, so a notification here would be the code deciding Unknown is
+        // worth waking the user for. It is not: a dropped connection retries.
+        expect(mocks.notification.create).not.toHaveBeenCalled();
+        expect(destroy).toHaveBeenCalled();
+      });
+
       it('should stamp the ledger row with the account the file went to', async () => {
         // Without this the row lands in the '' bucket and a later account switch reads it as
         // "already uploaded" — the original bug, one level down.
@@ -731,6 +769,28 @@ describe(GoogleDriveService.name, () => {
           data: { userId: user.id, assetId: asset.id },
         })),
       );
+    });
+
+    it('should record the selection before queueing anything for it', async () => {
+      // Order, not effect. The queued jobs re-check selection at execution (uploadAsset gate 3),
+      // so a job that reaches the worker before `subscribe` has committed is skipped and the
+      // album silently backs up nothing. The union with an auto-backup toggle flipped at the same
+      // moment is safe on its own — the job ids dedup — but only if the selection is already
+      // there when the first job lands.
+      const user = UserFactory.create();
+      const album = AlbumFactory.from()
+        .asset({}, (builder) => builder.exif())
+        .build();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(user.id));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+
+      await sut.subscribeAlbum(AuthFactory.create(user), album.id);
+
+      const [subscribedAt] = mocks.googleDrive.subscribe.mock.invocationCallOrder;
+      const [queuedAt] = mocks.job.queueAll.mock.invocationCallOrder;
+      expect(subscribedAt).toBeLessThan(queuedAt);
     });
 
     it('should gate subscribing on download access, not merely read access', async () => {
