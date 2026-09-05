@@ -484,6 +484,17 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // connection holds, or its upload lands in the '' bucket.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      // The foreign connection goes in *first*, deliberately. The read-back is an unordered
+      // executeTakeFirst, so an unscoped version of it returns whichever row the scan reaches
+      // first; with this row ahead of ours, dropping the userId filter answers 'account-other'
+      // and the assertion below catches it. Until the spec started clearing between tests this
+      // row arrived for free from an earlier describe, which is why that filter looked held and
+      // then quietly stopped being.
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({ userId: other.id, refreshToken: 'token-b', driveAccountId: 'account-other' })
+        .execute();
       await ctx.database
         .insertInto('user_google_drive')
         .values({ userId: user.id, refreshToken: 'token-a', driveAccountId: 'account-x' })
@@ -1015,6 +1026,24 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ledger(ctx, user.id, asset.id, 'account-other');
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+    });
+
+    it("should not read another user's blocking failure as this user's", async () => {
+      // getBlockingError and getErrorSummary are both scoped by user, and both scopes used to be
+      // held only by rows an earlier describe happened to leave in the shared database. With that
+      // gone they need a second user of their own: one blocked on quota, one with nothing at all.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: other.id });
+      await sut.upsertError(other.id, asset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
+
+      await expect(sut.getBlockingError(user.id)).resolves.toBeNull();
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 0, blockedReason: null });
+
+      // Witness: the same query does see it for the user it belongs to, so the nulls above are the
+      // scope and not an empty table.
+      await expect(sut.getBlockingError(other.id)).resolves.toBe(GoogleDriveUploadErrorClass.QuotaExceeded);
     });
 
     it("should not let another user's ledger row hide this user's failure", async () => {
