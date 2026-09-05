@@ -115,7 +115,8 @@ FAILED=0
   # against uncommitted changes produces — it happened, and a reviewer caught the mismatch by
   # counting tests rather than by reading this line.
   echo "commit: $(git -C "$REPO_ROOT" rev-parse --short HEAD) ($(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD))$(
-    [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ] && echo ' + UNCOMMITTED CHANGES'
+    [ -n "$(git -C "$REPO_ROOT" status --porcelain -- ':!dev-test/google-drive/results')" ] &&
+      echo ' + UNCOMMITTED CHANGES'
   )"
   echo
 } | tee "$OUT"
