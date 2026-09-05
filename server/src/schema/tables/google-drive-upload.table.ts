@@ -54,6 +54,17 @@ export class GoogleDriveUploadTable {
   @Column({ primary: true, default: '' })
   driveAccountId!: Generated<string>;
 
+  // Which connection wrote this row — `user_google_drive.connectionId` as it stood when the
+  // upload was authorized, not when it landed.
+  //
+  // Nullable, and null means "written before this column existed". Adoption matches on equality,
+  // and `null = uuid` is never true, so those rows are never claimed — which costs nothing,
+  // because a row carrying '' already matches every connection through the ledger predicate.
+  // Deliberately not a foreign key: the connection row is deleted on disconnect, and the ledger
+  // must outlive it (that is the whole point of the ledger).
+  @Column({ type: 'uuid', nullable: true })
+  connectionId!: string | null;
+
   // The file id Google's Drive API assigned to the uploaded file (returned from `files.create`).
   // Not currently used for anything beyond bookkeeping, but keeping it around means a future
   // feature (e.g. "open in Google Drive" link, or "remove from Drive when unlinking") doesn't

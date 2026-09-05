@@ -1137,7 +1137,18 @@ export class GoogleDriveService extends BaseService {
       // Record this upload in our ledger table so future calls to uploadAsset() for the same
       // (userId, assetId) pair know to skip instead of re-uploading (see step 2 above).
       if (data.id) {
-        await this.googleDriveRepository.recordUpload(userId, assetId, data.id, uploadAccountId);
+        // credentials.connectionId, read at gate 1 — deliberately the connection that *authorized*
+        // this upload, not whichever one exists now. A re-link during a long transfer replaces the
+        // row, and stamping the ledger with the new connection would hand a file that went to the
+        // old account to the new one. Adoption matches on this value, so the stale id is the
+        // correct one to record: the row simply stays unclaimed.
+        await this.googleDriveRepository.recordUpload(
+          userId,
+          assetId,
+          data.id,
+          uploadAccountId,
+          credentials.connectionId,
+        );
       }
 
       this.logger.debug(`Successfully uploaded asset ${assetId} to Google Drive`);

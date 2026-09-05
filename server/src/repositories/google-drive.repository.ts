@@ -62,7 +62,7 @@ export class GoogleDriveRepository {
   getCredentials(userId: string) {
     return this.db
       .selectFrom('user_google_drive')
-      .select(['userId', 'refreshToken', 'driveAccountId', 'folderId', 'folderName', 'connectedAt'])
+      .select(['userId', 'refreshToken', 'driveAccountId', 'connectionId', 'folderId', 'folderName', 'connectedAt'])
       .where('userId', '=', userId)
       .executeTakeFirst();
   }
@@ -83,7 +83,18 @@ export class GoogleDriveRepository {
         .values({ userId, refreshToken, driveAccountId })
         // connectedAt moves with the connection. Without that a re-link keeps the original
         // timestamp and adoption cannot tell one connection's uploads from an earlier one's.
-        .onConflict((oc) => oc.column('userId').doUpdateSet({ refreshToken, driveAccountId, connectedAt: sql`now()` }))
+        // connectionId is re-minted here, not only on insert. A re-link is a *different*
+        // connection even when it is the same Google account and the same person, and adoption
+        // asks "did this connection write that row" — leave the old id in place and the answer
+        // becomes yes for rows the previous connection wrote, which is the bug this replaced.
+        .onConflict((oc) =>
+          oc.column('userId').doUpdateSet({
+            refreshToken,
+            driveAccountId,
+            connectionId: sql`uuid_generate_v4()`,
+            connectedAt: sql`now()`,
+          }),
+        )
         .execute()
     );
   }
@@ -146,7 +157,7 @@ export class GoogleDriveRepository {
       // it, which is what the two previous attempts did.
       const connection = await trx
         .selectFrom('user_google_drive')
-        .select(['connectedAt'])
+        .select(['connectionId'])
         .where('userId', '=', userId)
         .where('refreshToken', '=', refreshToken)
         .forUpdate()
@@ -156,20 +167,26 @@ export class GoogleDriveRepository {
         return false;
       }
 
-      // Only rows this connection could have written. An unstamped row older than the connection
-      // belongs to some earlier one, and claiming it is the mis-attribution this whole design is
-      // about — an account that reconnects later would find its own uploads recorded against
-      // somebody else and send every one of them again.
+      // Only rows this connection actually wrote, matched by identity.
       //
-      // Excluding them is affordable precisely because unstamped rows keep matching any connection
-      // (see the ledger predicate): never adopting is a missed tidy-up, not a re-upload.
+      // The previous version compared timestamps (`uploadedAt >= connection.connectedAt`) and was
+      // wrong in one direction: uploadAsset fixes the destination account when the job starts but
+      // writes the ledger row when the transfer ends, so a row belonging to the *previous*
+      // connection can land after this one began. Claiming it recorded a file that is in someone
+      // else's Drive against this account, and the original account reconnecting then re-uploaded
+      // every one of them — permanently, since files.create has no idempotency.
+      //
+      // Rows with a null connectionId (written before the column existed) are never claimed:
+      // `null = uuid` is not true. That is affordable precisely because unstamped rows keep
+      // matching any connection (see the ledger predicate) — never adopting is a missed tidy-up,
+      // not a re-upload.
       // The delete comes first: an asset can already have a row under this account, and the
       // unstamped one cannot be moved onto that primary key.
       await trx
         .deleteFrom('google_drive_upload')
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
-        .where('uploadedAt', '>=', connection.connectedAt)
+        .where('connectionId', '=', connection.connectionId)
         .where(({ exists, selectFrom }) =>
           exists(
             selectFrom('google_drive_upload as stamped')
@@ -186,7 +203,7 @@ export class GoogleDriveRepository {
         .set({ driveAccountId })
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
-        .where('uploadedAt', '>=', connection.connectedAt)
+        .where('connectionId', '=', connection.connectionId)
         .execute();
 
       return true;
@@ -662,7 +679,7 @@ export class GoogleDriveRepository {
    * throwing a duplicate-key error. That triple is the table's primary key (see
    * the GoogleDriveUploadTable schema definition), which is what makes this upsert possible.
    */
-  recordUpload(userId: string, assetId: string, driveFileId: string, driveAccountId: string) {
+  recordUpload(userId: string, assetId: string, driveFileId: string, driveAccountId: string, connectionId: string) {
     // One transaction for the ledger write *and* the error-row delete. These are the two halves
     // of "this asset is now safely in Drive", and doing them separately leaves a crash window
     // where an asset has both a success row and a failure row — the UI would show an uploaded
@@ -673,7 +690,7 @@ export class GoogleDriveRepository {
     return this.db.transaction().execute(async (trx) => {
       await trx
         .insertInto('google_drive_upload')
-        .values({ userId, assetId, driveFileId, driveAccountId })
+        .values({ userId, assetId, driveFileId, driveAccountId, connectionId })
         .onConflict((oc) =>
           oc
             .columns(['userId', 'assetId', 'driveAccountId'])

@@ -109,6 +109,7 @@ const connected = (userId: string) => ({
   userId,
   refreshToken: 'refresh-token',
   driveAccountId: null,
+  connectionId: 'connection-1',
   folderId: null,
   folderName: null,
   connectedAt: new Date(),
@@ -121,6 +122,7 @@ const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
     userId,
     refreshToken: 'refresh-token',
     driveAccountId: null,
+    connectionId: 'connection-1',
     folderId: null,
     folderName: null,
     connectedAt: new Date(),
@@ -162,6 +164,7 @@ const unidentified = (userId: string) => ({
   userId,
   refreshToken: 'refresh-token',
   driveAccountId: null,
+  connectionId: 'connection-1',
   folderId: null,
   folderName: null,
   connectedAt: new Date(),
@@ -281,6 +284,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -307,6 +311,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -332,6 +337,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -357,6 +363,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -381,6 +388,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),
@@ -428,8 +436,47 @@ describe(GoogleDriveService.name, () => {
         // The fourth argument is the account the file went to. '' here because this fixture's
         // connection has never been identified, which is the same bucket the pre-column rows live
         // in — see the medium specs for what that buys on a deploy.
-        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          'drive-file-id',
+          '',
+          'connection-1',
+        );
         expect(driveFilesDelete).not.toHaveBeenCalled();
+      });
+
+      it('should record the connection that authorized the upload, not the one that exists after it', async () => {
+        // The ledger row names a connection, and adoption claims rows by that name. A re-link
+        // during a long transfer replaces the connection row, so reading it again at the end would
+        // hand a file that went to the previous account to the new one — the exact mis-attribution
+        // the identity was introduced to remove. Gate 1's value is the one that is true about this
+        // upload, even though it is stale by the time the row is written.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          userId,
+          refreshToken: 'refresh-token',
+          driveAccountId: 'account-a',
+          connectionId: 'connection-a',
+          folderId: null,
+          folderName: null,
+          connectedAt: new Date(),
+        });
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          'drive-file-id',
+          'account-a',
+          'connection-a',
+        );
+        // Witness: the connection was read once, at the gate — not re-read after the transfer,
+        // which is what would make the stale value impossible to observe.
+        expect(mocks.googleDrive.getCredentials).toHaveBeenCalledTimes(1);
       });
 
       it('should file an Unknown failure and close the file when the connection drops mid-upload', async () => {
@@ -479,6 +526,7 @@ describe(GoogleDriveService.name, () => {
           userId,
           refreshToken: 'refresh-token',
           driveAccountId: 'account-x',
+          connectionId: 'connection-1',
           folderId: null,
           folderName: null,
           connectedAt: new Date(),
@@ -487,7 +535,13 @@ describe(GoogleDriveService.name, () => {
 
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
-        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          'drive-file-id',
+          'account-x',
+          'connection-1',
+        );
       });
 
       it('should tag the created file with the asset id', async () => {
@@ -561,6 +615,7 @@ describe(GoogleDriveService.name, () => {
           userId,
           refreshToken: 'refresh-token',
           driveAccountId: null,
+          connectionId: 'connection-1',
           folderId: 'folder-1',
           folderName: 'Photos',
           connectedAt: new Date(),
@@ -595,6 +650,7 @@ describe(GoogleDriveService.name, () => {
           userId,
           refreshToken: 'refresh-token',
           driveAccountId: null,
+          connectionId: 'connection-1',
           folderId: 'folder-1',
           folderName: 'Photos',
           connectedAt: new Date(),
@@ -1159,6 +1215,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'super-secret-refresh-token',
         driveAccountId: null,
+        connectionId: 'connection-1',
         folderId: 'folder-id',
         folderName: 'Folder name',
         connectedAt,
@@ -1403,7 +1460,13 @@ describe(GoogleDriveService.name, () => {
 
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
-      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+        userId,
+        asset.id,
+        'drive-file-id',
+        'account-x',
+        'connection-1',
+      );
     });
 
     it('should record under the account another job already stamped', async () => {
@@ -1420,7 +1483,13 @@ describe(GoogleDriveService.name, () => {
 
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
-      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', 'account-x');
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+        userId,
+        asset.id,
+        'drive-file-id',
+        'account-x',
+        'connection-1',
+      );
     });
 
     it('should not adopt when the connection changed while the probe was in flight', async () => {
@@ -1439,7 +1508,13 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
       // And the upload files itself in the unidentified bucket rather than under an account it
       // cannot vouch for. Witness that the probe really ran, so the negative above is not vacuous.
-      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+        userId,
+        asset.id,
+        'drive-file-id',
+        '',
+        'connection-1',
+      );
       expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalled();
     });
 
@@ -1454,7 +1529,13 @@ describe(GoogleDriveService.name, () => {
 
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
-      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(userId, asset.id, 'drive-file-id', '');
+      expect(mocks.googleDrive.recordUpload).toHaveBeenCalledWith(
+        userId,
+        asset.id,
+        'drive-file-id',
+        '',
+        'connection-1',
+      );
       expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
       // The state is accepted, not silent. An unidentified connection shares the '' bucket with any
       // other unidentified connection this user has had, so if uploads ever stop after a reconnect
@@ -1497,6 +1578,7 @@ describe(GoogleDriveService.name, () => {
         userId,
         refreshToken: 'old-refresh-token',
         driveAccountId: 'account-a',
+        connectionId: 'connection-1',
         folderId: null,
         folderName: null,
         connectedAt: new Date(),

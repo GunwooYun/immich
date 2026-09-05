@@ -5,6 +5,7 @@ select
   "userId",
   "refreshToken",
   "driveAccountId",
+  "connectionId",
   "folderId",
   "folderName",
   "connectedAt"
@@ -22,6 +23,7 @@ on conflict ("userId") do update
 set
   "refreshToken" = $4,
   "driveAccountId" = $5,
+  "connectionId" = uuid_generate_v4 (),
   "connectedAt" = now()
 
 -- GoogleDriveRepository.setDriveAccountId

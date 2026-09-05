@@ -32,13 +32,24 @@ beforeAll(async () => {
  * correctness boundary (feeding someone copies of an album they lost access to), so it is worth
  * proving against Postgres rather than a mock.
  */
-const connect = (ctx: any, userId: string, driveAccountId: string | null) =>
-  ctx.database.insertInto('user_google_drive').values({ userId, refreshToken: 'token', driveAccountId }).execute();
+/**
+ * Connections carry an identity, and adoption matches on it, so the fixtures have to name it
+ * rather than let the default fill it in — a test that cannot say which connection wrote a row
+ * cannot say anything about who may claim it.
+ */
+const CONNECTION_A = '2b1f0000-0000-4000-8000-00000000000a';
+const CONNECTION_B = '2b1f0000-0000-4000-8000-00000000000b';
 
-const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: string) =>
+const connect = (ctx: any, userId: string, driveAccountId: string | null, connectionId = CONNECTION_A) =>
+  ctx.database
+    .insertInto('user_google_drive')
+    .values({ userId, refreshToken: 'token', driveAccountId, connectionId })
+    .execute();
+
+const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: string, connectionId?: string) =>
   ctx.database
     .insertInto('google_drive_upload')
-    .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId })
+    .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId, connectionId })
     .execute();
 
 describe(`${GoogleDriveRepository.name} (medium)`, () => {
@@ -469,34 +480,37 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, elsewhere.id)).resolves.toBe(false);
     });
 
-    it('should not claim unstamped rows written before this connection existed', async () => {
-      // The mis-attribution this design keeps circling back to: account A uploads while
-      // unidentified and goes away, B connects and is also unidentified at first, and B's later
-      // probe would stamp A's rows as B's. A reconnecting then finds its own uploads recorded
-      // against somebody else and sends every one of them again.
+    it('should not claim an unstamped row another connection wrote, even a newer one', async () => {
+      // The mis-attribution this design keeps circling back to, in the form that survived the
+      // timestamp boundary. uploadAsset fixes the destination account when a job starts but writes
+      // the ledger row when the transfer ends, so a row belonging to connection A can land *after*
+      // connection B began. Under `uploadedAt >= connectedAt` B claimed it — recording a file that
+      // sits in A's Drive against B's account — and A reconnecting then uploaded every one of them
+      // again, permanently.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
-      // Explicit timestamps rather than two defaulted now() calls: the point of the test is that
-      // the upload is older than the connection, and leaving that to clock resolution would make
-      // it pass or fail for reasons unrelated to the code.
-      await ctx.database
-        .insertInto('google_drive_upload')
-        .values({
-          userId: user.id,
-          assetId: asset.id,
-          driveFileId: 'file-old',
-          driveAccountId: '',
-          uploadedAt: new Date('2026-01-01T00:00:00Z'),
-        })
-        .execute();
+      // The row is deliberately the newest thing here: under the old rule that is exactly what
+      // made it claimable.
       await ctx.database
         .insertInto('user_google_drive')
         .values({
           userId: user.id,
           refreshToken: 'token-b',
           driveAccountId: null,
+          connectionId: CONNECTION_B,
           connectedAt: new Date('2026-06-01T00:00:00Z'),
+        })
+        .execute();
+      await ctx.database
+        .insertInto('google_drive_upload')
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          driveFileId: 'file-in-a',
+          driveAccountId: '',
+          connectionId: CONNECTION_A,
+          uploadedAt: new Date('2026-07-01T00:00:00Z'),
         })
         .execute();
 
@@ -508,45 +522,22 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         .where('userId', '=', user.id)
         .where('assetId', '=', asset.id)
         .executeTakeFirst();
-      // Left unstamped — and still counted as uploaded by the ledger predicate, so nothing
-      // re-uploads because of it.
+      // Left unstamped — and still counted as uploaded by the ledger predicate, so the account
+      // that really wrote it re-uploads nothing when it comes back.
       expect(row?.driveAccountId).toBe('');
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
 
-    it('should move connectedAt on a re-link so the boundary follows the new connection', async () => {
-      // The other half of the same fix, and the half nothing was holding. The boundary
-      // (uploadedAt >= connectedAt) only separates one connection's uploads from an earlier
-      // one's if re-linking moves connectedAt; leave it at the first connection's timestamp and
-      // every row ever written falls inside the window. Only the generated reference SQL recorded
-      // that `now()`, and regenerating it would have followed a regression rather than caught it.
+    it('should claim the rows it did write', async () => {
+      // The positive control. Without it the test above would also pass on an adoption that claims
+      // nothing at all — a different bug wearing the same green tick.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
-      await ctx.database
-        .insertInto('user_google_drive')
-        .values({
-          userId: user.id,
-          refreshToken: 'token-old',
-          driveAccountId: null,
-          connectedAt: new Date('2026-01-01T00:00:00Z'),
-        })
-        .execute();
-      // Written while the old connection was live: after its connectedAt, before the re-link.
-      await ctx.database
-        .insertInto('google_drive_upload')
-        .values({
-          userId: user.id,
-          assetId: asset.id,
-          driveFileId: 'file-old',
-          driveAccountId: '',
-          uploadedAt: new Date('2026-03-01T00:00:00Z'),
-        })
-        .execute();
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
 
-      await sut.upsertCredentials(user.id, 'token-new', null);
-
-      await sut.adoptUnstampedUploads(user.id, 'token-new', 'account-x');
+      await expect(sut.adoptUnstampedUploads(user.id, 'token', 'account-b')).resolves.toBe(true);
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -554,10 +545,100 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         .where('userId', '=', user.id)
         .where('assetId', '=', asset.id)
         .executeTakeFirst();
-      // The new connection cannot have written it, so it stays unstamped — and still matches, so
-      // nothing re-uploads.
+      expect(row?.driveAccountId).toBe('account-b');
+    });
+
+    it('should leave pre-column rows unstamped and still matching', async () => {
+      // Rows written before the connectionId column existed carry null, and `null = uuid` is never
+      // true, so nothing claims them — the production case: 6,996 rows that predate all of this.
+      // They keep matching every connection, which is the safety net that stops a deploy from
+      // re-uploading a library, so never adopting them costs a tidy-up and nothing else.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '');
+
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
       expect(row?.driveAccountId).toBe('');
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
+    it('should be unaffected by a clock that steps backwards', async () => {
+      // The residual risk of the timestamp boundary, kept as a permanent test rather than a note.
+      // An NTP correction moving the clock back put a new connection's connectedAt *before* rows
+      // the previous one had already written, handing it the whole interval. Matching on identity
+      // has nothing for a clock to move.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({
+          userId: user.id,
+          refreshToken: 'token-b',
+          driveAccountId: null,
+          connectionId: CONNECTION_B,
+          connectedAt: new Date('2026-06-01T00:00:00Z'),
+        })
+        .execute();
+      await ctx.database
+        .insertInto('google_drive_upload')
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          driveFileId: 'file-in-a',
+          driveAccountId: '',
+          connectionId: CONNECTION_A,
+          uploadedAt: new Date('2026-06-01T01:00:00Z'),
+        })
+        .execute();
+
+      await sut.adoptUnstampedUploads(user.id, 'token-b', 'account-b');
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
+      expect(row?.driveAccountId).toBe('');
+    });
+
+    it('should mint a new connection identity on a re-link', async () => {
+      // The half of the fix that is easy to half-apply: mint on insert, forget on conflict. Leave
+      // the old id in place and a re-link inherits the previous connection's rows — exactly the
+      // mis-attribution above, restored silently. connectedAt moves with it, which is what the
+      // settings page shows.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({
+          userId: user.id,
+          refreshToken: 'token-old',
+          driveAccountId: null,
+          connectionId: CONNECTION_A,
+          connectedAt: new Date('2026-01-01T00:00:00Z'),
+        })
+        .execute();
+
+      await sut.upsertCredentials(user.id, 'token-new', null);
+
+      const row = await ctx.database
+        .selectFrom('user_google_drive')
+        .select(['connectionId', 'connectedAt'])
+        .where('userId', '=', user.id)
+        .executeTakeFirst();
+      expect(row?.connectionId).not.toBe(CONNECTION_A);
+      expect(row?.connectedAt.getTime()).toBeGreaterThan(new Date('2026-01-01T00:00:00Z').getTime());
     });
 
     it('should refuse to adopt when the connection moved during the probe', async () => {
@@ -583,12 +664,12 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { asset: onlyUnstamped } = await ctx.newAsset({ ownerId: user.id });
       const { asset: otherUsers } = await ctx.newAsset({ ownerId: other.id });
       await connect(ctx, user.id, 'account-x');
-      // The connection is created first on purpose: adoption only claims rows written after it,
-      // so a fixture that seeds the ledger first would prove nothing.
-      await ledger(ctx, user.id, both.id, '');
+      // The '' rows name the connection that wrote them, because adoption claims by identity: a
+      // fixture leaving it null would be asserting against rows nothing was going to touch.
+      await ledger(ctx, user.id, both.id, '', CONNECTION_A);
       await ledger(ctx, user.id, both.id, 'account-x');
-      await ledger(ctx, user.id, onlyUnstamped.id, '');
-      await ledger(ctx, other.id, otherUsers.id, '');
+      await ledger(ctx, user.id, onlyUnstamped.id, '', CONNECTION_A);
+      await ledger(ctx, other.id, otherUsers.id, '', CONNECTION_A);
 
       await sut.adoptUnstampedUploads(user.id, 'token', 'account-x');
 
@@ -701,7 +782,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
 
-      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x');
+      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x', CONNECTION_A);
 
       // The row itself has to be gone, not merely hidden: getErrorSummary's anti-join would report
       // zero either way once the ledger row exists, so asking it proves nothing about the delete.
@@ -791,7 +872,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await sut.upsertError(other.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
 
-      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x');
+      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x', CONNECTION_A);
 
       const remaining = await ctx.database
         .selectFrom('google_drive_upload_error')

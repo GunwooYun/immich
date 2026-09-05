@@ -46,6 +46,21 @@ export class UserGoogleDriveTable {
   @Column({ nullable: true })
   driveAccountId!: string | null;
 
+  // A fresh identity for each connection, minted on link and re-minted on every re-link.
+  //
+  // The upload ledger stores the id of the connection that wrote each row, which is what lets
+  // adoption claim exactly the rows this connection produced. The previous boundary compared
+  // timestamps (`uploadedAt >= connectedAt`), and that was wrong in one direction: an upload
+  // authorized by connection A can finish *after* connection B begins — a large video takes
+  // minutes — so B would claim a file sitting in A's Drive, and A reconnecting would upload it
+  // again. `files.create` has no idempotency, so that duplicate cannot be taken back.
+  //
+  // Not derived from connectedAt: two connections could in principle share a timestamp, and a
+  // backwards clock step made the old comparison claim strictly more rows. An identity has
+  // neither failure mode.
+  @Column({ type: 'uuid', default: () => 'uuid_generate_v4()' })
+  connectionId!: Generated<string>;
+
   // The Drive folder id uploads should go into. Null = upload to the root of the user's "My Drive".
   @Column({ nullable: true })
   folderId!: string | null;
