@@ -25,9 +25,12 @@ import { UserTable } from 'src/schema/tables/user.table';
  * Keeping the old rows rather than resetting them is what makes switching *back* to a previous
  * account free: those rows still match, so nothing re-uploads. Rows carrying '' match *any*
  * connection on purpose — see the ledger predicate in GoogleDriveRepository — because the cost of
- * not matching them is re-uploading a library, and duplicates cannot be taken back. It also means no code path ever has
- * to delete the ledger, which matters because `files.create` has no idempotency marker — a reset
- * would mean thousands of duplicate files in someone's Drive, irreversibly.
+ * not matching them is re-uploading a library, and duplicates cannot be taken back. It also means
+ * no code path ever *resets* the ledger, which matters because `files.create` has no idempotency
+ * marker — a reset would mean thousands of duplicate files in someone's Drive, irreversibly. The
+ * one deletion that exists is adoption removing an unstamped row for an asset that already has a
+ * row under the account being adopted into: the two cannot share the primary key, and what goes is
+ * a duplicate record rather than the knowledge that the asset reached a Drive.
  */
 @Table('google_drive_upload')
 export class GoogleDriveUploadTable {

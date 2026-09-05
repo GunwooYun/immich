@@ -284,7 +284,18 @@ jobs:
       # wrong things. Asking for a table that only exists after this fork's migrations closes it.
       - name: Check the migrations actually landed
         run: |
-          docker exec immich-postgres psql -U postgres -d immich -c 'select 1 from google_drive_upload limit 1' >/dev/null
+          # Counting, not probing a table. The first version asked for `google_drive_upload`, which
+          # has existed since the feature's first migration — so it answered yes for a database
+          # stuck several migrations back, which is exactly the state that produces truncated SQL.
+          # (The reviewer hit that state in a worktree with a stale dist/.) Comparing the applied
+          # rows against the files on disk stays true as migrations are added.
+          expected=$(ls server/src/schema/migrations/*.ts | wc -l)
+          applied=$(docker exec immich-postgres psql -U postgres -d immich -tAc 'select count(*) from kysely_migrations')
+          echo "migrations on disk: $expected, applied: $applied"
+          if [ "$expected" != "$applied" ]; then
+            echo "::error::the database is $((expected - applied)) migration(s) behind; the generated SQL would be truncated"
+            exit 1
+          fi
 
       - name: Regenerate
         run: mise run //:sql

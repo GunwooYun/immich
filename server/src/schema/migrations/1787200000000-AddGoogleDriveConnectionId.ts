@@ -20,7 +20,10 @@ import { Kysely, sql } from 'kysely';
  * rows that exist today) and nullable on the ledger, where null means "written before this
  * column". Those rows are simply never adopted, which costs nothing — a row carrying '' already
  * matches every connection, so leaving it unstamped is a missed tidy-up rather than a re-upload.
- * No ledger row is ever deleted or reset here, which remains true of every path in this feature.
+ * Nothing here resets the ledger. Adoption does delete one narrow class of row — an unstamped row
+ * for an asset that already has a row under the target account, because the two cannot share the
+ * primary key — and that deletion removes a duplicate record, never the knowledge that the asset
+ * reached a Drive.
  */
 export async function up(db: Kysely<any>): Promise<void> {
   await sql`ALTER TABLE "user_google_drive" ADD "connectionId" uuid NOT NULL DEFAULT uuid_generate_v4();`.execute(db);

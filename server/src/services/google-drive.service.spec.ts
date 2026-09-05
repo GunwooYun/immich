@@ -1008,6 +1008,21 @@ describe(GoogleDriveService.name, () => {
       await expect(sut.getStorage(b)).resolves.toMatchObject({ usageBytes: 42 });
     });
 
+    it('should leave the connection alone when Drive fails for another reason', async () => {
+      // The negative half of the revoked-grant handling, missing until now: mutating the condition
+      // to `if (true)` left all 82 tests green, so nothing said a 5xx or a dropped socket must not
+      // disconnect a working account. Getting that wrong sends the user to reconnect — and, on a
+      // Testing-mode app, to re-pick their folder — over something that fixes itself.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      driveAboutGet.mockRejectedValue(Object.assign(new Error('backend error'), { status: 503 }));
+
+      await expect(sut.getStorage(userId)).rejects.toThrow('backend error');
+
+      expect(mocks.googleDrive.deleteCredentials).not.toHaveBeenCalled();
+    });
+
     it('should stop serving cached numbers once the account is disconnected', async () => {
       // Credentials are checked before the cache. The other order would keep reporting storage for
       // up to a minute after a disconnect — numbers for an account that is no longer linked.

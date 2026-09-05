@@ -110,7 +110,13 @@ FAILED=0
 {
   echo "Google Drive — unit test run"
   echo "date:   $(date --iso-8601=seconds)"
-  echo "commit: $(git -C "$REPO_ROOT" rev-parse --short HEAD) ($(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD))"
+  # The dirty marker matters more than it looks. Evidence stamped with a commit that does not
+  # contain the code under test is worse than no evidence, and that is precisely what a run
+  # against uncommitted changes produces — it happened, and a reviewer caught the mismatch by
+  # counting tests rather than by reading this line.
+  echo "commit: $(git -C "$REPO_ROOT" rev-parse --short HEAD) ($(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD))$(
+    [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ] && echo ' + UNCOMMITTED CHANGES'
+  )"
   echo
 } | tee "$OUT"
 

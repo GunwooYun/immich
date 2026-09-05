@@ -528,6 +528,60 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
 
+    it("should not delete another connection's unstamped row while resolving a collision", async () => {
+      // Adoption's delete half, which had no test of its own. It removes an unstamped row only
+      // because it cannot be moved onto a primary key an already-stamped row occupies — so it must
+      // be as narrow as the update beside it. Without the identity condition it deletes the *other*
+      // connection's row instead, and that row was the only record that the file reached the other
+      // account: reconnecting there finds hasUpload false and uploads a permanent duplicate.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      // Written by a connection that is gone, recording a file in the other account's Drive.
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_A);
+      // ...and this connection has already sent its own copy, which is what makes the two collide.
+      await ledger(ctx, user.id, asset.id, 'account-b', CONNECTION_B);
+
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+
+      const rows = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select(['driveAccountId', 'connectionId'])
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .orderBy('driveAccountId')
+        .execute();
+      expect(rows).toEqual([
+        { driveAccountId: '', connectionId: CONNECTION_A },
+        { driveAccountId: 'account-b', connectionId: CONNECTION_B },
+      ]);
+    });
+
+    it('should stop claiming its own rows once it has been re-linked', async () => {
+      // The re-mint, asserted through adoption rather than by comparing two ids. Without a fresh
+      // identity on re-link the new connection inherits the previous one's rows — the same
+      // mis-attribution, restored by a one-line omission in an onConflict set.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_A);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_A);
+
+      // The re-link. Same Google account, but a different connection.
+      await sut.upsertCredentials(user.id, 'token-new', null);
+      await sut.adoptUnstampedUploads(user.id, 'token-new', 'account-a');
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
+      expect(row?.driveAccountId).toBe('');
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
     it('should claim the rows it did write', async () => {
       // The positive control. Without it the test above would also pass on an adoption that claims
       // nothing at all — a different bug wearing the same green tick.
