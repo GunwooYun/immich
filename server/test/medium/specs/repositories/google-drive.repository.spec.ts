@@ -52,6 +52,21 @@ const ledger = (ctx: any, userId: string, assetId: string, driveAccountId: strin
     .values({ userId, assetId, driveFileId: `file-${driveAccountId}`, driveAccountId, connectionId })
     .execute();
 
+/**
+ * Two users, one shared album, one asset — the shape nine scope predicates in this repository need
+ * in order to be observable at all. Every fixture in this file used to create a single user, which
+ * is why deleting those predicates changed nothing: the queries were correct and the tests could
+ * not see it. Returns both users and the asset so a caller can put rows on either side.
+ */
+const sharedAlbum = async (ctx: any) => {
+  const { user: owner } = await ctx.newUser();
+  const { user: guest } = await ctx.newUser();
+  const { asset } = await ctx.newAsset({ ownerId: owner.id });
+  const { album } = await ctx.newAlbum({ ownerId: owner.id }, [asset.id]);
+  await ctx.newAlbumUser({ albumId: album.id, userId: guest.id });
+  return { owner, guest, asset, album };
+};
+
 describe(`${GoogleDriveRepository.name} (medium)`, () => {
   describe('streamPendingUploads', () => {
     it('should stream assets of an album the user selected and can still see', async () => {
@@ -1051,6 +1066,173 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await sut.upsertError(user.id, b.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
 
       await expect(sut.getBlockingError(user.id)).resolves.toBe(GoogleDriveUploadErrorClass.QuotaExceeded);
+    });
+  });
+
+  /**
+   * The user axis. A whole round of review went into discovering that these predicates were
+   * correct and unheld: sixteen of them were mutated one at a time and nine survived, every one
+   * because no fixture in this file had a second user. They are grouped here rather than scattered
+   * so the next person adding a query across users sees the shape to copy.
+   */
+  describe('scoping across users', () => {
+    it("should not let one selector's ledger row suppress another's pending asset", async () => {
+      // The worst of the nine, and the only one with nothing behind it. The others either hit gate
+      // 3 at the worker or merely show a wrong number; this one makes the stream *skip work*, and
+      // a skipped asset waits for a trigger that may never come. Two people backing up the same
+      // shared album is the ordinary case, not an exotic one.
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      for (const user of [owner, guest]) {
+        await connect(ctx, user.id, 'account-x', user.id === owner.id ? CONNECTION_A : CONNECTION_B);
+        await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      }
+      // The owner has already sent it. The guest has not.
+      await ledger(ctx, owner.id, asset.id, 'account-x', CONNECTION_A);
+
+      // Scoped per user: the medium suite shares one database, so an unscoped stream also carries
+      // whatever other describes in this file left behind.
+      await expect(drain(sut.streamPendingUploads(guest.id))).resolves.toEqual([
+        { userId: guest.id, assetId: asset.id },
+      ]);
+      await expect(drain(sut.streamPendingUploads(owner.id))).resolves.toEqual([]);
+      await expect(sut.countPendingUploads(guest.id)).resolves.toBe(1);
+      await expect(sut.countPendingUploads(owner.id)).resolves.toBe(0);
+    });
+
+    it('should stop returning a subscriber who has lost access to the album', async () => {
+      // getSubscribers decides who receives copies. Its sibling predicates in the stream and the
+      // gate both have unshare tests; this one did not, so the correlation that ties a selection
+      // row to a live membership was unheld here.
+      const { ctx, sut } = setup();
+      const { owner, guest, album } = await sharedAlbum(ctx);
+      for (const user of [owner, guest]) {
+        await connect(ctx, user.id, 'account-x', user.id === owner.id ? CONNECTION_A : CONNECTION_B);
+        await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
+      }
+
+      await expect(sut.getSubscribers([album.id])).resolves.toEqual(
+        expect.arrayContaining([owner.id, guest.id].map((userId) => expect.objectContaining({ userId }))),
+      );
+
+      // Unshare the guest. Their selection row deliberately survives so they can still remove it.
+      await ctx.database
+        .deleteFrom('album_user')
+        .where('albumId', '=', album.id)
+        .where('userId', '=', guest.id)
+        .execute();
+
+      const after = await sut.getSubscribers([album.id]);
+      expect(after.map((row: { userId: string }) => row.userId)).toEqual([owner.id]);
+    });
+
+    it("should count only the caller's own uploads in an album's backup status", async () => {
+      // getAlbumBackupStatus had no medium test at all — three scope predicates, all unheld. The
+      // owner having backed up the album says nothing about the guest's Drive, and reporting it as
+      // theirs would tell them their photos are safe when they are not.
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      // Both on the *same* Google account — a household sharing one Drive. With different accounts
+      // the ledger predicate already excludes the other user's row, which masks the user scope and
+      // would let this test pass with it removed.
+      await connect(ctx, guest.id, 'account-x', CONNECTION_B);
+      await connect(ctx, owner.id, 'account-x', CONNECTION_A);
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+      await ledger(ctx, owner.id, asset.id, 'account-x', CONNECTION_A);
+
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({
+        subscribed: true,
+        accessLost: false,
+        assetCount: 1,
+        uploadedCount: 0,
+      });
+
+      // ...and once the guest sends their own copy it counts, so the zero above is the scope and
+      // not an empty ledger.
+      await ledger(ctx, guest.id, asset.id, 'account-x', CONNECTION_B);
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({ uploadedCount: 1 });
+    });
+
+    it('should not report an album as subscribed because somebody else selected it', async () => {
+      // The other direction of the same two joins. Asking as the guest — who *has* a selection and
+      // *is* a member — cannot distinguish a correctly scoped join from one that matches any row;
+      // asking as the owner, who has neither, can. And a member who was unshared but kept their
+      // selection must still read accessLost, which another member's row would otherwise hide.
+      const { ctx, sut } = setup();
+      const { owner, guest, album } = await sharedAlbum(ctx);
+      await connect(ctx, guest.id, 'account-x', CONNECTION_B);
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+
+      // The owner is a member with no selection of their own.
+      await expect(sut.getAlbumBackupStatus(owner.id, album.id)).resolves.toMatchObject({
+        subscribed: false,
+        accessLost: false,
+      });
+
+      // Now unshare the guest, whose selection row survives on purpose.
+      await ctx.database
+        .deleteFrom('album_user')
+        .where('albumId', '=', album.id)
+        .where('userId', '=', guest.id)
+        .execute();
+
+      // The owner is still a member — so a membership join that ignores the user would report the
+      // guest as having access they no longer have, and the settings row would stop explaining why
+      // their uploads stopped.
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({
+        subscribed: true,
+        accessLost: true,
+      });
+    });
+
+    it("should not show another user's selection in the subscribable album list", async () => {
+      // Same three predicates as the status query, one screen up. A selection belonging to someone
+      // else must not make an album look subscribed, and their uploads must not fill this user's
+      // progress bar.
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      // Same account for both, for the reason above: otherwise the ledger predicate does the
+      // excluding and the user scope is never exercised.
+      await connect(ctx, owner.id, 'account-x', CONNECTION_A);
+      await connect(ctx, guest.id, 'account-x', CONNECTION_B);
+      await ctx.database.insertInto('google_drive_album').values({ userId: owner.id, albumId: album.id }).execute();
+      await ledger(ctx, owner.id, asset.id, 'account-x', CONNECTION_A);
+
+      const albums = await sut.getSubscribableAlbums(guest.id);
+      const row = albums.find((candidate: { albumId: string }) => candidate.albumId === album.id);
+
+      expect(row).toMatchObject({ subscribed: false, assetCount: 1, uploadedCount: 0 });
+    });
+
+    it("should not count another user's pending asset in this user's total", async () => {
+      // countPendingUploads is the progress card. It shares its predicate with the stream by
+      // design, so a scope error here and there would disagree in the same direction — the card
+      // saying work remains while the stream queues someone else's, or the reverse.
+      const { ctx, sut } = setup();
+      const { owner, guest, album } = await sharedAlbum(ctx);
+      await connect(ctx, owner.id, 'account-owner', CONNECTION_A);
+      await ctx.database.insertInto('google_drive_album').values({ userId: owner.id, albumId: album.id }).execute();
+
+      // The guest is connected but has selected nothing.
+      await connect(ctx, guest.id, 'account-guest', CONNECTION_B);
+
+      await expect(sut.countPendingUploads(owner.id)).resolves.toBe(1);
+      await expect(sut.countPendingUploads(guest.id)).resolves.toBe(0);
+
+      // And the correlation that ties a selection to its *own* membership. Give the guest a
+      // selection and then unshare them: the owner is still a member, so a join that matches any
+      // membership would keep counting the guest's work forever — a progress card stuck above zero
+      // for an album they can no longer see.
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+      await expect(sut.countPendingUploads(guest.id)).resolves.toBe(1);
+
+      await ctx.database
+        .deleteFrom('album_user')
+        .where('albumId', '=', album.id)
+        .where('userId', '=', guest.id)
+        .execute();
+
+      await expect(sut.countPendingUploads(guest.id)).resolves.toBe(0);
     });
   });
 });
