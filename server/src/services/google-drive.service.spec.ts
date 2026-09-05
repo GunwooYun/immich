@@ -20,6 +20,7 @@ const {
   driveFilesCreate,
   driveFilesDelete,
   driveAboutGet,
+  driveFilesGet,
   oauth2Constructed,
   oauth2GetToken,
   oauth2SetCredentials,
@@ -28,6 +29,8 @@ const {
   driveFilesCreate: vi.fn(),
   driveFilesDelete: vi.fn(),
   driveAboutGet: vi.fn(),
+  // The folder-name lookup that replaces a raw Drive id on the settings page.
+  driveFilesGet: vi.fn(),
   // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
   // account-change reset below cannot be reached without getting a token first.
   oauth2GetToken: vi.fn(),
@@ -66,7 +69,7 @@ vi.mock('googleapis', () => ({
       },
     },
     drive: () => ({
-      files: { create: driveFilesCreate, delete: driveFilesDelete },
+      files: { create: driveFilesCreate, delete: driveFilesDelete, get: driveFilesGet },
       about: { get: driveAboutGet },
     }),
   },
@@ -112,6 +115,17 @@ const connected = (userId: string) => ({
   connectionId: 'connection-1',
   folderId: null,
   folderName: null,
+  connectedAt: new Date(),
+});
+
+/** A connected user whose folder may or may not have a stored name — the backfill's whole subject. */
+const connectedWithFolder = (userId: string, folderName: string | null) => ({
+  userId,
+  refreshToken: 'refresh-token',
+  driveAccountId: 'account-x',
+  connectionId: 'connection-1',
+  folderId: 'folder-id',
+  folderName,
   connectedAt: new Date(),
 });
 
@@ -190,6 +204,11 @@ describe(GoogleDriveService.name, () => {
     ({ sut, mocks } = newTestService(GoogleDriveService));
     // Hoisted module mocks live for the whole file, so the happy answer has to be restored per
     // test rather than declared once — otherwise one rejection leaks into everything after it.
+    // Hoisted mocks live for the whole file, so call counts accumulate across tests unless they
+    // are reset here. A test asserting "probed once" was really asserting "once, plus whatever
+    // earlier describes happened to do" — the same accidental coupling the medium suite had.
+    driveFilesGet.mockReset();
+    driveAboutGet.mockReset();
     oauth2GetAccessToken.mockReset();
     oauth2GetAccessToken.mockReturnValue({ token: 'access-token' });
   });
@@ -410,6 +429,92 @@ describe(GoogleDriveService.name, () => {
         GoogleDriveUploadErrorClass.SourceUnreadable,
         expect.any(String),
       );
+    });
+
+    /**
+     * The race that produced this fork's first two production failures, and the only one whose
+     * evidence survived: both error rows named a path under /data/upload that no longer existed,
+     * recorded four seconds after the asset row was created, while the file itself sat perfectly
+     * readable in /data/library. A phone upload lands in the staging directory, immich's
+     * storage-template job moves it, and adding the photo to an album queues a Drive upload at the
+     * same instant — so the job opens a path the mover has already emptied.
+     */
+    describe('an original that moves while the job is queued', () => {
+      it('should retry once against the re-read path and upload', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        const moved = { ...getForAsset(asset), originalPath: '/data/library/admin/2026/moved.jpg' };
+        mocks.asset.getById.mockResolvedValueOnce(getForAsset(asset)).mockResolvedValueOnce(moved);
+        mocks.storage.createReadStream
+          .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+          .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/jpeg' });
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        // The second attempt used the path the row now holds, not the one the job was handed.
+        expect(mocks.storage.createReadStream).toHaveBeenLastCalledWith(
+          '/data/library/admin/2026/moved.jpg',
+          expect.anything(),
+        );
+        // And nothing was ever reported as failed — the whole point. Before this, a photo caught
+        // in the window showed as "failed" until someone pressed sync by hand.
+        expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+      });
+
+      it('should not retry when the path has not changed', async () => {
+        // An unchanged path means the file is genuinely gone, and asking the filesystem the same
+        // question twice would buy nothing. This also pins that the retry is keyed on the path
+        // moving rather than on the read simply having failed.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+        expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.SourceUnreadable,
+          expect.stringContaining(asset.originalPath),
+        );
+      });
+
+      it('should report the path it actually failed on, not the stale one', async () => {
+        // The recorded detail is what a person reads when they ask "why did this photo fail". If
+        // it names the path from before the move, the next diagnosis starts from a lie — and that
+        // string is how this race was identified in the first place.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        const moved = { ...getForAsset(asset), originalPath: '/data/library/admin/2026/moved.jpg' };
+        mocks.asset.getById.mockResolvedValueOnce(getForAsset(asset)).mockResolvedValueOnce(moved);
+        mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+        expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(2);
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.SourceUnreadable,
+          expect.stringContaining('/data/library/admin/2026/moved.jpg'),
+        );
+      });
+
+      it('should skip quietly when the asset disappeared during the window', async () => {
+        // Deleted mid-flight is an ordinary race, already a skip at gate 5. Reaching here means it
+        // vanished after that gate, and it must not turn into a failure the user has to clear.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.asset.getById.mockResolvedValueOnce(getForAsset(asset)).mockResolvedValueOnce(void 0);
+        mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+        expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+        expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+      });
     });
 
     /**
@@ -1209,6 +1314,84 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('getStatus', () => {
+    /**
+     * A Drive folder id is 33 opaque characters. The settings page showed one where a name belongs
+     * — for the operator of this fork, for three weeks — because the folder had been chosen before
+     * names were stored. Nothing about uploading depends on the name, which is exactly why filling
+     * it in belongs on the read rather than at save time: `setFolderId` must not start failing over
+     * somebody else's outage.
+     */
+    describe('folder name backfill', () => {
+      beforeEach(() => {
+        // Without a configured client the OAuth client cannot be built, resolveFolderName swallows
+        // that like any other failure, and every assertion here would pass or fail for a reason
+        // that has nothing to do with the folder name.
+        mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      });
+
+      it('should look the name up and keep it when the row has none', async () => {
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockResolvedValue({ data: { name: 'Camera backups' } });
+
+        await expect(sut.getStatus(userId)).resolves.toMatchObject({ folderName: 'Camera backups' });
+
+        // Persisted, so the next load costs nothing.
+        expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id', 'Camera backups');
+      });
+
+      it('should not ask Drive when the name is already known', async () => {
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, 'Camera backups'));
+
+        await expect(sut.getStatus(userId)).resolves.toMatchObject({ folderName: 'Camera backups' });
+
+        expect(driveFilesGet).not.toHaveBeenCalled();
+      });
+
+      it('should stay silent when Drive will not say', async () => {
+        // A pasted folder id may not be reachable under the drive.file scope at all. The id still
+        // works for uploads, so a failed lookup must leave the page working rather than error.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockRejectedValue(new Error('File not found'));
+
+        await expect(sut.getStatus(userId)).resolves.toMatchObject({ connected: true, folderName: null });
+
+        expect(mocks.googleDrive.setFolderId).not.toHaveBeenCalled();
+      });
+
+      it('should ask at most once a minute for a folder it cannot name', async () => {
+        // getStatus runs on every settings load *and* every album menu open. Without the cooldown
+        // an unnameable folder would send a Drive request on each of them, forever.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockRejectedValue(new Error('File not found'));
+
+        await sut.getStatus(userId);
+        await sut.getStatus(userId);
+
+        expect(driveFilesGet).toHaveBeenCalledTimes(1);
+      });
+
+      it('should keep the account probe and the folder lookup on separate cooldowns', async () => {
+        // They share one map, so a single key would let whichever ran first mute the other for a
+        // minute — and the account probe is the one the deploy runbook depends on.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          ...connectedWithFolder(userId, null),
+          driveAccountId: null,
+        });
+        driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-x' } } });
+        driveFilesGet.mockResolvedValue({ data: { name: 'Camera backups' } });
+
+        await sut.getStatus(userId);
+
+        expect(driveAboutGet).toHaveBeenCalledTimes(1);
+        expect(driveFilesGet).toHaveBeenCalledTimes(1);
+      });
+    });
+
     it('should report a disconnected user', async () => {
       mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
 

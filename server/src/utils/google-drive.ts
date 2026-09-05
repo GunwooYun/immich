@@ -9,6 +9,23 @@ import { JobRepository } from 'src/repositories/job.repository';
 export class GoogleDriveSizeMismatchError extends Error {}
 
 /**
+ * Thrown when the original file could not be opened, carrying the path that was actually tried.
+ *
+ * The path matters because the upload path retries once against a re-read asset row: the first
+ * attempt may name a location the file has already been moved away from, and the message the user
+ * eventually sees should name the location that genuinely failed, not the stale one. The first
+ * production occurrence was diagnosed purely from that string.
+ */
+export class GoogleDriveSourceUnreadableError extends Error {
+  constructor(
+    message: string,
+    readonly attemptedPath: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Digs the Drive API "reason" code out of a googleapis error.
  *
  * Two different shapes exist and neither matches the `invalid_grant` one (a bare string at

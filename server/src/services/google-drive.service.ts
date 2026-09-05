@@ -19,6 +19,7 @@ import { GoogleDriveStorage, JobItem } from 'src/types';
 import {
   classifyDriveError,
   GoogleDriveSizeMismatchError,
+  GoogleDriveSourceUnreadableError,
   queueGoogleDriveUploads,
   shouldRetryDriveRequest,
 } from 'src/utils/google-drive';
@@ -631,7 +632,7 @@ export class GoogleDriveService extends BaseService {
     // all places: the settings page calls this endpoint on load and never calls the storage one,
     // so this is the only hook the documented post-deploy step actually reaches. Costs one probe,
     // and only while the id is still unknown.
-    if (credentials?.driveAccountId === null && this.probeAllowed(userId)) {
+    if (credentials?.driveAccountId === null && this.probeAllowed(`account:${userId}`)) {
       await this.adoptIfNewlyIdentified(
         userId,
         credentials,
@@ -658,11 +659,24 @@ export class GoogleDriveService extends BaseService {
       };
     }
 
+    // A folder chosen before this fork stored names — or pasted by id, where the name was never
+    // known — leaves the settings page showing a raw Drive id, which tells the user nothing. Fill
+    // it in here rather than at save time: `setFolderId` deliberately does not call Drive, because
+    // a preference that fails to save over somebody else's outage is worse than an unnamed folder.
+    // Doing it on the read makes the lookup free to fail, and it stops as soon as it succeeds.
+    let folderName = credentials.folderName;
+    if (credentials.folderId && !folderName && this.probeAllowed(`folder:${userId}`)) {
+      folderName = await this.resolveFolderName(userId, credentials.refreshToken, credentials.folderId);
+      if (folderName) {
+        await this.googleDriveRepository.setFolderId(userId, credentials.folderId, folderName);
+      }
+    }
+
     const { failedCount, blockedReason } = await this.googleDriveRepository.getErrorSummary(userId);
     return {
       connected: true,
       folderId: credentials.folderId,
-      folderName: credentials.folderName,
+      folderName,
       connectedAt: credentials.connectedAt,
       failedCount,
       blockedReason,
@@ -699,13 +713,43 @@ export class GoogleDriveService extends BaseService {
   private static readonly ACCOUNT_PROBE_COOLDOWN_MS = 60_000;
   private static readonly ACCOUNT_PROBE_TIMEOUT_MS = 10_000;
 
-  private probeAllowed(userId: string): boolean {
-    const last = this.accountProbeAt.get(userId);
+  private probeAllowed(key: string): boolean {
+    const last = this.accountProbeAt.get(key);
     if (last && Date.now() - last < GoogleDriveService.ACCOUNT_PROBE_COOLDOWN_MS) {
       return false;
     }
-    this.accountProbeAt.set(userId, Date.now());
+    this.accountProbeAt.set(key, Date.now());
     return true;
+  }
+
+  /**
+   * Asks Drive what a folder is called, so the settings page can say "Photos" instead of
+   * "1czeOiFYjhH01gvuQJlBLw6Nnr-p1qHV5".
+   *
+   * Best effort by construction: a name is decoration, and no part of uploading depends on it, so
+   * every failure path returns null and leaves the row as it was. Bounded and un-retried for the
+   * same reason the identity probe is — this runs on a page load, and a page should not wait on
+   * Google's worst case.
+   *
+   * Reachable under `drive.file` because the folder was granted to this app when the user picked
+   * it. A folder whose id was pasted by hand may not be, and that is exactly why this cannot be
+   * allowed to fail loudly: the id still works for uploads either way.
+   */
+  private async resolveFolderName(userId: string, refreshToken: string, folderId: string): Promise<string | null> {
+    try {
+      const oauth2Client = await this.getOAuth2Client();
+      oauth2Client.setCredentials({ refresh_token: refreshToken });
+      const { data } = await google
+        .drive({ version: 'v3', auth: oauth2Client })
+        .files.get(
+          { fileId: folderId, fields: 'name' },
+          { timeout: GoogleDriveService.ACCOUNT_PROBE_TIMEOUT_MS, retry: false },
+        );
+      return data.name ?? null;
+    } catch (error) {
+      this.logger.warn(`Could not read the Google Drive folder name for user ${userId}: ${error}`);
+      return null;
+    }
   }
 
   /**
@@ -1026,14 +1070,14 @@ export class GoogleDriveService extends BaseService {
     // job.repository.ts) and keep the pair from being retried if the file is later restored.
     let streamInfo;
     try {
-      streamInfo = await this.storageRepository.createReadStream(
-        asset.originalPath,
-        mimeTypes.lookup(asset.originalFileName),
-      );
+      streamInfo = await this.openOriginal(asset);
     } catch (error) {
-      this.logger.warn(
-        `Skipping Google Drive upload for asset ${assetId}: could not read ${asset.originalPath} (${error})`,
-      );
+      // The path we tried is in the message on purpose: the first production instance of this was
+      // diagnosed entirely from it, because the recorded path was under /data/upload while the
+      // asset row had long since moved to /data/library.
+      const attemptedPath =
+        error instanceof GoogleDriveSourceUnreadableError ? error.attemptedPath : asset.originalPath;
+      this.logger.warn(`Skipping Google Drive upload for asset ${assetId}: could not read ${attemptedPath} (${error})`);
       // Recorded even though this is a skip, not a failure — skips never pass through the catch
       // below, so without an explicit write here the settings page would have no idea this photo
       // isn't making it to Drive. (The second roadmap review caught exactly this seam.)
@@ -1041,7 +1085,7 @@ export class GoogleDriveService extends BaseService {
         userId,
         assetId,
         GoogleDriveUploadErrorClass.SourceUnreadable,
-        `Could not read ${asset.originalPath}`,
+        `Could not read ${attemptedPath}`,
       );
       return 'skipped';
     }
@@ -1214,6 +1258,62 @@ export class GoogleDriveService extends BaseService {
       // process toward EMFILE and starts breaking unrelated I/O. destroy() is a no-op on an
       // already-closed stream, so it's safe to call unconditionally.
       streamInfo.stream.destroy();
+    }
+  }
+
+  /**
+   * Opens an asset's original file, once against the path we were handed and — if that fails —
+   * once more against a freshly read one.
+   *
+   * The retry exists because of a race this fork lost in production twice. A photo arriving from a
+   * phone is first written under `/data/upload/...`, and immich's storage-template job then moves
+   * it into `/data/library/...`. Adding it to an album queues a Drive upload at the same moment, so
+   * the upload job reads `originalPath`, waits its turn behind four other jobs, and opens a path
+   * the mover has meanwhile emptied. Both recorded failures happened **four seconds** after the
+   * asset row was created, and both named a `/data/upload/...` path that no longer existed while
+   * the file sat perfectly readable in the library.
+   *
+   * Re-reading the row is the whole fix: the mover updates `originalPath` in the same transaction
+   * as the rename, so a row read after the failure names the new location. Only one extra attempt,
+   * and only when the path actually changed — an unchanged path means the file is genuinely gone,
+   * and asking the filesystem twice about that would buy nothing.
+   *
+   * What this deliberately does not do is sleep and poll. Holding a queue worker to wait out
+   * somebody else's job would trade a rare, self-healing skip for a guaranteed loss of throughput,
+   * and the asset stays pending either way — the next sync picks it up.
+   */
+  private async openOriginal(asset: { id: string; originalPath: string; originalFileName: string }) {
+    try {
+      return await this.storageRepository.createReadStream(
+        asset.originalPath,
+        mimeTypes.lookup(asset.originalFileName),
+      );
+    } catch (error) {
+      const fresh = await this.assetRepository.getById(asset.id);
+      if (!fresh || fresh.originalPath === asset.originalPath) {
+        // Either the asset is gone (the ordinary trashed-mid-flight race, already a skip at gate 5)
+        // or nothing moved and the file really is unreadable. Report the path we tried.
+        throw new GoogleDriveSourceUnreadableError(
+          `Could not read ${asset.originalPath}: ${error}`,
+          asset.originalPath,
+        );
+      }
+
+      this.logger.debug(
+        `Original for asset ${asset.id} moved while the upload was queued; retrying at ${fresh.originalPath}`,
+      );
+
+      try {
+        return await this.storageRepository.createReadStream(
+          fresh.originalPath,
+          mimeTypes.lookup(fresh.originalFileName),
+        );
+      } catch (retryError) {
+        throw new GoogleDriveSourceUnreadableError(
+          `Could not read ${fresh.originalPath}: ${retryError}`,
+          fresh.originalPath,
+        );
+      }
     }
   }
 

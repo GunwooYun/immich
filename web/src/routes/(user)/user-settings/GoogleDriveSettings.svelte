@@ -300,11 +300,16 @@
                  deployment without one the button is left out entirely rather than offered and
                  failing on click; the text field below is then the way to set a folder. -->
             <div class="flex flex-col gap-2">
+              <!-- A Drive folder id is a 33-character opaque string. Showing it where the name
+                   belongs told the user nothing they could act on, and it looked like an error.
+                   The server fills the name in on load when it can (getStatus), so this falls back
+                   to naming the *state* rather than the id — the id itself stays available in the
+                   field below for anyone who actually wants it. -->
               <p class="text-sm">
                 {folderName
                   ? $t('google_drive_folder_current', { values: { folder: folderName } })
                   : folderId
-                    ? $t('google_drive_folder_current', { values: { folder: folderId } })
+                    ? $t('google_drive_folder_unnamed')
                     : $t('google_drive_folder_none')}
               </p>
               {#if pickerAvailable}
