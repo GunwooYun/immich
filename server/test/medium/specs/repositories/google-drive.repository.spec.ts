@@ -584,6 +584,33 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       expect(rows).toEqual([{ driveAccountId: 'account-b' }, { driveAccountId: 'account-c' }]);
     });
 
+    it("should not treat another user's stamped row as this user's collision", async () => {
+      // The collision check asks "does this asset already have a row under the account being
+      // adopted into" — and the row it finds has to belong to the *same user*. Two immich users
+      // can connect the same Google account (a household sharing one Drive), so the state is
+      // ordinary rather than contrived. Without the correlation, the other user's stamped row
+      // makes this user's unstamped row look like a duplicate and it is deleted instead of
+      // stamped, after which the asset reads as never uploaded and goes to a Drive that has it.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
+      // Same asset, same destination account, different immich user.
+      await ledger(ctx, other.id, asset.id, 'account-b', CONNECTION_A);
+
+      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+
+      const rows = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .execute();
+      expect(rows).toEqual([{ driveAccountId: 'account-b' }]);
+    });
+
     it('should refuse to adopt into an empty account id', async () => {
       // Not reachable through any caller today, and that is the reason to hold it here rather than
       // trust it: with '' the collision check matches the rows being adopted, so the delete takes
@@ -625,6 +652,15 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         .orderBy('driveAccountId')
         .execute();
       expect(rows).toEqual([{ driveAccountId: '' }, { driveAccountId: 'account-b' }]);
+      // And adoption did happen — without this the test passes on an adoption that returns early
+      // and touches nothing, which is a different bug reading as the same green tick.
+      const own = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .execute();
+      expect(own).toEqual([{ driveAccountId: 'account-b' }]);
     });
 
     it('should stop claiming its own rows once it has been re-linked', async () => {

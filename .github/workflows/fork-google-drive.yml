@@ -284,13 +284,17 @@ jobs:
       # wrong things. Asking for a table that only exists after this fork's migrations closes it.
       - name: Check the migrations actually landed
         run: |
-          # Names, not counts. Two earlier versions of this check were weaker: asking for
-          # `google_drive_upload` answered yes for a database stuck several migrations back (the
-          # table has existed since this feature's first migration), and counting rows fails on a
-          # long-lived database for reasons that are not drift — upstream has deleted a migration
-          # and renamed several, so applied and on-disk counts can differ while the database is in
-          # fact current. Comparing the name sets says *which* migration is missing, and says
-          # nothing when the two agree.
+          # Names, not counts. The first version asked for `google_drive_upload` — a table that has
+          # existed since this feature's first migration, so it answered yes for a database stuck
+          # several migrations back, which is exactly the state that produces truncated SQL.
+          #
+          # The second counted rows. That works, but it can only say "three behind"; a name diff
+          # says *which* three, and the difference matters when the answer is a surprise. (An
+          # earlier draft of this comment claimed counting also gives false failures on a
+          # long-lived database whose migrations upstream renamed. It does not: kysely refuses to
+          # migrate such a database at all — `corrupted migrations: previously executed migration
+          # … is missing` — so the run dies before this step. Recorded because the wrong reason
+          # was in a commit message.)
           ls server/src/schema/migrations/*.ts | xargs -n1 basename | sed 's/\.ts$//' | sort > /tmp/on-disk.txt
           docker exec immich-postgres psql -U postgres -d immich -tAc 'select name from kysely_migrations' | sort > /tmp/applied.txt
           if ! diff -u /tmp/on-disk.txt /tmp/applied.txt; then
