@@ -514,6 +514,52 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
 
+    it('should move connectedAt on a re-link so the boundary follows the new connection', async () => {
+      // The other half of the same fix, and the half nothing was holding. The boundary
+      // (uploadedAt >= connectedAt) only separates one connection's uploads from an earlier
+      // one's if re-linking moves connectedAt; leave it at the first connection's timestamp and
+      // every row ever written falls inside the window. Only the generated reference SQL recorded
+      // that `now()`, and regenerating it would have followed a regression rather than caught it.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await ctx.database
+        .insertInto('user_google_drive')
+        .values({
+          userId: user.id,
+          refreshToken: 'token-old',
+          driveAccountId: null,
+          connectedAt: new Date('2026-01-01T00:00:00Z'),
+        })
+        .execute();
+      // Written while the old connection was live: after its connectedAt, before the re-link.
+      await ctx.database
+        .insertInto('google_drive_upload')
+        .values({
+          userId: user.id,
+          assetId: asset.id,
+          driveFileId: 'file-old',
+          driveAccountId: '',
+          uploadedAt: new Date('2026-03-01T00:00:00Z'),
+        })
+        .execute();
+
+      await sut.upsertCredentials(user.id, 'token-new', null);
+
+      await sut.adoptUnstampedUploads(user.id, 'token-new', 'account-x');
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
+      // The new connection cannot have written it, so it stays unstamped — and still matches, so
+      // nothing re-uploads.
+      expect(row?.driveAccountId).toBe('');
+      await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
+    });
+
     it('should refuse to adopt when the connection moved during the probe', async () => {
       // Compare-and-set under a row lock, not a re-read: the probe is a network round trip and a
       // re-link can land inside it.
@@ -604,6 +650,25 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       expect(row?.attempts).toBe(2);
     });
 
+    it('should not report the same class as first again on a plain retry', async () => {
+      // The case the other tests miss. Their third call happens after a *second* asset has failed
+      // the same way, so `others` is already 1 and the count half alone produces false — the
+      // old_row half could be deleted and nothing would notice. With one user and one asset
+      // `others` stays 0, so only old_row can make this false. If it regressed, a user with a
+      // single failing photo would be notified "your Drive is full" on every retry.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+
+      await expect(
+        sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),
+      ).resolves.toEqual({ firstOfClass: true });
+
+      await expect(
+        sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),
+      ).resolves.toEqual({ firstOfClass: false });
+    });
+
     it('should treat a different class as first again', async () => {
       // Per class, not per user: a folder going missing after a quota problem is news.
       const { ctx, sut } = setup();
@@ -657,6 +722,75 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { asset: other } = await ctx.newAsset({ ownerId: user.id });
       await sut.upsertError(user.id, other.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+    });
+
+    it('should still count a failure whose only ledger row belongs to another account', async () => {
+      // The join carries the account predicate, and without it a row written to a Drive the user
+      // no longer connects to would silence a real failure. The fixture pairs a connection to
+      // account-x with a ledger row for account-other, which is exactly the post-account-switch
+      // shape.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await ledger(ctx, user.id, asset.id, 'account-other');
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+    });
+
+    it("should not let another user's ledger row hide this user's failure", async () => {
+      // Shared albums put the same asset in two users' backlogs. The join is keyed on userId as
+      // well as assetId; without that, one person's success would clear the other's error from
+      // the report while the photo is still missing from their Drive.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await connect(ctx, other.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await ledger(ctx, other.id, asset.id, 'account-x');
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+    });
+
+    it('should stop counting a failure once the asset is trashed', async () => {
+      // This is the prescription that resolved the two production source_unreadable failures:
+      // trashing the asset drops failedCount to zero without touching the database by hand. If
+      // the deletedAt filter regressed, that advice would quietly stop working.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+
+      await ctx.database.updateTable('asset').set({ deletedAt: new Date() }).where('id', '=', asset.id).execute();
+
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 0, blockedReason: null });
+    });
+
+    it("should clear only the uploading user's failure row", async () => {
+      // Same shared-album shape as above, one level down: the delete inside recordUpload is keyed
+      // on userId, and without that filter one user finally succeeding would erase the other's
+      // failure — a photo missing from their Drive with nothing left to say so.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await sut.upsertError(other.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+
+      await sut.recordUpload(user.id, asset.id, 'drive-file-id', 'account-x');
+
+      const remaining = await ctx.database
+        .selectFrom('google_drive_upload_error')
+        .select(['userId', 'assetId'])
+        .where('assetId', '=', asset.id)
+        .execute();
+      expect(remaining).toEqual([{ userId: other.id, assetId: asset.id }]);
     });
 
     it('should report quota ahead of a missing folder when both are recorded', async () => {
