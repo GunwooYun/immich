@@ -25,6 +25,21 @@ beforeAll(async () => {
 });
 
 /**
+ * One database serves this whole file, and for several rounds that was load-bearing by accident:
+ * predicates appeared to be tested when what actually killed the mutant was a row an earlier
+ * describe had left behind. Every fixture that relied on that has been made explicit, so clearing
+ * the feature's tables between tests is now safe — and it stops the next one from picking up the
+ * same accidental support. In afterEach rather than at the end of each test body, because a failed
+ * assertion skips the rest of the body and would carry state into the following test.
+ */
+afterEach(async () => {
+  await defaultDatabase.deleteFrom('google_drive_upload_error').execute();
+  await defaultDatabase.deleteFrom('google_drive_upload').execute();
+  await defaultDatabase.deleteFrom('google_drive_album').execute();
+  await defaultDatabase.deleteFrom('user_google_drive').execute();
+});
+
+/**
  * These exercise the join that decides who receives copies of what, against a real database.
  *
  * The unit tests can only assert that the query builder was called; the property that actually
