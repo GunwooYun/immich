@@ -624,8 +624,16 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // in the other the user is never told their backups stopped.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
       const { asset: first } = await ctx.newAsset({ ownerId: user.id });
       const { asset: second } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: othersAsset } = await ctx.newAsset({ ownerId: other.id });
+
+      // Another user already failing the same way, stated explicitly. Removing the `userId` filter
+      // from the `others` count does fail a test today, but only because earlier describes in this
+      // file happen to have left QuotaExceeded rows in the shared database — reorder them and the
+      // guard evaporates.
+      await sut.upsertError(other.id, othersAsset.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full');
 
       await expect(
         sut.upsertError(user.id, first.id, GoogleDriveUploadErrorClass.QuotaExceeded, 'full'),

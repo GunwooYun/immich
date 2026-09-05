@@ -16,23 +16,33 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
-const { driveFilesCreate, driveFilesDelete, driveAboutGet, oauth2Constructed, oauth2GetToken, oauth2SetCredentials } =
-  vi.hoisted(() => ({
-    driveFilesCreate: vi.fn(),
-    driveFilesDelete: vi.fn(),
-    driveAboutGet: vi.fn(),
-    // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
-    // account-change reset below cannot be reached without getting a token first.
-    oauth2GetToken: vi.fn(),
-    // Records which refresh token each client was handed. The drain has to probe with the
-    // *outgoing* one, and without this the tests could not tell — swapping it for a literal left
-    // every one of them passing.
-    oauth2SetCredentials: vi.fn(),
-    // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
-    // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
-    // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
-    oauth2Constructed: vi.fn(),
-  }));
+const {
+  driveFilesCreate,
+  driveFilesDelete,
+  driveAboutGet,
+  oauth2Constructed,
+  oauth2GetToken,
+  oauth2SetCredentials,
+  oauth2GetAccessToken,
+} = vi.hoisted(() => ({
+  driveFilesCreate: vi.fn(),
+  driveFilesDelete: vi.fn(),
+  driveAboutGet: vi.fn(),
+  // The link flow's token exchange. Mocked because nothing exercised linkAccount before, and the
+  // account-change reset below cannot be reached without getting a token first.
+  oauth2GetToken: vi.fn(),
+  // Records which refresh token each client was handed. The drain has to probe with the
+  // *outgoing* one, and without this the tests could not tell — swapping it for a literal left
+  // every one of them passing.
+  oauth2SetCredentials: vi.fn(),
+  // The picker's token mint. It only had a fixed happy answer, which left the revoked-grant
+  // branch of getPickerConfig with no way to be reached at all.
+  oauth2GetAccessToken: vi.fn(),
+  // Records the (clientId, clientSecret, redirectUrl) triple every OAuth2 client is built with.
+  // The redirect URL is the one value Google matches byte-for-byte and it is now usually *derived*
+  // rather than typed, so "which URL did we actually hand to Google" needs to be observable.
+  oauth2Constructed: vi.fn(),
+}));
 
 vi.mock('googleapis', () => ({
   google: {
@@ -45,7 +55,7 @@ vi.mock('googleapis', () => ({
           oauth2SetCredentials(credentials?.refresh_token);
         }
         getAccessToken() {
-          return { token: 'access-token' };
+          return oauth2GetAccessToken();
         }
         getToken(code: string) {
           return oauth2GetToken(code);
@@ -175,6 +185,10 @@ describe(GoogleDriveService.name, () => {
 
   beforeEach(() => {
     ({ sut, mocks } = newTestService(GoogleDriveService));
+    // Hoisted module mocks live for the whole file, so the happy answer has to be restored per
+    // test rather than declared once — otherwise one rejection leaks into everything after it.
+    oauth2GetAccessToken.mockReset();
+    oauth2GetAccessToken.mockReturnValue({ token: 'access-token' });
   });
 
   it('should work', () => {
@@ -1087,6 +1101,39 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
 
       await expect(sut.getPickerConfig(newUuid())).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('should clear a revoked grant instead of only refusing', async () => {
+      // The same conclusion getStorage reaches, and for the same reason: on a Testing-mode app the
+      // grant dies every seven days, and whichever page the user opens first should leave them
+      // looking at "not connected" with a reconnect button rather than a permanently broken
+      // dialog. Mutating this branch to `if (true)` used to leave the whole suite green.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, apiKey: 'api-key' } });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      oauth2GetAccessToken.mockImplementation(() => {
+        throw Object.assign(new Error('x'), { response: { data: { error: 'invalid_grant' } } });
+      });
+
+      await expect(sut.getPickerConfig(userId)).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.googleDrive.deleteCredentials).toHaveBeenCalledWith(userId);
+    });
+
+    it('should leave the connection alone when the token mint fails for another reason', async () => {
+      // The other half, and the one that makes the test above about the *classification*. A
+      // network blip or a 5xx must not delete a working connection — the user would be sent to
+      // reconnect for something that fixes itself.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, apiKey: 'api-key' } });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      oauth2GetAccessToken.mockImplementation(() => {
+        throw new Error('socket hang up');
+      });
+
+      await expect(sut.getPickerConfig(userId)).rejects.toThrow('socket hang up');
+
+      expect(mocks.googleDrive.deleteCredentials).not.toHaveBeenCalled();
     });
   });
 

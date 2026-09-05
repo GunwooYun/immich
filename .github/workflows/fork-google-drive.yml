@@ -256,8 +256,14 @@ jobs:
             postgres \
               -c shared_preload_libraries=vchord.so \
               -c config_file=/var/lib/postgresql/data/postgresql.conf
+          # -h 127.0.0.1, not the default unix socket. The image's entrypoint runs initdb against a
+          # temporary server started with listen_addresses='' — reachable on the socket, invisible
+          # over TCP — so a socket probe reports READY while the next step, which connects to
+          # localhost:5432, would still get ECONNREFUSED. Asking over the same transport the
+          # migrations use is the whole check. (globalSetup.ts solves this by waiting for the
+          # "ready to accept connections" line to appear twice; same idea, fewer moving parts.)
           for _ in $(seq 1 60); do
-            if docker exec immich-postgres pg_isready -U postgres -d immich >/dev/null 2>&1; then
+            if docker exec immich-postgres pg_isready -h 127.0.0.1 -U postgres -d immich >/dev/null 2>&1; then
               exit 0
             fi
             sleep 2
@@ -272,12 +278,26 @@ jobs:
       - name: Apply migrations
         run: pnpm --filter immich run migrations:run
 
+      # The job's last unchecked assumption. A generator run against a database whose migrations
+      # silently did nothing produces truncated SQL — and if the committed files were generated the
+      # same way, the diff comes out empty and the job reports "no drift" having compared two
+      # wrong things. Asking for a table that only exists after this fork's migrations closes it.
+      - name: Check the migrations actually landed
+        run: |
+          docker exec immich-postgres psql -U postgres -d immich -c 'select 1 from google_drive_upload limit 1' >/dev/null
+
       - name: Regenerate
         run: mise run //:sql
 
+      # `git status --porcelain`, not `git diff --exit-code`: diff is blind to untracked files, so a
+      # newly added repository — whose generated .sql file does not exist in the tree yet — would
+      # let this job pass having compared nothing at all. That is the exact failure mode the job
+      # exists to prevent, one level up.
       - name: Fail if the committed SQL is out of date
         run: |
-          if ! git diff --exit-code -- server/src/queries; then
+          if [ -n "$(git status --porcelain -- server/src/queries)" ]; then
+            git status --porcelain -- server/src/queries
+            git diff -- server/src/queries
             echo "::error::server/src/queries is out of date — run \`mise //:sql\` against a migrated database and commit the result"
             exit 1
           fi

@@ -545,7 +545,11 @@ export class GoogleDriveService extends BaseService {
         // early costs a probe the next call retries, not a failed operation.
         //
         // Still unbounded: the OAuth token refresh that runs before this request. It lives inside
-        // google-auth-library and takes no timeout, so the worst case remains that leg plus this.
+        // google-auth-library, which takes no timeout *and* applies its own AuthClient.RETRY_CONFIG
+        // (retry: true, POST included), so gaxios defaults give it up to three attempts with two
+        // no-response retries each. The worst case is therefore that whole retried leg plus this
+        // one — not "one leg plus 10s". Bounding it means passing a signal down through
+        // google-auth-library, which this fork does not do today.
         { timeout: GoogleDriveService.ACCOUNT_PROBE_TIMEOUT_MS, retry: false },
       );
 
