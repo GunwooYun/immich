@@ -82,6 +82,20 @@ const sharedAlbum = async (ctx: any) => {
   return { owner, guest, asset, album };
 };
 
+/** A connection that already points at a folder, for the backfill's guard tests. */
+const connectWithFolder = (ctx: any, userId: string, refreshToken: string, folderId: string) =>
+  ctx.database
+    .insertInto('user_google_drive')
+    .values({ userId, refreshToken, driveAccountId: 'account-x', connectionId: CONNECTION_A, folderId })
+    .execute();
+
+const readFolder = (ctx: any, userId: string) =>
+  ctx.database
+    .selectFrom('user_google_drive')
+    .select(['folderId', 'folderName'])
+    .where('userId', '=', userId)
+    .executeTakeFirst();
+
 describe(`${GoogleDriveRepository.name} (medium)`, () => {
   describe('streamPendingUploads', () => {
     it('should stream assets of an album the user selected and can still see', async () => {
@@ -899,6 +913,100 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
    * `recordUpload` clears the error row inside the same transaction — none of which a mocked unit
    * test can say anything about, and all of which decide what the settings page reports.
    */
+  /**
+   * The folder-name backfill runs on a settings-page read, and the lookup it persists began up to
+   * ten seconds earlier. Everything here is about it losing to whatever the user did in between —
+   * the guards are the fix, so they are what the tests hold.
+   */
+  describe('fillFolderName', () => {
+    it('should name the folder it looked up', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
+
+      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({
+        folderId: 'folder-a',
+        folderName: 'Camera backups',
+      });
+    });
+
+    it('should do nothing when the account was re-linked during the lookup', async () => {
+      // The dangerous one. The write it replaced set folderId as well as folderName, scoped on the
+      // user alone — so a re-link inside the lookup window would have pinned the departed
+      // connection's folder onto the new account, where the first upload fails notFound with a
+      // folder configured and blocks the account outright.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-new', 'folder-b');
+
+      await sut.fillFolderName(user.id, 'token-old', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-b', folderName: null });
+    });
+
+    it('should do nothing when only the token changed', async () => {
+      // Separated from the re-link case above on purpose: that fixture moves the token *and* the
+      // folder, so the folder guard alone accounts for it and the token guard could be deleted
+      // unnoticed. A re-link that happens to keep the same folder id is the case that needs this
+      // one — and it is the case where writing anyway would attach a departed connection's name
+      // to a new account.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-new', 'folder-a');
+
+      await sut.fillFolderName(user.id, 'token-old', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-a', folderName: null });
+    });
+
+    it("should not name another user's folder", async () => {
+      // Two users can hold the same folder id — a shared Drive folder is ordinary. The write is
+      // scoped to one row and nothing else may be touched by it.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
+      await connectWithFolder(ctx, other.id, 'token-a', 'folder-a');
+
+      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, other.id)).resolves.toEqual({ folderId: 'folder-a', folderName: null });
+      // Witness: the write did happen, so the null above is the scope and not a refusal.
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({
+        folderId: 'folder-a',
+        folderName: 'Camera backups',
+      });
+    });
+
+    it('should do nothing when the user changed folders during the lookup', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-a', 'folder-b');
+
+      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-b', folderName: null });
+    });
+
+    it('should not overwrite a name that arrived first', async () => {
+      // Picking a folder stores its name immediately. A lookup that started before that must not
+      // put its own answer on top — the picker's name is the newer fact.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
+      await sut.setFolderId(user.id, 'folder-a', 'Picked by hand');
+
+      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({
+        folderId: 'folder-a',
+        folderName: 'Picked by hand',
+      });
+    });
+  });
+
   describe('failure bookkeeping', () => {
     it('should call only the first failure of a class first, and count attempts after that', async () => {
       // firstOfClass gates the notification. Wrong in one direction it spams on every retry; wrong

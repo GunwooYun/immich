@@ -242,6 +242,33 @@ export class GoogleDriveRepository {
   }
 
   /**
+   * Fills in a folder's display name, and only that.
+   *
+   * Separate from `setFolderId` because the two have opposite safety requirements. `setFolderId`
+   * expresses a user's choice and should win; this expresses a lookup that started up to ten
+   * seconds ago and must lose to anything that happened since. The guards say so: the token must
+   * still be the one the lookup was made with, the folder must still be the one that was looked
+   * up, and the name must still be missing.
+   *
+   * Without them this is a compare-and-set that forgot to compare — the same shape `setDriveAccountId`
+   * was given a CAS for, and for the same reason. A folder changed during the lookup would be
+   * silently reverted to the old id, and a re-link during it would pin the departed connection's
+   * folder onto the new account, where the first upload fails `notFound` with a folder configured
+   * and blocks the account outright.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING, DummyValue.STRING] })
+  async fillFolderName(userId: string, refreshToken: string, folderId: string, folderName: string): Promise<void> {
+    await this.db
+      .updateTable('user_google_drive')
+      .set({ folderName })
+      .where('userId', '=', userId)
+      .where('refreshToken', '=', refreshToken)
+      .where('folderId', '=', folderId)
+      .where('folderName', 'is', null)
+      .execute();
+  }
+
+  /**
    * Disconnects a user's Google Drive by deleting their credentials row.
    *
    * Note this intentionally leaves the `google_drive_upload` ledger rows in place. If the user

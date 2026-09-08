@@ -49,6 +49,16 @@ set
 where
   "userId" = $3
 
+-- GoogleDriveRepository.fillFolderName
+update "user_google_drive"
+set
+  "folderName" = $1
+where
+  "userId" = $2
+  and "refreshToken" = $3
+  and "folderId" = $4
+  and "folderName" is null
+
 -- GoogleDriveRepository.deleteCredentials
 delete from "user_google_drive"
 where

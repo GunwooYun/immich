@@ -473,6 +473,10 @@ describe(GoogleDriveService.name, () => {
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
 
         expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+        // Witness: the row *was* re-read and the retry declined on its answer. Without this the
+        // test also passes when the retry is deleted outright, which is a different behaviour
+        // reading as the same green tick.
+        expect(mocks.asset.getById).toHaveBeenCalledTimes(2);
         expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
           userId,
           asset.id,
@@ -502,9 +506,14 @@ describe(GoogleDriveService.name, () => {
         );
       });
 
-      it('should skip quietly when the asset disappeared during the window', async () => {
+      it('should not retry when the asset disappeared during the window', async () => {
         // Deleted mid-flight is an ordinary race, already a skip at gate 5. Reaching here means it
-        // vanished after that gate, and it must not turn into a failure the user has to clear.
+        // vanished after that gate; there is no fresh path to try, so the original one is reported
+        // and no second read happens.
+        //
+        // The first version of this test asserted only 'skipped' and that nothing was recorded in
+        // the ledger — which a TypeError from the same catch block satisfies just as well, so it
+        // passed with the `!fresh` guard removed. The assertions below distinguish the two.
         const userId = newUuid();
         const asset = arrangeReadyToUpload(mocks, userId);
         mocks.asset.getById.mockResolvedValueOnce(getForAsset(asset)).mockResolvedValueOnce(void 0);
@@ -514,6 +523,14 @@ describe(GoogleDriveService.name, () => {
 
         expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
         expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+        // The path reported is the one that was actually tried — a TypeError would carry no path
+        // at all, and its message would name a property rather than a file.
+        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+          userId,
+          asset.id,
+          GoogleDriveUploadErrorClass.SourceUnreadable,
+          expect.stringContaining(asset.originalPath),
+        );
       });
     });
 
@@ -1327,6 +1344,15 @@ describe(GoogleDriveService.name, () => {
         // that like any other failure, and every assertion here would pass or fail for a reason
         // that has nothing to do with the folder name.
         mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+        // The cooldowns are read off Date.now(), so the only way to assert one without sleeping is
+        // to control the clock.
+        vi.useFakeTimers();
+      });
+
+      // In afterEach, not at the end of the test that needs it: an assertion failure skips the rest
+      // of the body and would leave the clock frozen for every test after it.
+      afterEach(() => {
+        vi.useRealTimers();
       });
 
       it('should look the name up and keep it when the row has none', async () => {
@@ -1336,8 +1362,15 @@ describe(GoogleDriveService.name, () => {
 
         await expect(sut.getStatus(userId)).resolves.toMatchObject({ folderName: 'Camera backups' });
 
-        // Persisted, so the next load costs nothing.
-        expect(mocks.googleDrive.setFolderId).toHaveBeenCalledWith(userId, 'folder-id', 'Camera backups');
+        // Persisted through the guarded write, so the next load costs nothing — and a folder the
+        // user changed during the lookup cannot be reverted by it.
+        expect(mocks.googleDrive.fillFolderName).toHaveBeenCalledWith(
+          userId,
+          'refresh-token',
+          'folder-id',
+          'Camera backups',
+        );
+        expect(mocks.googleDrive.setFolderId).not.toHaveBeenCalled();
       });
 
       it('should not ask Drive when the name is already known', async () => {
@@ -1358,7 +1391,7 @@ describe(GoogleDriveService.name, () => {
 
         await expect(sut.getStatus(userId)).resolves.toMatchObject({ connected: true, folderName: null });
 
-        expect(mocks.googleDrive.setFolderId).not.toHaveBeenCalled();
+        expect(mocks.googleDrive.fillFolderName).not.toHaveBeenCalled();
       });
 
       it('should ask at most once a minute for a folder it cannot name', async () => {
@@ -1369,6 +1402,21 @@ describe(GoogleDriveService.name, () => {
         driveFilesGet.mockRejectedValue(new Error('File not found'));
 
         await sut.getStatus(userId);
+        await sut.getStatus(userId);
+
+        expect(driveFilesGet).toHaveBeenCalledTimes(1);
+      });
+
+      it('should back off an hour after a folder it cannot name', async () => {
+        // getStatus runs on the album menu too. A folder outside what drive.file granted can never
+        // be named, so a one-minute retry would put a Drive round trip in front of that menu for
+        // as long as the folder is configured.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockRejectedValue(new Error('File not found'));
+
+        await sut.getStatus(userId);
+        vi.advanceTimersByTime(120_000);
         await sut.getStatus(userId);
 
         expect(driveFilesGet).toHaveBeenCalledTimes(1);

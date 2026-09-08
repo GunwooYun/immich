@@ -667,8 +667,27 @@ export class GoogleDriveService extends BaseService {
     let folderName = credentials.folderName;
     if (credentials.folderId && !folderName && this.probeAllowed(`folder:${userId}`)) {
       folderName = await this.resolveFolderName(userId, credentials.refreshToken, credentials.folderId);
+      if (!folderName) {
+        // Push the next attempt an hour out rather than a minute; see the constant.
+        this.accountProbeAt.set(
+          `folder:${userId}`,
+          Date.now() -
+            GoogleDriveService.ACCOUNT_PROBE_COOLDOWN_MS +
+            GoogleDriveService.FOLDER_NAME_FAILURE_COOLDOWN_MS,
+        );
+      }
       if (folderName) {
-        await this.googleDriveRepository.setFolderId(userId, credentials.folderId, folderName);
+        // fillFolderName, not setFolderId: the lookup began up to ten seconds ago and must lose to
+        // anything the user did since. setFolderId writes both columns scoped on the user alone, so
+        // a folder changed — or an account re-linked — during the call would be reverted by this
+        // write, and a reverted folder id on a new connection blocks the account on its first
+        // upload.
+        await this.googleDriveRepository.fillFolderName(
+          userId,
+          credentials.refreshToken,
+          credentials.folderId,
+          folderName,
+        );
       }
     }
 
@@ -711,6 +730,15 @@ export class GoogleDriveService extends BaseService {
    */
   private accountProbeAt = new Map<string, number>();
   private static readonly ACCOUNT_PROBE_COOLDOWN_MS = 60_000;
+  /**
+   * A folder that cannot be named backs off much further than one that has simply not been asked
+   * about yet. The failing case is not transient — a folder id pasted by hand is often outside what
+   * `drive.file` grants, and no amount of retrying changes that — while the cost is paid on a path
+   * the user waits for: getStatus runs on the album menu as well as the settings page, so a minute
+   * cooldown would put a bounded-but-real Drive round trip in front of that menu forever. An hour
+   * keeps the eventual repair (a re-grant, a re-pick) without charging for it continuously.
+   */
+  private static readonly FOLDER_NAME_FAILURE_COOLDOWN_MS = 3_600_000;
   private static readonly ACCOUNT_PROBE_TIMEOUT_MS = 10_000;
 
   private probeAllowed(key: string): boolean {
@@ -1273,10 +1301,16 @@ export class GoogleDriveService extends BaseService {
    * asset row was created, and both named a `/data/upload/...` path that no longer existed while
    * the file sat perfectly readable in the library.
    *
-   * Re-reading the row is the whole fix: the mover updates `originalPath` in the same transaction
-   * as the rename, so a row read after the failure names the new location. Only one extra attempt,
-   * and only when the path actually changed — an unchanged path means the file is genuinely gone,
-   * and asking the filesystem twice about that would buy nothing.
+   * Re-reading the row is the whole fix, though not for the reason it first looked like: the mover
+   * renames the file and *then* writes the new path in a separate statement, so the two are not
+   * atomic. Two windows survive. The ordinary one is a single UPDATE round trip, and losing it
+   * costs a skip that the next sync repairs. The other is a mover that dies between the rename and
+   * the write — there the row keeps the old path indefinitely, the re-read returns the same value,
+   * and no retry happens. That is deliberate: an unconditional second attempt on an unchanged path
+   * asks the filesystem the same question twice and cannot succeed. Recovery there is a manual
+   * sync, which is what the settings page already tells the user.
+   *
+   * Only one extra attempt, and only when the path actually changed.
    *
    * What this deliberately does not do is sleep and poll. Holding a queue worker to wait out
    * somebody else's job would trade a rare, self-healing skip for a guaranteed loss of throughput,
@@ -1296,11 +1330,16 @@ export class GoogleDriveService extends BaseService {
         throw new GoogleDriveSourceUnreadableError(
           `Could not read ${asset.originalPath}: ${error}`,
           asset.originalPath,
+          {
+            cause: error,
+          },
         );
       }
 
-      this.logger.debug(
-        `Original for asset ${asset.id} moved while the upload was queued; retrying at ${fresh.originalPath}`,
+      // Log, not debug. The default level hides debug, so the one production-observable sign that
+      // this fix ever fired would have been invisible on the machine it was written for.
+      this.logger.log(
+        `Original for asset ${asset.id} moved from ${asset.originalPath} while the upload was queued; retrying at ${fresh.originalPath}`,
       );
 
       try {
@@ -1309,9 +1348,13 @@ export class GoogleDriveService extends BaseService {
           mimeTypes.lookup(fresh.originalFileName),
         );
       } catch (retryError) {
+        // Both paths in the message. The recorded detail is the entire diagnostic — this race was
+        // identified purely from a /data/upload path sitting beside a /data/library one — and
+        // naming only the second would erase exactly the comparison that made it legible.
         throw new GoogleDriveSourceUnreadableError(
-          `Could not read ${fresh.originalPath}: ${retryError}`,
+          `Could not read ${fresh.originalPath} (moved from ${asset.originalPath}): ${retryError}`,
           fresh.originalPath,
+          { cause: retryError },
         );
       }
     }

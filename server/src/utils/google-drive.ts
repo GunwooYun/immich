@@ -20,8 +20,11 @@ export class GoogleDriveSourceUnreadableError extends Error {
   constructor(
     message: string,
     readonly attemptedPath: string,
+    // The wrap would otherwise drop `code`/`errno`, which is what tells ENOENT apart from EACCES —
+    // a permissions problem and a moved file look identical in the message alone.
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
