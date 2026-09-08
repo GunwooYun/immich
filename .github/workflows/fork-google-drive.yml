@@ -218,8 +218,6 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-    env:
-      DB_URL: postgres://postgres:postgres@localhost:5432/immich
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -249,13 +247,31 @@ jobs:
       # through testcontainers, with the same image and the same flags.
       - name: Start Postgres
         run: |
-          docker run -d --name immich-postgres \
+          # Pulled as its own command so a registry problem says so, instead of arriving as a bare
+          # `docker run` exit 125 with the reason on a stderr nobody captured — which is exactly how
+          # this step failed once, uninformatively.
+          docker pull ghcr.io/immich-app/postgres:14-vectorchord0.4.3
+
+          # No fixed host port. Publishing 5432 means competing with whatever the runner image
+          # happens to have listening, and losing that race kills the step before any diagnostic
+          # runs. Letting Docker choose and reading the mapping back removes the failure mode
+          # rather than making it louder.
+          if ! docker run -d --name immich-postgres \
             -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres -e POSTGRES_DB=immich \
-            -p 5432:5432 \
+            -p 127.0.0.1::5432 \
             ghcr.io/immich-app/postgres:14-vectorchord0.4.3 \
             postgres \
               -c shared_preload_libraries=vchord.so \
               -c config_file=/var/lib/postgresql/data/postgresql.conf
+          then
+            echo "::error::could not start the Postgres container"
+            docker ps -a
+            exit 1
+          fi
+
+          port=$(docker port immich-postgres 5432 | head -1 | sed 's/.*://')
+          echo "postgres published on host port $port"
+          echo "DB_URL=postgres://postgres:postgres@localhost:$port/immich" >> "$GITHUB_ENV"
           # -h 127.0.0.1, not the default unix socket. The image's entrypoint runs initdb against a
           # temporary server started with listen_addresses='' — reachable on the socket, invisible
           # over TCP — so a socket probe reports READY while the next step, which connects to
