@@ -26,6 +26,19 @@ export class GoogleDriveSourceUnreadableError extends Error {
   ) {
     super(message, options);
   }
+
+  /**
+   * The path that failed, and — when it differs — where the job was originally pointed.
+   *
+   * Used for the recorded `detail`, which is the only durable trace a person reads later. The
+   * first instance of the move race was identified entirely from a `/data/upload` path sitting
+   * beside a `/data/library` one, so a detail naming only one of them would have hidden it.
+   */
+  describePaths(startedFrom: string): string {
+    return this.attemptedPath === startedFrom
+      ? `Could not read ${this.attemptedPath}`
+      : `Could not read ${this.attemptedPath} (moved from ${startedFrom})`;
+  }
 }
 
 /**

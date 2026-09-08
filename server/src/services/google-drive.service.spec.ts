@@ -498,12 +498,19 @@ describe(GoogleDriveService.name, () => {
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
 
         expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(2);
-        expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
-          userId,
-          asset.id,
-          GoogleDriveUploadErrorClass.SourceUnreadable,
-          expect.stringContaining('/data/library/admin/2026/moved.jpg'),
-        );
+        // Both paths, and in the recorded detail rather than only the log: this is the durable
+        // trace, and the whole reason the race was legible the first time was seeing a
+        // /data/upload path beside a /data/library one. Asserting only the failed path would let
+        // that comparison be dropped silently.
+        const lastCall = mocks.googleDrive.upsertError.mock.calls.at(-1) as [
+          string,
+          string,
+          GoogleDriveUploadErrorClass,
+          string,
+        ];
+        const detail = lastCall[3];
+        expect(detail).toContain('/data/library/admin/2026/moved.jpg');
+        expect(detail).toContain(asset.originalPath);
       });
 
       it('should not retry when the asset disappeared during the window', async () => {
@@ -523,14 +530,18 @@ describe(GoogleDriveService.name, () => {
 
         expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
         expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
-        // The path reported is the one that was actually tried — a TypeError would carry no path
-        // at all, and its message would name a property rather than a file.
         expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
           userId,
           asset.id,
           GoogleDriveUploadErrorClass.SourceUnreadable,
           expect.stringContaining(asset.originalPath),
         );
+        // The assertion that actually distinguishes the two worlds. Asserting the recorded path
+        // does not: the catch falls back to `asset.originalPath` for any error that is not a
+        // GoogleDriveSourceUnreadableError, so dereferencing an absent row produces a TypeError
+        // whose recorded detail is byte-identical. The *cause* is not — it is the filesystem
+        // error on the guarded path and a property access on the unguarded one.
+        expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining('ENOENT'));
       });
     });
 
@@ -1420,6 +1431,40 @@ describe(GoogleDriveService.name, () => {
         await sut.getStatus(userId);
 
         expect(driveFilesGet).toHaveBeenCalledTimes(1);
+      });
+
+      it('should try again once the hour is up', async () => {
+        // The other side of the backoff. Without this the constant is pinned only from below, and
+        // raising it to a thousand hours — indistinguishable from giving up permanently — passes.
+        // Giving up would be wrong: a folder becomes nameable again the moment the user re-picks
+        // it or re-grants access, and nothing tells us when that happened.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockRejectedValue(new Error('File not found'));
+
+        await sut.getStatus(userId);
+        vi.advanceTimersByTime(3_600_000 + 60_000);
+        await sut.getStatus(userId);
+
+        expect(driveFilesGet).toHaveBeenCalledTimes(2);
+      });
+
+      it('should not make a corrected folder id wait out the wrong one', async () => {
+        // The backoff is keyed on the folder, not the user. Pasting a bad id and then the right one
+        // is the ordinary way this happens, and inheriting the bad one's hour would leave the raw
+        // id on screen with no way to hurry it.
+        const userId = newUuid();
+        mocks.googleDrive.getCredentials.mockResolvedValue(connectedWithFolder(userId, null));
+        driveFilesGet.mockRejectedValue(new Error('File not found'));
+        await sut.getStatus(userId);
+
+        mocks.googleDrive.getCredentials.mockResolvedValue({
+          ...connectedWithFolder(userId, null),
+          folderId: 'folder-corrected',
+        });
+        driveFilesGet.mockResolvedValue({ data: { name: 'Camera backups' } });
+
+        await expect(sut.getStatus(userId)).resolves.toMatchObject({ folderName: 'Camera backups' });
       });
 
       it('should keep the account probe and the folder lookup on separate cooldowns', async () => {

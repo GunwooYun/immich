@@ -665,12 +665,14 @@ export class GoogleDriveService extends BaseService {
     // a preference that fails to save over somebody else's outage is worse than an unnamed folder.
     // Doing it on the read makes the lookup free to fail, and it stops as soon as it succeeds.
     let folderName = credentials.folderName;
-    if (credentials.folderId && !folderName && this.probeAllowed(`folder:${userId}`)) {
+    // Keyed on the folder, not just the user. A user who pastes a wrong id and then the right one
+    // would otherwise inherit the wrong one's hour of backoff and keep seeing a raw id for it.
+    if (credentials.folderId && !folderName && this.probeAllowed(`folder:${userId}:${credentials.folderId}`)) {
       folderName = await this.resolveFolderName(userId, credentials.refreshToken, credentials.folderId);
       if (!folderName) {
         // Push the next attempt an hour out rather than a minute; see the constant.
         this.accountProbeAt.set(
-          `folder:${userId}`,
+          `folder:${userId}:${credentials.folderId}`,
           Date.now() -
             GoogleDriveService.ACCOUNT_PROBE_COOLDOWN_MS +
             GoogleDriveService.FOLDER_NAME_FAILURE_COOLDOWN_MS,
@@ -1103,9 +1105,14 @@ export class GoogleDriveService extends BaseService {
       // The path we tried is in the message on purpose: the first production instance of this was
       // diagnosed entirely from it, because the recorded path was under /data/upload while the
       // asset row had long since moved to /data/library.
+      // `detail` is what the settings page and any later diagnosis read, so it carries the same
+      // both-paths comparison the log line does. Naming only the path that failed would lose exactly
+      // the /data/upload-beside-/data/library juxtaposition that identified this race.
       const attemptedPath =
-        error instanceof GoogleDriveSourceUnreadableError ? error.attemptedPath : asset.originalPath;
-      this.logger.warn(`Skipping Google Drive upload for asset ${assetId}: could not read ${attemptedPath} (${error})`);
+        error instanceof GoogleDriveSourceUnreadableError
+          ? error.describePaths(asset.originalPath)
+          : `Could not read ${asset.originalPath}`;
+      this.logger.warn(`Skipping Google Drive upload for asset ${assetId}: ${attemptedPath} (${error})`);
       // Recorded even though this is a skip, not a failure — skips never pass through the catch
       // below, so without an explicit write here the settings page would have no idea this photo
       // isn't making it to Drive. (The second roadmap review caught exactly this seam.)
@@ -1113,7 +1120,7 @@ export class GoogleDriveService extends BaseService {
         userId,
         assetId,
         GoogleDriveUploadErrorClass.SourceUnreadable,
-        `Could not read ${attemptedPath}`,
+        attemptedPath,
       );
       return 'skipped';
     }
@@ -1307,8 +1314,13 @@ export class GoogleDriveService extends BaseService {
    * costs a skip that the next sync repairs. The other is a mover that dies between the rename and
    * the write — there the row keeps the old path indefinitely, the re-read returns the same value,
    * and no retry happens. That is deliberate: an unconditional second attempt on an unchanged path
-   * asks the filesystem the same question twice and cannot succeed. Recovery there is a manual
-   * sync, which is what the settings page already tells the user.
+   * asks the filesystem the same question twice and cannot succeed.
+   *
+   * Nor does a manual sync repair it — that re-reads the same stale row and fails identically. What
+   * repairs it is immich's own incomplete-move recovery in `storage.core.ts`, i.e. re-running
+   * Storage Migration, after which the row names the file again and the next sync succeeds. This
+   * comment has now been wrong twice about this window; the distinction that matters is that a
+   * stale *path* is not a missing *file*, and only the mover can tell them apart.
    *
    * Only one extra attempt, and only when the path actually changed.
    *
