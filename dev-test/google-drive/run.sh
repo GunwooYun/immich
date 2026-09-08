@@ -94,6 +94,10 @@ SERVER_SPECS=(
 WEB_SPECS=(
   src/lib/managers/google-drive-progress-manager.svelte.spec.ts
   src/lib/components/album-page/GoogleDriveAlbumMenu.spec.ts
+  # The settings panel's folder card. Its four branches encode decisions that are easy to undo by
+  # accident — showing an opaque id where a name belongs, or leaving an editable id field on a
+  # deployment where the picker already works.
+  "src/routes/(user)/user-settings/GoogleDriveSettings.spec.ts"
   # Shared component, but the album menu depends on its close/open/focus/onOpen behaviour — the
   # Wave 5 fixes (W1 guard, F1 focus, F2 onOpen-once) live here, so a regression is a feature
   # regression even though the file is named for something shared.

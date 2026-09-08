@@ -30,7 +30,8 @@
     subscribeGoogleDriveAlbum,
     unsubscribeGoogleDriveAlbum,
   } from '@immich/sdk';
-  import { Alert, Button, LoadingSpinner, toastManager } from '@immich/ui';
+  import { Alert, Button, Icon, LoadingSpinner, toastManager } from '@immich/ui';
+  import { mdiFolderOutline, mdiOpenInNew } from '@mdi/js';
   import { onMount } from 'svelte';
   import { locale, t } from 'svelte-i18n';
   import { fade } from 'svelte/transition';
@@ -205,6 +206,21 @@
     }
   };
 
+  // Clearing the folder is a real choice, not the absence of one: uploads then land in the root of
+  // My Drive. It used to be expressed by emptying the id text field, which is fine when that field
+  // is on screen and impossible when it is not — and the Google Picker has no "root" entry, so
+  // hiding the field without this would quietly remove the only way back.
+  const handleUseRoot = async () => {
+    try {
+      await setGoogleDriveFolder({ googleDriveSetFolderDto: { folderId: '' } });
+      folderId = '';
+      folderName = null;
+      toastManager.primary($t('saved_settings'));
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_update_settings'));
+    }
+  };
+
   // "Resume uploads" for the quota block: the server clears the block and immediately re-queues
   // everything pending, so by the time the toast shows, uploading has genuinely restarted (not
   // merely become possible again). Status is re-fetched afterwards because a re-block can happen
@@ -295,25 +311,43 @@
                   })
                 : $t('google_drive_connected')}
             </p>
-            <!-- The primary way to choose a folder — but only where it can actually work. The
-                 picker is a Google-hosted widget that needs a server-configured API key, so on a
-                 deployment without one the button is left out entirely rather than offered and
-                 failing on click; the text field below is then the way to set a folder. -->
-            <div class="flex flex-col gap-2">
-              <!-- A Drive folder id is a 33-character opaque string. Showing it where the name
-                   belongs told the user nothing they could act on, and it looked like an error.
-                   The server fills the name in on load when it can (getStatus), so this falls back
-                   to naming the *state* rather than the id — the id itself stays available in the
-                   field below for anyone who actually wants it. -->
-              <p class="text-sm">
-                {folderName
-                  ? $t('google_drive_folder_current', { values: { folder: folderName } })
-                  : folderId
-                    ? $t('google_drive_folder_unnamed')
-                    : $t('google_drive_folder_none')}
-              </p>
-              {#if pickerAvailable}
-                <div class="flex justify-start">
+            <!-- Two cards, because the two things on this page answer different questions and
+                 were previously stacked as one undifferentiated column. The folder is set once and
+                 forgotten; the album list is watched. Splitting them is also what makes the album
+                 checkboxes stop reading as a duplicate of the per-album menu — with a boundary
+                 drawn, one is "this album" and the other is "all of them at once", the way a file
+                 manager has both a context menu and a list. -->
+            <div class="rounded-2xl border bg-subtle p-4 dark:border-black dark:bg-black/30">
+              <p class="text-sm font-medium">{$t('google_drive_location')}</p>
+              <div class="mt-3 flex items-center gap-3">
+                <Icon icon={mdiFolderOutline} size="24" class="shrink-0 text-gray-500 dark:text-gray-400" />
+                <div class="min-w-0 flex-1">
+                  {#if folderId}
+                    <!-- The name links to the folder itself. A destination you cannot look at is a
+                         destination you have to take on trust, and the album menu already offers
+                         this — it belongs here more than there. -->
+                    <a
+                      class="flex items-center gap-1 text-sm hover:underline"
+                      href={`https://drive.google.com/drive/folders/${folderId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={$t('google_drive_folder_open_hint')}
+                    >
+                      <span class="truncate">{folderName ?? $t('google_drive_folder_selected')}</span>
+                      <Icon icon={mdiOpenInNew} size="14" class="shrink-0" />
+                    </a>
+                    {#if !folderName}
+                      <!-- Only when the name could not be read (a folder outside what drive.file
+                           granted, typically one pasted by id). The id is no use for acting on, but
+                           it is the one thing that lets someone compare against Drive when the
+                           name is missing precisely because something is wrong. -->
+                      <p class="truncate text-xs text-gray-500 dark:text-gray-400">{folderId}</p>
+                    {/if}
+                  {:else}
+                    <p class="text-sm">{$t('google_drive_folder_none')}</p>
+                  {/if}
+                </div>
+                {#if pickerAvailable}
                   <Button
                     shape="round"
                     type="button"
@@ -322,21 +356,38 @@
                     disabled={pickerLoading}
                     loading={pickerLoading}
                   >
-                    {$t('google_drive_pick_folder')}
+                    {folderId ? $t('google_drive_folder_change') : $t('google_drive_pick_folder')}
                   </Button>
+                {/if}
+              </div>
+              {#if pickerAvailable}
+                {#if folderId}
+                  <div class="mt-3 flex justify-start">
+                    <Button shape="round" type="button" size="small" color="secondary" onclick={handleUseRoot}>
+                      {$t('google_drive_folder_use_root')}
+                    </Button>
+                  </div>
+                {/if}
+              {:else}
+                <!-- No API key on this deployment means no picker, and then typing the id is the
+                     only way to set a folder at all. Where the picker works the field is left out:
+                     a 33-character opaque string in an editable box invites a paste that sends
+                     uploads somewhere invisible, or blocks the account outright on FolderMissing. -->
+                <div class="mt-3">
+                  <SettingInputField
+                    inputType={SettingInputFieldType.TEXT}
+                    label={$t('google_drive_folder_id')}
+                    description={$t('google_drive_folder_id_description')}
+                    bind:value={folderId}
+                  />
+                  <div class="mt-3 flex justify-end">
+                    <Button shape="round" type="submit" size="small" onclick={handleSaveFolder}>{$t('save')}</Button>
+                  </div>
                 </div>
               {/if}
             </div>
-            <SettingInputField
-              inputType={SettingInputFieldType.TEXT}
-              label={$t('google_drive_folder_id')}
-              description={$t('google_drive_folder_id_description')}
-              bind:value={folderId}
-            />
-            <!-- The album list is the heart of the feature: it is what decides whose Drive gets
-                 what. Shared albums name their owner, so backing up someone else's album is a
-                 visible choice rather than an accident. -->
-            <div class="flex flex-col gap-1">
+
+            <div class="flex flex-col gap-1 rounded-2xl border bg-subtle p-4 dark:border-black dark:bg-black/30">
               <p class="text-sm font-medium">{$t('google_drive_albums')}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400">{$t('google_drive_albums_description')}</p>
               {#if albums.length === 0}
@@ -374,11 +425,10 @@
                 </ul>
               {/if}
             </div>
-            <div class="flex justify-between">
+            <div class="flex justify-start">
               <Button shape="round" type="button" size="small" color="danger" onclick={handleDisconnect}>
                 {$t('google_drive_disconnect')}
               </Button>
-              <Button shape="round" type="submit" size="small" onclick={handleSaveFolder}>{$t('save')}</Button>
             </div>
           {:else}
             <p class="text-sm">{$t('google_drive_not_connected')}</p>
