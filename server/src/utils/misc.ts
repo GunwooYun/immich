@@ -138,14 +138,15 @@ export const getGoogleDriveRedirectUrl = (
 };
 
 /**
- * Google Drive sync needs both an explicit opt-in *and* a complete OAuth client — an admin who
- * flips the switch on but hasn't filled in the credentials yet would otherwise expose a "Connect
- * Google Drive" button that can only ever fail. Treating "configured" as part of "enabled" keeps
- * that half-set-up state invisible to users instead of broken for them.
+ * Configured *is* enabled. There used to be a separate opt-in flag as well, on the reasoning that
+ * a half-set-up deployment should not show users a "Connect Google Drive" button that can only
+ * fail — but the flag defaulted to off, so once the admin form was removed it could strand a
+ * deployment that had everything it needed with no way to switch it on. Asking only whether the
+ * values exist keeps the half-set-up state invisible for the same reason, without inventing a
+ * second question the operator has no way to answer.
  *
  * The redirect URL counts as configured when it can be *derived* (see getGoogleDriveRedirectUrl),
- * which is why this needs the server config too — with credentials from the environment and an
- * external domain already set, the feature is fully configured without anyone touching the form.
+ * which is why this needs the server config too.
  */
 export const isGoogleDriveEnabled = (googleDrive: SystemConfig['googleDrive'], server: SystemConfig['server']) =>
   !!googleDrive.clientId && !!googleDrive.clientSecret && !!getGoogleDriveRedirectUrl(googleDrive, server);

@@ -380,9 +380,8 @@ web/src/**/*.spec.ts             웹 유닛
   *배포 전*
   1. **redirect 파생이 살아 있는지 확정한다 — 유일한 하드 게이트.** `server.externalDomain`과
      `googleDrive.redirectUrl` 중 **최소 하나가 채워진 상태**로 배포한다. 둘 다 비면
-     `isGoogleDriveEnabled`(`utils/misc.ts:150-154`)가 거짓이 되어 **에러 없이** 기능이 꺼진다.
-     관리자 폼의 "비워두면 External Domain을 쓴다"를 따라 `redirectUrl`을 지우는 것이 정확히
-     그 상태를 만든다.
+     `isGoogleDriveEnabled`가 거짓이 되어 **에러 없이** 기능이 꺼진다. 관리 폼은 이제 없으므로
+     `redirectUrl`은 `IMMICH_GOOGLE_DRIVE_REDIRECT_URL` 또는 저장된 설정 row에서 온다.
   2. DB 백업 (아래 명령).
   3. 업스트림 다운그레이드가 아닌지 확인 (`git merge-base --is-ancestor <운영 태그> HEAD`).
   4. 연결이 만료·취소되면 **폴더 선택도 함께 사라진다**는 것을 알고 시작한다 — 재연결 의식에
@@ -480,8 +479,8 @@ SQL
   HTTPS 입구를 *추가*하는 것이지 대체가 아니다.
 
   자격증명은 랩탑 `~/immich-app/.env`의 `IMMICH_GOOGLE_DRIVE_CLIENT_ID` / `_CLIENT_SECRET` /
-  `_API_KEY`에서 온다(**값은 절대 커밋하지 않는다** — §1). redirect URL은 admin의 External Domain
-  설정에서 파생되므로 따로 입력하지 않는다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
+  `_API_KEY` / `_REDIRECT_URL`에서 온다(**값은 절대 커밋하지 않는다** — §1). redirect URL은 External
+  Domain에서 파생되는 것이 기본이고, 이 배포처럼 그럴 수 없을 때만 환경변수로 지정한다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
 
 - **SSH 터널은 이제 개발용 폴백이다.** 두 경우에 아직 쓴다: ① dev container에서 `localhost:2283`
   redirect로 OAuth를 시험할 때, ② 데스크탑 브라우저로 운영 화면을 확인할 때(tailnet 주소를 쓰면
@@ -524,9 +523,16 @@ SQL
 - **redirect URL은 `externalDomain`에서 파생된다**(`getGoogleDriveRedirectUrl`). 필드는 override로만
   남아 있다. `getExternalDomain()`의 `https://my.immich.app` 폴백을 여기 쓰면 안 된다 — 그럴듯하지만
   틀린 redirect는 구글의 불투명한 에러를 낳고, 빈 값은 기능을 꺼서 원인을 말해준다.
-- **env 값이 DB에 고착되지 않는 이유**: `updateConfig`가 defaults와 diff해 "비었거나 같으면" 저장을
-  생략한다. env 값이 곧 defaults라 무변경 저장은 아무것도 쓰지 않는다. 대신 **env가 제공하는 필드는
-  UI에서 빈 값으로 강제할 수 없다** — 끄려면 `enabled` 토글을 쓴다.
+- **관리 화면에 Google Drive 항목은 더 이상 없다.** 배포는 `IMMICH_GOOGLE_DRIVE_*` 환경변수로만
+  기술된다. `enabled` 플래그도 폐지했다 — 자격증명이 있고 redirect URL을 얻을 수 있으면 켜진 것이다.
+  끄려면 `IMMICH_GOOGLE_DRIVE_CLIENT_ID`를 비우고 재시작한다.
+- **⚠ 단, 저장된 설정 row가 env를 이긴다.** `buildConfig`가 partial을 defaults **위에** 덮으므로,
+  row에 `googleDrive.clientId`가 들어 있으면 env를 비워도 꺼지지 않는다. **운영 row에는 다섯 키가
+  모두 들어 있다**(2026-09-14 확인: clientId·clientSecret·apiKey·redirectUrl·enabled). 즉 이 인스턴스는
+  아직 env로 기술되지 않는다.
+  **정리 방법**: env가 row와 같은 값을 갖게 한 뒤 관리 화면에서 아무 설정이나 한 번 저장하면 된다 —
+  `updateConfig`는 defaults와 같은 값을 저장에서 빼므로 googleDrive partial이 통째로 사라진다.
+  DB를 직접 손댈 필요가 없다.
 
 - **Drive는 최종 저장소가 아니라 Pixel로 가는 경유지다.** 따라서 Drive에서 파일이 사라지는
   것은 정상 운영이고, 원장(ledger)이 "이미 올렸음"을 기억하는 것이 옳다.
@@ -575,9 +581,9 @@ SQL
 
 ### Notes (지뢰)
 - **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다.** `isGoogleDriveEnabled`는
-  redirect URL을 *파생할 수 있을 때만* 참인데(`utils/misc.ts:150-154`), 관리자 폼의 설명
-  (`i18n/en.json:94`)은 "비워두면 External Domain을 쓴다"고 안내한다. externalDomain이 빈 지금
-  그 안내를 따르면 에러 없이 전체가 멈춘다. **Wave 6 배포 전에 두 값을 함께 정한다.**
+  redirect URL을 *파생할 수 있을 때만* 참이다. 예전에는 관리자 폼의 "비워두면 External Domain을
+  쓴다"는 안내가 정확히 그 상태로 유도했다 — 그 폼과 안내 문구는 함께 제거됐다. 지금 값의 출처는
+  `IMMICH_GOOGLE_DRIVE_REDIRECT_URL`과 저장된 설정 row 둘뿐이다.
 - **redirect URL을 바꿔도 저장된 refresh token은 무효화되지 않는다.** `redirect_uri`는 코드 교환
   때만 쓰이고 refresh 요청에는 실리지 않는다. ledger도 그대로다.
 - **`TS_HOSTNAME=ha-server`** 가 컨테이너 env에 있어 재시작 시 콘솔 이름(`laptop-server`)을 되돌릴

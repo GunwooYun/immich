@@ -1571,9 +1571,14 @@ describe(GoogleDriveService.name, () => {
       // can turn the feature off once the admin switch is gone.
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, clientId: '' } });
 
-      await expect(sut.syncAlbum(AuthFactory.create(UserFactory.create()), newUuid())).rejects.toBeInstanceOf(
-        BadRequestException,
+      // Asserted on the message, not the class. `BadRequestException` alone cannot tell this
+      // apart from the access check a few lines further down, which throws the same type — so
+      // deleting the gate outright left this test green, and it did so on the parent commit too.
+      await expect(sut.syncAlbum(AuthFactory.create(UserFactory.create()), newUuid())).rejects.toThrow(
+        'Google Drive sync is not enabled on this server',
       );
+      // Witness: it stopped at the gate rather than at access control, which runs after it.
+      expect(mocks.access.album.checkOwnerAccess).not.toHaveBeenCalled();
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
 

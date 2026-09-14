@@ -131,9 +131,11 @@ export class GoogleDriveService extends BaseService {
    * the environment itself. `IMMICH_GOOGLE_DRIVE_CLIENT_ID` and friends are now defaults in
    * `config.ts` (the same shape `machineLearning` has always used), which fixes each thing the old
    * arrangement got wrong: there is one merge point instead of scattered reads, the effective
-   * value is visible in the admin UI, and a value saved there still wins — because the stored
-   * partial is merged *over* the defaults. What an admin cannot do is force a field back to empty
-   * when the environment supplies one; use the `enabled` toggle to turn the feature off instead.
+   * partial is merged *over* the defaults, which is what let the admin form be removed without
+   * disturbing installs that had used it. There is no toggle any more: the feature is on exactly
+   * when these values exist, so turning it off means blanking `IMMICH_GOOGLE_DRIVE_CLIENT_ID` and
+   * restarting — and note that only works once no stored partial supplies a client id of its own,
+   * since the partial still wins.
    *
    * These credentials identify the *deployment's* Google Cloud app, not any user's account: each
    * person still signs in with their own Google account and connects their own Drive.
@@ -151,16 +153,16 @@ export class GoogleDriveService extends BaseService {
     const missing = [
       ['client ID', clientId],
       ['client secret', clientSecret],
-      // Named for what the admin actually has to do, since the value is normally derived: it is
-      // missing only when *both* the override field and the external domain are empty.
-      ['redirect URL (set it, or set the server External Domain)', redirectUrl],
+      // Named for what the operator actually has to do. Normally derived, so it is missing only
+      // when neither IMMICH_GOOGLE_DRIVE_REDIRECT_URL nor the server External Domain is set.
+      ['redirect URL (set IMMICH_GOOGLE_DRIVE_REDIRECT_URL, or the server External Domain)', redirectUrl],
     ]
       .filter(([, value]) => !value)
       .map(([label]) => label);
 
     if (missing.length > 0) {
       throw new BadRequestException(
-        `Google Drive is not configured: missing ${missing.join(', ')}. Set these under Administration → Settings → Google Drive.`,
+        `Google Drive is not configured: missing ${missing.join(', ')}. Set the IMMICH_GOOGLE_DRIVE_* variables in the server environment and restart.`,
       );
     }
 
