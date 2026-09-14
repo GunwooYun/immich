@@ -146,10 +146,8 @@ export class GoogleDriveService extends BaseService {
     const { clientId, clientSecret } = googleDrive;
     const redirectUrl = getGoogleDriveRedirectUrl(googleDrive, server);
 
-    if (!googleDrive.enabled) {
-      throw new BadRequestException('Google Drive sync is disabled for this server');
-    }
-
+    // No separate "disabled" check: the feature is off exactly when one of these is missing, and
+    // the list below already names which one — a strictly better message than "sync is disabled".
     const missing = [
       ['client ID', clientId],
       ['client secret', clientSecret],

@@ -62,16 +62,24 @@ describe('defaults.googleDrive', () => {
     expect(defaults.googleDrive.apiKey).toBe('');
   });
 
-  it('should keep the feature off and the redirect URL underivable by default', async () => {
-    // Credentials in the environment must not switch the feature on by themselves: enabling it is
-    // an explicit admin decision, and the redirect URL comes from the External Domain setting
-    // rather than from any environment variable of its own.
-    vi.stubEnv('IMMICH_GOOGLE_DRIVE_CLIENT_ID', 'env-client-id');
-    vi.stubEnv('IMMICH_GOOGLE_DRIVE_CLIENT_SECRET', 'env-client-secret');
+  it('should take the redirect URL from the environment', async () => {
+    // The override that makes a deployment describable entirely by its .env. It exists because
+    // the alternative — server.externalDomain — also feeds share links and email templates, so an
+    // install whose only working redirect is a localhost tunnel cannot use it without breaking
+    // unrelated features.
+    vi.stubEnv('IMMICH_GOOGLE_DRIVE_REDIRECT_URL', 'http://localhost:2283/api/google-drive/callback');
 
     const defaults = await loadDefaults();
 
-    expect(defaults.googleDrive.enabled).toBe(false);
+    expect(defaults.googleDrive.redirectUrl).toBe('http://localhost:2283/api/google-drive/callback');
+  });
+
+  it('should leave the redirect URL empty when the environment does not set it', async () => {
+    // Empty means "derive it from the external domain", not "misconfigured".
+    vi.stubEnv('IMMICH_GOOGLE_DRIVE_REDIRECT_URL', undefined);
+
+    const defaults = await loadDefaults();
+
     expect(defaults.googleDrive.redirectUrl).toBe('');
   });
 });

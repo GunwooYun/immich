@@ -19,6 +19,7 @@ import {
 } from 'src/enum';
 import { SystemConfigService } from 'src/services/system-config.service';
 import { DeepPartial } from 'src/types';
+import { isGoogleDriveEnabled } from 'src/utils/misc';
 import { mockEnvData } from 'test/repositories/config.repository.mock';
 import { newTestService, ServiceMocks } from 'test/utils';
 
@@ -109,7 +110,6 @@ const updatedConfig = Object.freeze<SystemConfig>({
     },
   },
   googleDrive: {
-    enabled: false,
     clientId: '',
     clientSecret: '',
     redirectUrl: '',
@@ -299,6 +299,31 @@ describe(SystemConfigService.name, () => {
       });
 
       await expect(sut.getSystemConfig()).resolves.toEqual(updatedConfig);
+    });
+
+    it('should survive a stored googleDrive.enabled left over from before the admin form was removed', async () => {
+      // The upgrade path. Every install that ran the old build has this key in its system-config
+      // row, and it has no home in the schema any more. Two things must hold: loading the config
+      // must not fail, and the key must not be able to switch the feature off — there is no UI
+      // left that could switch it back on. Both past incidents in this feature were exactly this
+      // shape, a deployment sitting silently disabled with nothing on screen to explain it.
+      // Cast because the key deliberately no longer exists in the type — that is the situation
+      // being reproduced. A stored row is untyped JSON and keeps whatever the old build wrote.
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { enabled: false, clientId: 'client-id', clientSecret: 'client-secret' },
+      } as never);
+
+      const config = await sut.getSystemConfig();
+
+      expect(config.googleDrive).toEqual({
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        redirectUrl: '',
+        apiKey: '',
+      });
+      expect(isGoogleDriveEnabled(config.googleDrive, { externalDomain: 'https://immich.example.com' } as never)).toBe(
+        true,
+      );
     });
 
     it('should load the config from a json file', async () => {

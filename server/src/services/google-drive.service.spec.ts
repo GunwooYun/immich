@@ -1567,7 +1567,9 @@ describe(GoogleDriveService.name, () => {
     it('should reject when the feature is disabled', async () => {
       // Deliberately different from the background paths, which skip in silence. This one is
       // user-initiated, so a success toast for jobs that can never run would be a lie.
-      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, enabled: false } });
+      // Disabled now means "the deployment has no credentials", since that is the only thing that
+      // can turn the feature off once the admin switch is gone.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, clientId: '' } });
 
       await expect(sut.syncAlbum(AuthFactory.create(UserFactory.create()), newUuid())).rejects.toBeInstanceOf(
         BadRequestException,

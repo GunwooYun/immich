@@ -119,7 +119,6 @@ export type SystemConfig = {
     };
   };
   googleDrive: {
-    enabled: boolean;
     clientId: string;
     clientSecret: string;
     redirectUrl: string;
@@ -344,18 +343,27 @@ export const defaults = Object.freeze<SystemConfig>({
     },
   },
   googleDrive: {
-    enabled: false,
-    // The three credentials that identify *this deployment's* Google Cloud app (not any user's
-    // account) can come from the environment, the way machineLearning above does. The operator
-    // sets them once in the compose .env and no admin ever has to paste them into a form — which
-    // is the whole difference between "log in and approve" and the four-field setup this feature
-    // used to demand. Values saved in the admin UI still win: they land in the system-config
-    // partial, which is merged *over* these defaults (see utils/config.ts buildConfig).
+    // Everything that identifies *this deployment's* Google Cloud app (not any user's account)
+    // comes from the environment. There is no admin form for it any more: a deployment is
+    // described entirely by its .env, and the only thing anyone touches in the UI is the per-user
+    // "Connect" button. Values in the system-config partial still win — they are merged over
+    // these defaults (see utils/config.ts buildConfig) — which is what keeps an existing install
+    // working unchanged across this removal.
+    //
+    // There is deliberately no `enabled` flag. A feature whose configuration is supplied or not
+    // supplied does not need a second switch saying whether to believe it: with the flag, an
+    // install could hold complete credentials and still sit silently off with nothing in the UI
+    // to turn it on. isGoogleDriveEnabled therefore asks only whether the deployment has what it
+    // needs. To turn the feature off, blank the client id and restart — the same place every
+    // other knob lives, and /api/server/features reports the result.
     clientId: process.env.IMMICH_GOOGLE_DRIVE_CLIENT_ID || '',
     clientSecret: process.env.IMMICH_GOOGLE_DRIVE_CLIENT_SECRET || '',
-    // Deliberately not from the environment: it is derived from server.externalDomain when left
-    // empty (see getGoogleDriveRedirectUrl), so there is nothing for an operator to type.
-    redirectUrl: '',
+    // Normally derived from server.externalDomain (see getGoogleDriveRedirectUrl); this override
+    // exists for deployments that cannot use it. Ours is one: the server is LAN-only, Google
+    // rejects private IPs as redirect targets, and the working URL is a localhost tunnel — while
+    // externalDomain also feeds share links and email templates, so pointing *that* at a tunnel
+    // origin would break unrelated features to fix this one.
+    redirectUrl: process.env.IMMICH_GOOGLE_DRIVE_REDIRECT_URL || '',
     apiKey: process.env.IMMICH_GOOGLE_DRIVE_API_KEY || '',
   },
   oauth: {

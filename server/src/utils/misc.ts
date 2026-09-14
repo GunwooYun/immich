@@ -148,10 +148,7 @@ export const getGoogleDriveRedirectUrl = (
  * external domain already set, the feature is fully configured without anyone touching the form.
  */
 export const isGoogleDriveEnabled = (googleDrive: SystemConfig['googleDrive'], server: SystemConfig['server']) =>
-  googleDrive.enabled &&
-  !!googleDrive.clientId &&
-  !!googleDrive.clientSecret &&
-  !!getGoogleDriveRedirectUrl(googleDrive, server);
+  !!googleDrive.clientId && !!googleDrive.clientSecret && !!getGoogleDriveRedirectUrl(googleDrive, server);
 
 export const isConnectionAborted = (error: Error | any) => error.code === 'ECONNABORTED';
 

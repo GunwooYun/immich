@@ -163,7 +163,6 @@ describe(ServerService.name, () => {
       // feature from users who can in fact use it.
       mocks.systemMetadata.get.mockResolvedValue({
         googleDrive: {
-          enabled: true,
           clientId: 'client-id',
           clientSecret: 'client-secret',
           redirectUrl: '',
@@ -179,7 +178,6 @@ describe(ServerService.name, () => {
       // Same config minus the external domain, so the only difference is the thing under test.
       mocks.systemMetadata.get.mockResolvedValue({
         googleDrive: {
-          enabled: true,
           clientId: 'client-id',
           clientSecret: 'client-secret',
           redirectUrl: '',

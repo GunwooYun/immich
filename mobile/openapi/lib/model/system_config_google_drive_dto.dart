@@ -16,7 +16,6 @@ class SystemConfigGoogleDriveDto {
     required this.apiKey,
     required this.clientId,
     required this.clientSecret,
-    required this.enabled,
     required this.redirectUrl,
   });
 
@@ -29,9 +28,6 @@ class SystemConfigGoogleDriveDto {
   /// Google OAuth client secret
   String clientSecret;
 
-  /// Enabled
-  bool enabled;
-
   /// OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback
   String redirectUrl;
 
@@ -40,7 +36,6 @@ class SystemConfigGoogleDriveDto {
     other.apiKey == apiKey &&
     other.clientId == clientId &&
     other.clientSecret == clientSecret &&
-    other.enabled == enabled &&
     other.redirectUrl == redirectUrl;
 
   @override
@@ -49,18 +44,16 @@ class SystemConfigGoogleDriveDto {
     (apiKey.hashCode) +
     (clientId.hashCode) +
     (clientSecret.hashCode) +
-    (enabled.hashCode) +
     (redirectUrl.hashCode);
 
   @override
-  String toString() => 'SystemConfigGoogleDriveDto[apiKey=$apiKey, clientId=$clientId, clientSecret=$clientSecret, enabled=$enabled, redirectUrl=$redirectUrl]';
+  String toString() => 'SystemConfigGoogleDriveDto[apiKey=$apiKey, clientId=$clientId, clientSecret=$clientSecret, redirectUrl=$redirectUrl]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'apiKey'] = this.apiKey;
       json[r'clientId'] = this.clientId;
       json[r'clientSecret'] = this.clientSecret;
-      json[r'enabled'] = this.enabled;
       json[r'redirectUrl'] = this.redirectUrl;
     return json;
   }
@@ -77,7 +70,6 @@ class SystemConfigGoogleDriveDto {
         apiKey: mapValueOfType<String>(json, r'apiKey')!,
         clientId: mapValueOfType<String>(json, r'clientId')!,
         clientSecret: mapValueOfType<String>(json, r'clientSecret')!,
-        enabled: mapValueOfType<bool>(json, r'enabled')!,
         redirectUrl: mapValueOfType<String>(json, r'redirectUrl')!,
       );
     }
@@ -129,7 +121,6 @@ class SystemConfigGoogleDriveDto {
     'apiKey',
     'clientId',
     'clientSecret',
-    'enabled',
     'redirectUrl',
   };
 }

@@ -62,7 +62,6 @@ describe('unsetDeep', () => {
 // Only the fields these two helpers actually read, so each test says what it depends on.
 const googleDriveConfig = (overrides: Partial<SystemConfig['googleDrive']> = {}) =>
   ({
-    enabled: true,
     clientId: 'client-id',
     clientSecret: 'client-secret',
     redirectUrl: '',
@@ -116,8 +115,19 @@ describe('isGoogleDriveEnabled', () => {
 
   it('should be enabled with credentials and a derivable redirect URL', () => {
     // The zero-typing case: credentials from the environment, redirect derived from the external
-    // domain, nobody has touched the form.
+    // domain, and no form to touch — there is no longer an `enabled` flag in the fixture at all,
+    // which is the point. A deployment that has what it needs is a deployment that works.
     expect(isGoogleDriveEnabled(googleDrive(), server('https://immich.example.com'))).toBe(true);
+  });
+
+  it('should ignore a stale enabled flag left in a stored config', () => {
+    // Installs upgraded across this change keep `googleDrive.enabled` in their system-config row.
+    // It is an unknown key now; what matters is that neither value can switch the feature off,
+    // because nothing in the UI could switch it back on.
+    for (const stale of [true, false]) {
+      const config = { ...googleDrive(), enabled: stale } as SystemConfig['googleDrive'];
+      expect(isGoogleDriveEnabled(config, server('https://immich.example.com'))).toBe(true);
+    }
   });
 
   it('should be enabled with credentials and an explicit redirect URL', () => {
@@ -127,16 +137,15 @@ describe('isGoogleDriveEnabled', () => {
   });
 
   it('should be disabled — not throwing — when there is no redirect URL and nothing to derive one from', () => {
-    // Asserted for the *right* reason (CLAUDE.md §4): the credentials are present and the switch is
-    // on, so a false here can only come from the redirect URL being underivable.
+    // Asserted for the *right* reason (CLAUDE.md §4): the credentials are present, so a false here
+    // can only come from the redirect URL being underivable.
     const config = googleDrive();
-    expect(config.enabled && !!config.clientId && !!config.clientSecret).toBe(true);
+    expect(!!config.clientId && !!config.clientSecret).toBe(true);
     expect(getGoogleDriveRedirectUrl(config, server(''))).toBe('');
     expect(isGoogleDriveEnabled(config, server(''))).toBe(false);
   });
 
   it.each([
-    { field: 'enabled', overrides: { enabled: false } },
     { field: 'clientId', overrides: { clientId: '' } },
     { field: 'clientSecret', overrides: { clientSecret: '' } },
   ])('should be disabled when $field is missing, even with a derivable redirect URL', ({ overrides }) => {

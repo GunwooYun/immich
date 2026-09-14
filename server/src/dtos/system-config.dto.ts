@@ -228,7 +228,6 @@ const SystemConfigNightlyTasksSchema = z
 
 const SystemConfigGoogleDriveSchema = z
   .object({
-    enabled: configBool.describe('Enabled'),
     clientId: z.string().describe('Google OAuth client ID'),
     clientSecret: z.string().describe('Google OAuth client secret'),
     redirectUrl: z

@@ -26832,10 +26832,6 @@
             "description": "Google OAuth client secret",
             "type": "string"
           },
-          "enabled": {
-            "description": "Enabled",
-            "type": "boolean"
-          },
           "redirectUrl": {
             "description": "OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback",
             "type": "string"
@@ -26845,7 +26841,6 @@
           "apiKey",
           "clientId",
           "clientSecret",
-          "enabled",
           "redirectUrl"
         ],
         "type": "object"

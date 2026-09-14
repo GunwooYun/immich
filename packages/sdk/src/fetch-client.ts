@@ -2436,8 +2436,6 @@ export type SystemConfigGoogleDriveDto = {
     clientId: string;
     /** Google OAuth client secret */
     clientSecret: string;
-    /** Enabled */
-    enabled: boolean;
     /** OAuth redirect URL, e.g. https://immich.example.com/api/google-drive/callback */
     redirectUrl: string;
 };
