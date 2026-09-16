@@ -2,6 +2,7 @@ import '@testing-library/jest-dom';
 import { fireEvent, render } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { init, register, waitLocale } from 'svelte-i18n';
+import { goto } from '$app/navigation';
 import { optionClickCallbackStore } from '$lib/stores/context-menu.store';
 import { renderWithTooltips } from '$tests/helpers';
 import GoogleDriveAlbumMenu from './GoogleDriveAlbumMenu.svelte';
@@ -51,6 +52,7 @@ describe('GoogleDriveAlbumMenu', () => {
   });
 
   afterEach(() => {
+    vi.mocked(goto).mockClear();
     optionClickCallbackStore.set(undefined);
     vi.unstubAllGlobals();
   });
@@ -234,6 +236,66 @@ describe('GoogleDriveAlbumMenu', () => {
       // Witness that the menu rendered at all, so the two negatives above cannot pass on an empty
       // render.
       expect(getByText('Drive storage')).toBeInTheDocument();
+    });
+
+    it('should send a missing-folder block to Account settings, where the folder is chosen', async () => {
+      // Describing the block without a way to act on it left the user to find where the fix lives.
+      const { getByText } = renderMenu({ blockedReason: 'folder_missing' });
+
+      await fireEvent.click(getByText('Choose a folder in Account settings'));
+
+      expect(goto).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(goto).mock.calls[0][0]).toContain('user-settings');
+      expect(open).not.toHaveBeenCalled();
+      expect(closeCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it("should send a quota block to Google's storage page, not to settings", async () => {
+      const { getByText } = renderMenu({ blockedReason: 'quota_exceeded' });
+
+      await fireEvent.click(getByText('Manage Google Drive storage'));
+
+      expect(open).toHaveBeenCalledWith('https://drive.google.com/settings/storage', '_blank', 'noopener');
+      expect(goto).not.toHaveBeenCalled();
+      expect(closeCallback).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('storage warning on the sync row', () => {
+    const warning = /Google Drive is almost full/;
+
+    it('should warn before syncing into a Drive past the critical line', () => {
+      const { getByText } = renderMenu({ storage: { limitBytes: 100, usageBytes: 96, usageInDriveTrashBytes: 0 } });
+      expect(getByText(warning)).toBeInTheDocument();
+    });
+
+    it('should still let the sync start — warned, not disabled', async () => {
+      const onSyncNow = vi.fn();
+      const { getByText } = render(GoogleDriveAlbumMenu, {
+        ...baseProps,
+        storage: { limitBytes: 100, usageBytes: 99, usageInDriveTrashBytes: 0 },
+        onToggle: vi.fn(),
+        onSyncNow,
+      });
+
+      await fireEvent.click(getByText(warning));
+
+      expect(onSyncNow).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not warn below the critical line', () => {
+      const { getByText, queryByText } = renderMenu({
+        storage: { limitBytes: 100, usageBytes: 94, usageInDriveTrashBytes: 0 },
+      });
+      expect(queryByText(warning)).not.toBeInTheDocument();
+      // Witness: the sync row itself rendered, so the negative is about the warning alone.
+      expect(getByText('7 waiting')).toBeInTheDocument();
+    });
+
+    it('should not warn when there is nothing to sync', () => {
+      const { getByText, queryByText } = renderMenu({ uploaded: 10, total: 10 });
+      expect(queryByText(warning)).not.toBeInTheDocument();
+      expect(getByText('All synced')).toBeInTheDocument();
     });
   });
 });

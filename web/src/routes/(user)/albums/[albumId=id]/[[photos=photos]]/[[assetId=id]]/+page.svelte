@@ -33,6 +33,7 @@
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { eventManager } from '$lib/managers/event-manager.svelte';
   import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
+  import { getGoogleDriveIndicator } from '$lib/utils/google-drive-indicator';
   import { googleDriveProgressManager } from '$lib/managers/google-drive-progress-manager.svelte';
   import { TimelineManager } from '$lib/managers/timeline-manager/timeline-manager.svelte';
   import type { TimelineAsset } from '$lib/managers/timeline-manager/types';
@@ -363,6 +364,50 @@
   let driveConnected = $state(false);
   let driveBlockedReason = $state<string | null>(null);
 
+  // The toolbar dot. Everything else in the menu stays lazy (storage and connection status go all
+  // the way to Google), but these two are plain database reads, and without them the icon cannot
+  // say "this album is backed up" or "uploads are paused" until someone opens it — which is the
+  // whole problem the dot exists to fix. Failures are swallowed: a missing dot is not worth a toast.
+  const loadGoogleDriveIndicator = async (albumId: string) => {
+    const [albumStatus, myStatus] = await Promise.allSettled([
+      getGoogleDriveAlbumStatus({ id: albumId }),
+      getMyGoogleDriveStatus(),
+    ]);
+    if (albumId !== album.id) {
+      // Navigated to another album while this was in flight; its own load owns the state now.
+      return;
+    }
+    if (albumStatus.status === 'fulfilled') {
+      driveBackedUp = albumStatus.value.subscribed;
+      driveUploaded = albumStatus.value.uploadedCount;
+      driveTotal = albumStatus.value.assetCount;
+    }
+    if (myStatus.status === 'fulfilled') {
+      driveBlockedReason = myStatus.value.blockedReason ?? null;
+    }
+  };
+
+  $effect(() => {
+    if (featureFlagsManager.value.googleDrive) {
+      void loadGoogleDriveIndicator(album.id);
+    }
+  });
+
+  const driveIndicator = $derived(
+    getGoogleDriveIndicator({
+      backedUp: driveBackedUp,
+      uploaded: driveUploaded,
+      total: driveTotal,
+      blockedReason: driveBlockedReason,
+    }),
+  );
+  const driveIndicatorClass = $derived(
+    driveIndicator === 'blocked' ? 'bg-amber-500' : driveIndicator === 'syncing' ? 'bg-sky-500' : 'bg-green-500',
+  );
+  const driveButtonTitle = $derived(
+    driveIndicator ? $t(`google_drive_status_${driveIndicator}`) : $t('google_drive_sync'),
+  );
+
   const loadGoogleDriveMenu = async () => {
     driveMenuLoading = true;
     try {
@@ -685,29 +730,40 @@
                   inside the toolbar. The other menus on this page get away with the default
                   because they are short; this one grows to five rows plus a footer.
                 -->
-                <ButtonContextMenu
-                  icon={mdiGoogleDrive}
-                  title={$t('google_drive_sync')}
-                  color="secondary"
-                  align="bottom-left"
-                  offset={{ x: 175, y: 12 }}
-                  hideContent
-                  onOpen={loadGoogleDriveMenu}
-                >
-                  <GoogleDriveAlbumMenu
-                    loading={driveMenuLoading}
-                    connected={driveConnected}
-                    blockedReason={driveBlockedReason}
-                    backedUp={driveBackedUp}
-                    togglePending={driveTogglePending}
-                    uploaded={driveUploaded}
-                    total={driveTotal}
-                    storage={driveStorage}
-                    folderId={driveFolderId}
-                    onToggle={handleToggleGoogleDriveBackup}
-                    onSyncNow={handleGoogleDriveSync}
-                  />
-                </ButtonContextMenu>
+                <!-- relative wrapper only so the status dot can sit on the icon's corner. The dot is
+                     aria-hidden; the same state is in the button's title, which is its label. -->
+                <div class="relative">
+                  <ButtonContextMenu
+                    icon={mdiGoogleDrive}
+                    title={driveButtonTitle}
+                    color="secondary"
+                    align="bottom-left"
+                    offset={{ x: 175, y: 12 }}
+                    hideContent
+                    onOpen={loadGoogleDriveMenu}
+                  >
+                    <GoogleDriveAlbumMenu
+                      loading={driveMenuLoading}
+                      connected={driveConnected}
+                      blockedReason={driveBlockedReason}
+                      backedUp={driveBackedUp}
+                      togglePending={driveTogglePending}
+                      uploaded={driveUploaded}
+                      total={driveTotal}
+                      storage={driveStorage}
+                      folderId={driveFolderId}
+                      onToggle={handleToggleGoogleDriveBackup}
+                      onSyncNow={handleGoogleDriveSync}
+                    />
+                  </ButtonContextMenu>
+                  {#if driveIndicator}
+                    <span
+                      aria-hidden="true"
+                      data-testid="google-drive-indicator"
+                      class={`pointer-events-none absolute end-1.5 top-1.5 size-2.5 rounded-full ring-2 ring-light dark:ring-dark ${driveIndicatorClass}`}
+                    ></span>
+                  {/if}
+                </div>
               {/if}
             {/if}
 

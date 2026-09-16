@@ -17,6 +17,10 @@
   import { Route } from '$lib/route';
   import { optionClickCallbackStore, selectedIdStore } from '$lib/stores/context-menu.store';
   import { generateId } from '$lib/utils/generate-id';
+  import {
+    GOOGLE_DRIVE_STORAGE_CRITICAL_RATIO,
+    GOOGLE_DRIVE_STORAGE_WARNING_RATIO,
+  } from '$lib/utils/google-drive-indicator';
   import { getByteUnitString } from '$lib/utils/byte-units';
   import { Icon, Switch } from '@immich/ui';
   import { mdiAlertCircleOutline, mdiChartArc, mdiCloudOffOutline, mdiCloudSyncOutline, mdiOpenInNew } from '@mdi/js';
@@ -84,9 +88,9 @@
   const storageBarColor = $derived(
     storageRatio === null
       ? 'bg-primary'
-      : storageRatio >= 0.95
+      : storageRatio >= GOOGLE_DRIVE_STORAGE_CRITICAL_RATIO
         ? 'bg-red-500'
-        : storageRatio >= 0.8
+        : storageRatio >= GOOGLE_DRIVE_STORAGE_WARNING_RATIO
           ? 'bg-yellow-500'
           : 'bg-primary',
   );
@@ -106,6 +110,24 @@
       'noopener',
     );
     closeMenu();
+  };
+
+  // Starting a sync into a Drive that is already past the red line queues work Google will refuse
+  // with a quota 403 a few uploads in. Warned, not disabled: this deployment drains Drive to a phone
+  // continuously, so "almost full" is often a minute from "fine", and the reading comes from a
+  // separate call that can be stale. The user decides; the row just stops pretending nothing is off.
+  const storageCritical = $derived(storageRatio !== null && storageRatio >= GOOGLE_DRIVE_STORAGE_CRITICAL_RATIO);
+
+  // A blocked row that only *describes* the problem leaves the user to work out where the fix
+  // lives. Each block has exactly one place it is resolved, so the row goes there: a missing folder
+  // is fixed by choosing one in Account settings; a full Drive is fixed in Google's storage page.
+  const resolveBlocked = () => {
+    if (blockedReason === 'quota_exceeded') {
+      open('https://drive.google.com/settings/storage', '_blank', 'noopener');
+      closeMenu();
+      return;
+    }
+    goConnect();
   };
 
   const goConnect = () => {
@@ -215,6 +237,9 @@
             ? $t('google_drive_all_synced')
             : $t('google_drive_pending_count', { values: { count: pending } })}
         </div>
+        {#if pending > 0 && storageCritical}
+          <div class="text-xs text-red-600 dark:text-red-500">{$t('google_drive_storage_almost_full')}</div>
+        {/if}
       </div>
     </li>
   {/if}
@@ -223,13 +248,28 @@
     <!-- Same wording as the corner card (GoogleDriveProgressPanel) on purpose: one fact should not
          be phrased two ways depending on where you happen to read it. Informational row, so it
          carries an id for the same load-bearing reason the storage row does. -->
-    <li id={blockedRowId} role="menuitem" class={`${rowClass} ${dividerClass} text-amber-600 dark:text-amber-500`}>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_mouse_events_have_key_events -->
+    <li
+      id={blockedRowId}
+      role="menuitem"
+      class={`${rowClass} ${dividerClass} ${hoverClass} cursor-pointer text-amber-600 dark:text-amber-500 ${$selectedIdStore === blockedRowId ? activeClass : ''}`}
+      onclick={resolveBlocked}
+      onmouseover={() => ($selectedIdStore = blockedRowId)}
+      onmouseleave={() => ($selectedIdStore = undefined)}
+    >
       <Icon icon={mdiAlertCircleOutline} size="18" />
-      <span class="min-w-0 flex-1">
-        {blockedReason === 'quota_exceeded'
-          ? $t('google_drive_uploads_blocked_quota')
-          : $t('google_drive_uploads_blocked_folder')}
-      </span>
+      <div class="min-w-0 flex-1">
+        <div>
+          {blockedReason === 'quota_exceeded'
+            ? $t('google_drive_uploads_blocked_quota')
+            : $t('google_drive_uploads_blocked_folder')}
+        </div>
+        <div class="text-xs underline">
+          {blockedReason === 'quota_exceeded'
+            ? $t('google_drive_manage_storage')
+            : $t('google_drive_choose_folder_in_settings')}
+        </div>
+      </div>
     </li>
   {/if}
 
