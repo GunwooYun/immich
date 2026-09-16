@@ -42,7 +42,7 @@ Task(subagent_type="deep-reasoning", prompt="Review this design ... Return conci
 Task(subagent_type="general-purpose", prompt="Research X via agy, save to .claude/docs/research/, return a concise summary")
 
 # OK: 짧은 agy 질문은 직접 호출 (아주 짧은 출력)
-Bash("agy -p '한 문장으로 답변' --model gemini-3.7-flash-low")
+Bash("agy -p '한 문장으로 답변' --model gemini-3.1-pro-high")
 ```
 
 ---
