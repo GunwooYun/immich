@@ -460,7 +460,7 @@ export class GoogleDriveService extends BaseService {
       return;
     }
 
-    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.refreshToken, driveAccountId);
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.connectionId, driveAccountId);
   }
 
   /**
@@ -478,7 +478,7 @@ export class GoogleDriveService extends BaseService {
    */
   private async adoptIfNewlyIdentified(
     userId: string,
-    credentials: { refreshToken: string; driveAccountId: string | null },
+    credentials: { connectionId: string; driveAccountId: string | null },
     driveAccountId: string | null,
   ): Promise<string> {
     if (credentials.driveAccountId) {
@@ -501,7 +501,7 @@ export class GoogleDriveService extends BaseService {
     // regression of the very bug the previous round fixed.
     const settled = await this.googleDriveRepository.setDriveAccountId(
       userId,
-      credentials.refreshToken,
+      credentials.connectionId,
       driveAccountId,
     );
     if (settled !== driveAccountId) {
@@ -511,7 +511,7 @@ export class GoogleDriveService extends BaseService {
       return '';
     }
 
-    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.refreshToken, driveAccountId);
+    await this.googleDriveRepository.adoptUnstampedUploads(userId, credentials.connectionId, driveAccountId);
     this.logger.log(`Identified the Google Drive account for user ${userId} and adopted its existing uploads`);
 
     return driveAccountId;
@@ -686,7 +686,7 @@ export class GoogleDriveService extends BaseService {
         // upload.
         await this.googleDriveRepository.fillFolderName(
           userId,
-          credentials.refreshToken,
+          credentials.connectionId,
           credentials.folderId,
           folderName,
         );

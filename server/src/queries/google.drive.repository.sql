@@ -32,7 +32,7 @@ set
   "driveAccountId" = $1
 where
   "userId" = $2
-  and "refreshToken" = $3
+  and "connectionId" = $3
   and "driveAccountId" is null
 select
   "driveAccountId"
@@ -55,7 +55,7 @@ set
   "folderName" = $1
 where
   "userId" = $2
-  and "refreshToken" = $3
+  and "connectionId" = $3
   and "folderId" = $4
   and "folderName" is null
 

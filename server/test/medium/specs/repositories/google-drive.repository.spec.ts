@@ -82,11 +82,15 @@ const sharedAlbum = async (ctx: any) => {
   return { owner, guest, asset, album };
 };
 
-/** A connection that already points at a folder, for the backfill's guard tests. */
-const connectWithFolder = (ctx: any, userId: string, refreshToken: string, folderId: string) =>
+/**
+ * A connection that already points at a folder, for the backfill's guard tests. The connection id is
+ * a parameter and the token is not, because the backfill's compare-and-set keys on the connection:
+ * a fixture that varied the token would be varying something the write no longer looks at.
+ */
+const connectWithFolder = (ctx: any, userId: string, connectionId: string, folderId: string) =>
   ctx.database
     .insertInto('user_google_drive')
-    .values({ userId, refreshToken, driveAccountId: 'account-x', connectionId: CONNECTION_A, folderId })
+    .values({ userId, refreshToken: 'token', driveAccountId: 'account-x', connectionId, folderId })
     .execute();
 
 const readFolder = (ctx: any, userId: string) =>
@@ -468,18 +472,16 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
 
-    it('should refuse to stamp an account onto a connection whose token has changed', async () => {
-      // The guard that keeps a probe from attaching account A's id to account B's token. Without
-      // matching on the token, a re-link landing while the probe is in flight leaves the row
-      // permanently mismatched — and mismatched in the direction that silently stops uploads.
+    it('should refuse to stamp an account onto a connection that has been replaced', async () => {
+      // The guard that keeps a probe from attaching account A's id to account B's connection.
+      // Without matching on the connection, a re-link landing while the probe is in flight leaves
+      // the row permanently mismatched — and mismatched in the direction that silently stops
+      // uploads. The row holds B and the probe carries A: that is the re-link, as the row sees it.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await ctx.database
-        .insertInto('user_google_drive')
-        .values({ userId: user.id, refreshToken: 'token-b', driveAccountId: null })
-        .execute();
+      await connect(ctx, user.id, null, CONNECTION_B);
 
-      await expect(sut.setDriveAccountId(user.id, 'token-a', 'account-x')).resolves.toBeNull();
+      await expect(sut.setDriveAccountId(user.id, CONNECTION_A, 'account-x')).resolves.toBeNull();
 
       const row = await ctx.database
         .selectFrom('user_google_drive')
@@ -488,9 +490,9 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         .executeTakeFirst();
       expect(row?.driveAccountId).toBeNull();
 
-      // Witness: with the right token it does settle, so the null above is the guard and not a
-      // broken fixture.
-      await expect(sut.setDriveAccountId(user.id, 'token-b', 'account-x')).resolves.toBe('account-x');
+      // Witness: with the connection the row actually holds it does settle, so the null above is
+      // the guard and not a broken fixture.
+      await expect(sut.setDriveAccountId(user.id, CONNECTION_B, 'account-x')).resolves.toBe('account-x');
     });
 
     it('should report the account a concurrent stamp already settled on', async () => {
@@ -507,14 +509,16 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // then quietly stopped being.
       await ctx.database
         .insertInto('user_google_drive')
-        .values({ userId: other.id, refreshToken: 'token-b', driveAccountId: 'account-other' })
+        .values({
+          userId: other.id,
+          refreshToken: 'token',
+          driveAccountId: 'account-other',
+          connectionId: CONNECTION_B,
+        })
         .execute();
-      await ctx.database
-        .insertInto('user_google_drive')
-        .values({ userId: user.id, refreshToken: 'token-a', driveAccountId: 'account-x' })
-        .execute();
+      await connect(ctx, user.id, 'account-x', CONNECTION_A);
 
-      await expect(sut.setDriveAccountId(user.id, 'token-a', 'account-x')).resolves.toBe('account-x');
+      await expect(sut.setDriveAccountId(user.id, CONNECTION_A, 'account-x')).resolves.toBe('account-x');
     });
 
     it('should keep treating unstamped rows as uploaded even once the account is known', async () => {
@@ -569,7 +573,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         })
         .execute();
 
-      await expect(sut.adoptUnstampedUploads(user.id, 'token-b', 'account-b')).resolves.toBe(true);
+      await expect(sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b')).resolves.toBe(true);
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -598,7 +602,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // ...and this connection has already sent its own copy, which is what makes the two collide.
       await ledger(ctx, user.id, asset.id, 'account-b', CONNECTION_B);
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const rows = await ctx.database
         .selectFrom('google_drive_upload')
@@ -626,7 +630,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // A third account entirely — nothing to collide with under account-b.
       await ledger(ctx, user.id, asset.id, 'account-c', CONNECTION_A);
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const rows = await ctx.database
         .selectFrom('google_drive_upload')
@@ -655,7 +659,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // Same asset, same destination account, different immich user.
       await ledger(ctx, other.id, asset.id, 'account-b', CONNECTION_A);
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const rows = await ctx.database
         .selectFrom('google_drive_upload')
@@ -676,7 +680,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await connect(ctx, user.id, null, CONNECTION_B);
       await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
 
-      await expect(sut.adoptUnstampedUploads(user.id, 'token', '')).resolves.toBe(false);
+      await expect(sut.adoptUnstampedUploads(user.id, CONNECTION_B, '')).resolves.toBe(false);
 
       await expect(sut.hasUpload(user.id, asset.id)).resolves.toBe(true);
     });
@@ -697,7 +701,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ledger(ctx, other.id, asset.id, '', CONNECTION_B);
       await ledger(ctx, other.id, asset.id, 'account-b', CONNECTION_A);
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const rows = await ctx.database
         .selectFrom('google_drive_upload')
@@ -728,9 +732,19 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await connect(ctx, user.id, null, CONNECTION_A);
       await ledger(ctx, user.id, asset.id, '', CONNECTION_A);
 
-      // The re-link. Same Google account, but a different connection.
+      // The re-link. Same Google account, but a different connection. Adopt with whatever id the
+      // re-link left on the row rather than a constant: the question is what *that* connection may
+      // claim, and if upsertCredentials stopped re-minting, the id read back is CONNECTION_A again
+      // and the claim below goes through — which is the failure this test exists to catch.
       await sut.upsertCredentials(user.id, 'token-new', null);
-      await sut.adoptUnstampedUploads(user.id, 'token-new', 'account-a');
+      const relinked = await ctx.database
+        .selectFrom('user_google_drive')
+        .select('connectionId')
+        .where('userId', '=', user.id)
+        .executeTakeFirstOrThrow();
+      // True, not just "did not throw": a refused compare-and-set also leaves the row at '', and
+      // would make the assertion below pass for a reason that has nothing to do with the re-mint.
+      await expect(sut.adoptUnstampedUploads(user.id, relinked.connectionId, 'account-a')).resolves.toBe(true);
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -751,7 +765,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await connect(ctx, user.id, null, CONNECTION_B);
       await ledger(ctx, user.id, asset.id, '', CONNECTION_B);
 
-      await expect(sut.adoptUnstampedUploads(user.id, 'token', 'account-b')).resolves.toBe(true);
+      await expect(sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b')).resolves.toBe(true);
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -773,7 +787,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await connect(ctx, user.id, null, CONNECTION_B);
       await ledger(ctx, user.id, asset.id, '');
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -815,7 +829,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
         })
         .execute();
 
-      await sut.adoptUnstampedUploads(user.id, 'token-b', 'account-b');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b');
 
       const row = await ctx.database
         .selectFrom('google_drive_upload')
@@ -857,15 +871,30 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
 
     it('should refuse to adopt when the connection moved during the probe', async () => {
       // Compare-and-set under a row lock, not a re-read: the probe is a network round trip and a
-      // re-link can land inside it.
+      // re-link can land inside it. The probe started on connection A; by the time it returns the
+      // row holds B.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await ctx.database
-        .insertInto('user_google_drive')
-        .values({ userId: user.id, refreshToken: 'token-b', driveAccountId: null })
-        .execute();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, null, CONNECTION_B);
+      // A row the stale call *would* claim if the lock ignored the connection — the ledger half of
+      // adoption is keyed on the argument, so without the guard A's rows are stamped account-a while
+      // the user is connected as B.
+      await ledger(ctx, user.id, asset.id, '', CONNECTION_A);
 
-      await expect(sut.adoptUnstampedUploads(user.id, 'token-a', 'account-a')).resolves.toBe(false);
+      await expect(sut.adoptUnstampedUploads(user.id, CONNECTION_A, 'account-a')).resolves.toBe(false);
+
+      const row = await ctx.database
+        .selectFrom('google_drive_upload')
+        .select('driveAccountId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', asset.id)
+        .executeTakeFirst();
+      expect(row?.driveAccountId).toBe('');
+
+      // Witness: the connection the row actually holds is let through, so the false above is the
+      // compare-and-set and not a fixture that could never adopt.
+      await expect(sut.adoptUnstampedUploads(user.id, CONNECTION_B, 'account-b')).resolves.toBe(true);
     });
 
     it('should adopt pre-column rows without colliding with rows already stamped', async () => {
@@ -885,7 +914,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ledger(ctx, user.id, onlyUnstamped.id, '', CONNECTION_A);
       await ledger(ctx, other.id, otherUsers.id, '', CONNECTION_A);
 
-      await sut.adoptUnstampedUploads(user.id, 'token', 'account-x');
+      await sut.adoptUnstampedUploads(user.id, CONNECTION_A, 'account-x');
 
       // Scoped to these two users: the medium suite shares one database, so an unscoped count
       // would include rows other tests in this file left behind.
@@ -922,9 +951,9 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
     it('should name the folder it looked up', async () => {
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
+      await connectWithFolder(ctx, user.id, CONNECTION_A, 'folder-a');
 
-      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, user.id)).resolves.toEqual({
         folderId: 'folder-a',
@@ -939,26 +968,31 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // folder configured and blocks the account outright.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-new', 'folder-b');
+      await connectWithFolder(ctx, user.id, CONNECTION_B, 'folder-b');
 
-      await sut.fillFolderName(user.id, 'token-old', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-b', folderName: null });
     });
 
-    it('should do nothing when only the token changed', async () => {
-      // Separated from the re-link case above on purpose: that fixture moves the token *and* the
-      // folder, so the folder guard alone accounts for it and the token guard could be deleted
-      // unnoticed. A re-link that happens to keep the same folder id is the case that needs this
-      // one — and it is the case where writing anyway would attach a departed connection's name
-      // to a new account.
+    it('should do nothing when only the connection changed', async () => {
+      // Separated from the re-link case above on purpose: that fixture moves the connection *and*
+      // the folder, so the folder guard alone accounts for it and the connection guard could be
+      // deleted unnoticed. A re-link that happens to keep the same folder id is the case that needs
+      // this one — and it is the case where writing anyway would attach a departed connection's
+      // name to a new account.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-new', 'folder-a');
+      await connectWithFolder(ctx, user.id, CONNECTION_B, 'folder-a');
 
-      await sut.fillFolderName(user.id, 'token-old', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-a', folderName: null });
+
+      // Witness: same row, same folder, the connection it actually holds — and the name lands. The
+      // only thing that differed above was the connection, so that is what refused the write.
+      await sut.fillFolderName(user.id, CONNECTION_B, 'folder-a', 'Camera backups');
+      await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-a', folderName: 'Camera backups' });
     });
 
     it("should not name another user's folder", async () => {
@@ -967,10 +1001,12 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
       const { user: other } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
-      await connectWithFolder(ctx, other.id, 'token-a', 'folder-a');
+      // Same connection id on both rows, deliberately: then the user filter is the only thing
+      // keeping the write off the other row, rather than the connection guard doing it by accident.
+      await connectWithFolder(ctx, user.id, CONNECTION_A, 'folder-a');
+      await connectWithFolder(ctx, other.id, CONNECTION_A, 'folder-a');
 
-      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, other.id)).resolves.toEqual({ folderId: 'folder-a', folderName: null });
       // Witness: the write did happen, so the null above is the scope and not a refusal.
@@ -983,9 +1019,9 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
     it('should do nothing when the user changed folders during the lookup', async () => {
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-a', 'folder-b');
+      await connectWithFolder(ctx, user.id, CONNECTION_A, 'folder-b');
 
-      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, user.id)).resolves.toEqual({ folderId: 'folder-b', folderName: null });
     });
@@ -995,10 +1031,10 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       // put its own answer on top — the picker's name is the newer fact.
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
-      await connectWithFolder(ctx, user.id, 'token-a', 'folder-a');
+      await connectWithFolder(ctx, user.id, CONNECTION_A, 'folder-a');
       await sut.setFolderId(user.id, 'folder-a', 'Picked by hand');
 
-      await sut.fillFolderName(user.id, 'token-a', 'folder-a', 'Camera backups');
+      await sut.fillFolderName(user.id, CONNECTION_A, 'folder-a', 'Camera backups');
 
       await expect(readFolder(ctx, user.id)).resolves.toEqual({
         folderId: 'folder-a',

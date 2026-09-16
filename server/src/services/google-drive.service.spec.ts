@@ -1475,7 +1475,7 @@ describe(GoogleDriveService.name, () => {
         // user changed during the lookup cannot be reverted by it.
         expect(mocks.googleDrive.fillFolderName).toHaveBeenCalledWith(
           userId,
-          'refresh-token',
+          'connection-1',
           'folder-id',
           'Camera backups',
         );
@@ -1855,10 +1855,12 @@ describe(GoogleDriveService.name, () => {
 
       await sut.getStatus(userId);
 
-      // The token is part of the call because the update is conditional on it: a re-link landing
-      // while the probe is in flight must not leave account A's id beside account B's token.
-      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'refresh-token', 'account-x');
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-x');
+      // The connection is part of the call because the update is conditional on it: a re-link
+      // landing while the probe is in flight must not leave account A's id on account B's
+      // connection. connectionId, not the refresh token: both are strings, so tsc cannot catch the
+      // wrong one being passed — this assertion is the only thing that does.
+      expect(mocks.googleDrive.setDriveAccountId).toHaveBeenCalledWith(userId, 'connection-1', 'account-x');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'connection-1', 'account-x');
     });
 
     it('should record an upload that triggered adoption under the identified account', async () => {
@@ -1973,7 +1975,7 @@ describe(GoogleDriveService.name, () => {
       // assertion is what makes this a test of the drain rather than of adoption in general: the
       // incoming token is 'new-refresh-token', and before this the tests could not tell them apart.
       expect(oauth2SetCredentials).toHaveBeenCalledWith('refresh-token');
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-b');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'connection-1', 'account-b');
       // Order is the point: after the upsert the row carries the new id and the rows would go to
       // the wrong owner, or to none.
       expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2012,7 +2014,7 @@ describe(GoogleDriveService.name, () => {
 
       await sut.disconnect(userId);
 
-      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'refresh-token', 'account-a');
+      expect(mocks.googleDrive.adoptUnstampedUploads).toHaveBeenCalledWith(userId, 'connection-1', 'account-a');
       expect(mocks.googleDrive.adoptUnstampedUploads.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.googleDrive.deleteCredentials.mock.invocationCallOrder[0],
       );

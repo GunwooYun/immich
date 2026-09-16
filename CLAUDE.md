@@ -405,7 +405,12 @@ web/src/**/*.spec.ts             웹 유닛
 
   *운영 습관*
   9. **연결 해제·재연결은 업로드가 도는 중에 하지 않는다.** Jobs 화면에서 대기 0을 확인한 뒤에.
-  10. `refreshToken` nullable + CAS를 `connectionId`로 옮기는 작업은 **배포 후** 별도 건이다.
+  10. ~~`refreshToken` nullable + CAS를 `connectionId`로~~ **CAS만 옮겼다(2026-09-16).** `setDriveAccountId`·
+      `adoptUnstampedUploads`·`fillFolderName`이 이제 `connectionId`로 비교한다(재연결마다 새로 발급, NOT NULL).
+      **nullable(소프트 해제)은 버렸다** — 동기였던 Testing 앱의 7일 만료가 In production 전환으로 사라졌고,
+      "행이 있으면 연결됨" 가정이 쿼리 9곳·서비스 7곳에 걸려 있어 드문 사건을 위해 영구적인 3상태 부담을 지는
+      셈이었다. 취소·해제는 여전히 행 삭제이고, 재연결 때 폴더를 다시 고른다. 다시 검토할 일이 생기면 설계는
+      `dev-docs/review/google-drive/review/*round24*` §5에 있다.
 
   ```bash
   # 1) 배포 후 설정 화면을 한 번 연다.

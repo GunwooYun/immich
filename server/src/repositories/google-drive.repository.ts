@@ -106,28 +106,31 @@ export class GoogleDriveRepository {
    * credentials object read moments earlier, and re-writing the refresh token from that stale copy
    * would clobber a token a concurrent re-link had just stored.
    */
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
-  async setDriveAccountId(userId: string, refreshToken: string, driveAccountId: string): Promise<string | null> {
-    // Matching on the token, not just on the user, is what makes this safe against a re-link that
-    // lands while the probe is in flight. Without it the row could end up holding account A's id
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID, DummyValue.STRING] })
+  async setDriveAccountId(userId: string, connectionId: string, driveAccountId: string): Promise<string | null> {
+    // Matching on the connection, not just on the user, is what makes this safe against a re-link
+    // that lands while the probe is in flight. It used to match on the refresh token, which asked
+    // the same question less directly: connectionId *is* "the connection I read", re-minted on every
+    // re-link (upsertCredentials), non-null by schema, and it keeps the token out of every
+    // repository signature except the two that must carry it. Without it the row could end up holding account A's id
     // beside account B's token — permanently wrong, and wrong in the direction that silently stops
     // uploads. Requiring the id to be null means this can only ever fill in a blank.
     await this.db
       .updateTable('user_google_drive')
       .set({ driveAccountId })
       .where('userId', '=', userId)
-      .where('refreshToken', '=', refreshToken)
+      .where('connectionId', '=', connectionId)
       .where('driveAccountId', 'is', null)
       .execute();
 
-    // Returns what the row *holds* for this token, not whether this call is the one that wrote it.
+    // Returns what the row *holds* for this connection, not whether this call is the one that wrote it.
     // Those are different questions and conflating them was a bug: the upload queue runs five jobs
     // at a time, so four of them lose the race to fill the blank and would otherwise conclude the
     // account was unknown and file their uploads under ''. What matters to a caller is whether the
     // connection now carries the account it just probed — no matter who put it there.
-    // Deliberately not filtered on the token. The update above is what guards against writing to
-    // a connection that moved; this read only answers "what does the connection hold now", and
-    // scoping it to the old token would return null for a same-account re-link that has already
+    // Deliberately not filtered on the connection. The update above is what guards against writing
+    // to a connection that moved; this read only answers "what does the row hold now", and scoping
+    // it to the old connection would return null for a same-account re-link that has already
     // settled on the right id.
     const row = await this.db
       .selectFrom('user_google_drive')
@@ -148,7 +151,7 @@ export class GoogleDriveRepository {
    * The delete first is not optional — an asset can already have a stamped row (uploaded again
    * after the column shipped), and updating the '' row on top of it would violate the primary key.
    */
-  async adoptUnstampedUploads(userId: string, refreshToken: string, driveAccountId: string): Promise<boolean> {
+  async adoptUnstampedUploads(userId: string, connectionId: string, driveAccountId: string): Promise<boolean> {
     // An empty account id would be self-destructive rather than merely useless: the collision
     // check below looks for a row already stamped with `driveAccountId`, and with '' it matches the
     // very rows being adopted, so every unstamped row this connection wrote is deleted instead of
@@ -162,13 +165,13 @@ export class GoogleDriveRepository {
       // Compare-and-set on the connection itself, taken under a row lock. The probe that produced
       // `driveAccountId` is a network round trip; a re-link can land inside it, and adopting after
       // that would stamp one account's uploads with another's — permanently. Locking the row and
-      // re-checking the token inside the same transaction closes that window rather than narrowing
+      // re-checking the connection inside the same transaction closes that window rather than narrowing
       // it, which is what the two previous attempts did.
       const connection = await trx
         .selectFrom('user_google_drive')
-        .select(['connectionId'])
+        .select(['userId'])
         .where('userId', '=', userId)
-        .where('refreshToken', '=', refreshToken)
+        .where('connectionId', '=', connectionId)
         .forUpdate()
         .executeTakeFirst();
 
@@ -195,7 +198,7 @@ export class GoogleDriveRepository {
         .deleteFrom('google_drive_upload')
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
-        .where('connectionId', '=', connection.connectionId)
+        .where('connectionId', '=', connectionId)
         .where(({ exists, selectFrom }) =>
           exists(
             selectFrom('google_drive_upload as stamped')
@@ -212,7 +215,7 @@ export class GoogleDriveRepository {
         .set({ driveAccountId })
         .where('userId', '=', userId)
         .where('driveAccountId', '=', '')
-        .where('connectionId', '=', connection.connectionId)
+        .where('connectionId', '=', connectionId)
         .execute();
 
       return true;
@@ -256,13 +259,13 @@ export class GoogleDriveRepository {
    * folder onto the new account, where the first upload fails `notFound` with a folder configured
    * and blocks the account outright.
    */
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.STRING, DummyValue.STRING, DummyValue.STRING] })
-  async fillFolderName(userId: string, refreshToken: string, folderId: string, folderName: string): Promise<void> {
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID, DummyValue.STRING, DummyValue.STRING] })
+  async fillFolderName(userId: string, connectionId: string, folderId: string, folderName: string): Promise<void> {
     await this.db
       .updateTable('user_google_drive')
       .set({ folderName })
       .where('userId', '=', userId)
-      .where('refreshToken', '=', refreshToken)
+      .where('connectionId', '=', connectionId)
       .where('folderId', '=', folderId)
       .where('folderName', 'is', null)
       .execute();
