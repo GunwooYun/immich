@@ -30,6 +30,9 @@
 | 기능 플래그 | `server/src/services/server.service.spec.ts` | `googleDrive` 플래그 노출 |
 | 설정 스키마 | `server/src/services/system-config.service.spec.ts` | 기본 설정 형태 |
 | 폴링 (웹) | `web/src/lib/managers/google-drive-progress-manager.svelte.spec.ts` | 구독 공유·정지, 백오프, 차단 계정, 폴 실패 시 값 보존 |
+| 앨범 툴바 상태 점 (웹) | `web/src/lib/utils/google-drive-indicator.spec.ts` | 차단 > 업로드 중 > 완료 우선순위, 백업 안 한 앨범은 점 없음, 음수 잔량 |
+| 사진별 Drive 배지 (웹) | `web/src/lib/managers/google-drive-uploaded-manager.svelte.spec.ts`, `web/src/lib/components/assets/thumbnail/__test__/Thumbnail.spec.ts` | 요청 묶기·1000개 분할, 재질의 창(60초), 실패 시 재시도, 배지 표시/비표시, 탭 이동 대상 없음. **Timeline의 `$effect` 연결은 컴포넌트 테스트 없음** |
+| 사진별 Drive 배지 (서버) | `server/src/services/google-drive.service.spec.ts` (`getUploadedAssets`) | 연결 안 됨·기능 꺼짐이면 원장을 조회하지 않고 빈 결과, 빈 배치 |
 | 통합 (DB) | `server/test/medium/specs/repositories/google-drive.repository.spec.ts` | **공유 해제 시 업로드 중단**, 선택 행 보존, 미연결 제외, `accessLost` 전환 |
 
 `album.service` 등 이름이 이 기능과 다른 파일도 목록에 있는 이유: 이 기능이 그것들의 동작을

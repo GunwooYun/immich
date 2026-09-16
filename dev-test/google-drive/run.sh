@@ -106,6 +106,12 @@ WEB_SPECS=(
   # (it opens as a one-row "Loading" box and then grows), so the clamp it depends on is covered
   # here even though ContextMenu is shared.
   src/lib/components/shared-components/context-menu/context-menu-position.spec.ts
+  # The album toolbar dot's priority rule (blocked > syncing > synced, nothing when not backed up).
+  src/lib/utils/google-drive-indicator.spec.ts
+  # The per-photo badge's lookup: batching, re-ask window, failure retry.
+  src/lib/managers/google-drive-uploaded-manager.svelte.spec.ts
+  # Shared component; included for the badge cases. Its other cases are upstream's.
+  src/lib/components/assets/thumbnail/__test__/Thumbnail.spec.ts
 )
 MEDIUM_SPECS=(test/medium/specs/repositories/google-drive.repository.spec.ts)
 
