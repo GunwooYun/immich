@@ -877,11 +877,13 @@ export class GoogleDriveService extends BaseService {
   }
 
   async getMyStatus(userId: string): Promise<{
+    connected: boolean;
     pending: number;
     failed: number;
     blockedReason: GoogleDriveUploadErrorClass | null;
   }> {
-    const [pending, { failedCount, blockedReason }] = await Promise.all([
+    const [credentials, pending, { failedCount, blockedReason }] = await Promise.all([
+      this.googleDriveRepository.getCredentials(userId),
       this.googleDriveRepository.countPendingUploads(userId),
       this.googleDriveRepository.getErrorSummary(userId),
     ]);
@@ -889,7 +891,12 @@ export class GoogleDriveService extends BaseService {
     // read as "done". But a progress bar polling only that number would tick nowhere forever on a
     // quota-blocked account, looking stalled rather than paused. So the block travels with the
     // count instead of living in a different endpoint the poller would have to know to also call.
-    return { pending, failed: failedCount, blockedReason };
+    // `connected` travels here for the same reason, and was missing until wave9a review C1: a
+    // revoked or disconnected account deletes only the credentials row, album selections survive,
+    // and 'revoked' is not a blocking class — so without it a client reading this endpoint saw a
+    // subscribed album with work pending and no block, and painted it "backing up" while nothing
+    // could upload. Database-only; the token read stays inside the server.
+    return { connected: !!credentials, pending, failed: failedCount, blockedReason };
   }
 
   /**

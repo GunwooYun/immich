@@ -377,18 +377,22 @@
       // Navigated to another album while this was in flight; its own load owns the state now.
       return;
     }
-    if (albumStatus.status === 'fulfilled') {
-      driveBackedUp = albumStatus.value.subscribed;
-      driveUploaded = albumStatus.value.uploadedCount;
-      driveTotal = albumStatus.value.assetCount;
+    // Both or neither. With only the album half, `connected` would stay at its false default and a
+    // backed-up album would light up "not connected" because a status call failed.
+    if (albumStatus.status !== 'fulfilled' || myStatus.status !== 'fulfilled') {
+      return;
     }
-    if (myStatus.status === 'fulfilled') {
-      driveBlockedReason = myStatus.value.blockedReason ?? null;
-    }
+    driveBackedUp = albumStatus.value.subscribed;
+    driveUploaded = albumStatus.value.uploadedCount;
+    driveTotal = albumStatus.value.assetCount;
+    driveBlockedReason = myStatus.value.blockedReason ?? null;
+    driveConnected = myStatus.value.connected;
   };
 
   $effect(() => {
-    if (featureFlagsManager.value.googleDrive) {
+    // assetCount too: the Drive button is only rendered for non-empty albums, so there is no icon
+    // to put a dot on otherwise.
+    if (featureFlagsManager.value.googleDrive && album.assetCount > 0) {
       void loadGoogleDriveIndicator(album.id);
     }
   });
@@ -396,13 +400,18 @@
   const driveIndicator = $derived(
     getGoogleDriveIndicator({
       backedUp: driveBackedUp,
+      connected: driveConnected,
       uploaded: driveUploaded,
       total: driveTotal,
       blockedReason: driveBlockedReason,
     }),
   );
   const driveIndicatorClass = $derived(
-    driveIndicator === 'blocked' ? 'bg-amber-500' : driveIndicator === 'syncing' ? 'bg-sky-500' : 'bg-green-500',
+    driveIndicator === 'blocked' || driveIndicator === 'disconnected'
+      ? 'bg-amber-500'
+      : driveIndicator === 'syncing'
+        ? 'bg-sky-500'
+        : 'bg-green-500',
   );
   const driveButtonTitle = $derived(
     driveIndicator ? $t(`google_drive_status_${driveIndicator}`) : $t('google_drive_sync'),

@@ -14,12 +14,16 @@ class GoogleDriveMyStatusDto {
   /// Returns a new [GoogleDriveMyStatusDto] instance.
   GoogleDriveMyStatusDto({
     required this.blockedReason,
+    required this.connected,
     required this.failed,
     required this.pending,
   });
 
   /// Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing'
   String? blockedReason;
+
+  /// Whether this user currently has a Google Drive connection
+  bool connected;
 
   /// Assets whose last upload attempt failed
   ///
@@ -36,6 +40,7 @@ class GoogleDriveMyStatusDto {
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveMyStatusDto &&
     other.blockedReason == blockedReason &&
+    other.connected == connected &&
     other.failed == failed &&
     other.pending == pending;
 
@@ -43,11 +48,12 @@ class GoogleDriveMyStatusDto {
   int get hashCode =>
     // ignore: unnecessary_parenthesis
     (blockedReason == null ? 0 : blockedReason!.hashCode) +
+    (connected.hashCode) +
     (failed.hashCode) +
     (pending.hashCode);
 
   @override
-  String toString() => 'GoogleDriveMyStatusDto[blockedReason=$blockedReason, failed=$failed, pending=$pending]';
+  String toString() => 'GoogleDriveMyStatusDto[blockedReason=$blockedReason, connected=$connected, failed=$failed, pending=$pending]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -56,6 +62,7 @@ class GoogleDriveMyStatusDto {
     } else {
       json[r'blockedReason'] = null;
     }
+      json[r'connected'] = this.connected;
       json[r'failed'] = this.failed;
       json[r'pending'] = this.pending;
     return json;
@@ -71,6 +78,7 @@ class GoogleDriveMyStatusDto {
 
       return GoogleDriveMyStatusDto(
         blockedReason: mapValueOfType<String>(json, r'blockedReason'),
+        connected: mapValueOfType<bool>(json, r'connected')!,
         failed: mapValueOfType<int>(json, r'failed')!,
         pending: mapValueOfType<int>(json, r'pending')!,
       );
@@ -121,6 +129,7 @@ class GoogleDriveMyStatusDto {
   /// The list of required keys that must be present in a JSON.
   static const requiredKeys = <String>{
     'blockedReason',
+    'connected',
     'failed',
     'pending',
   };

@@ -19976,6 +19976,10 @@
             "nullable": true,
             "type": "string"
           },
+          "connected": {
+            "description": "Whether this user currently has a Google Drive connection",
+            "type": "boolean"
+          },
           "failed": {
             "description": "Assets whose last upload attempt failed",
             "maximum": 9007199254740991,
@@ -19991,6 +19995,7 @@
         },
         "required": [
           "blockedReason",
+          "connected",
           "failed",
           "pending"
         ],

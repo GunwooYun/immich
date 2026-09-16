@@ -1,7 +1,7 @@
 import { getGoogleDriveIndicator } from '$lib/utils/google-drive-indicator';
 
 describe('getGoogleDriveIndicator', () => {
-  const base = { backedUp: true, uploaded: 10, total: 10, blockedReason: null as string | null };
+  const base = { backedUp: true, connected: true, uploaded: 10, total: 10, blockedReason: null as string | null };
 
   it('shows nothing for an album that is not backed up, even when the account is blocked', () => {
     // A blocked account is a fact about the user, not this album. Painting it on albums the user
@@ -22,6 +22,20 @@ describe('getGoogleDriveIndicator', () => {
     // uploaded can exceed total when assets were removed from the album after upload — the ledger
     // keeps them. That is "done", not "syncing".
     expect(getGoogleDriveIndicator({ ...base, uploaded: 12 })).toBe('synced');
+  });
+
+  it('reports disconnected for a backed-up album with no Drive connection, over every other state', () => {
+    // wave9a review C1: a revocation deletes the connection but keeps the album selected, and is
+    // not a blocking class, so without this the dot read "backing up" while nothing could upload.
+    expect(getGoogleDriveIndicator({ ...base, connected: false, uploaded: 3 })).toBe('disconnected');
+    expect(getGoogleDriveIndicator({ ...base, connected: false })).toBe('disconnected');
+    expect(getGoogleDriveIndicator({ ...base, connected: false, blockedReason: 'quota_exceeded' })).toBe(
+      'disconnected',
+    );
+  });
+
+  it('still shows nothing for an album that is not backed up when disconnected', () => {
+    expect(getGoogleDriveIndicator({ ...base, backedUp: false, connected: false })).toBeNull();
   });
 
   it('lets a blocked account win over both synced and syncing', () => {

@@ -135,6 +135,7 @@ const GoogleDriveStorageSchema = z
  */
 const GoogleDriveMyStatusSchema = z
   .object({
+    connected: z.boolean().describe('Whether this user currently has a Google Drive connection'),
     pending: z.int().describe('Assets selected for backup that are not yet in this user Drive'),
     failed: z.int().describe('Assets whose last upload attempt failed'),
     // Travels with the count on purpose: a progress display polling `pending` alone would show a

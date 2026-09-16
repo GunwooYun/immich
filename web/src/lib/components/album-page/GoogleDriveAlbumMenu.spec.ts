@@ -283,6 +283,12 @@ describe('GoogleDriveAlbumMenu', () => {
       expect(onSyncNow).toHaveBeenCalledTimes(1);
     });
 
+    it('should warn at exactly the critical line, the same point the bar turns red', () => {
+      // wave9a review N2: `>=` → `>` survived every other case, which used 96/99/94.
+      const { getByText } = renderMenu({ storage: { limitBytes: 100, usageBytes: 95, usageInDriveTrashBytes: 0 } });
+      expect(getByText(warning)).toBeInTheDocument();
+    });
+
     it('should not warn below the critical line', () => {
       const { getByText, queryByText } = renderMenu({
         storage: { limitBytes: 100, usageBytes: 94, usageInDriveTrashBytes: 0 },

@@ -6,7 +6,10 @@
  * one by one. The indicator is a small dot on the icon, so it has to collapse the state into one
  * answer — and the order of the checks below is that priority.
  *
- * - `blocked` beats everything: an account-level pause (quota, missing folder) means *nothing* is
+ * - `disconnected` beats everything else: a backed-up album whose owner has no Drive connection
+ *   (disconnected, or the grant was revoked — which deletes only the connection, not the album
+ *   selection) uploads nothing at all. Reading "backing up" there was wave9a review C1.
+ * - `blocked` comes next: an account-level pause (quota, missing folder) means *nothing* is
  *   uploading, and an album that looks "syncing" or "done" while that is true is the exact
  *   silent-failure this exists to surface.
  * - Albums that are not backed up get no dot at all. That is the common case, and a dot on every
@@ -14,15 +17,17 @@
  * - `syncing` vs `synced` is only the album's own backlog (`total - uploaded`), not the user-wide
  *   pending count — same scoping rule as the menu's sync row.
  */
-export type GoogleDriveIndicator = 'blocked' | 'syncing' | 'synced' | null;
+export type GoogleDriveIndicator = 'disconnected' | 'blocked' | 'syncing' | 'synced' | null;
 
 export const getGoogleDriveIndicator = ({
   backedUp,
+  connected,
   uploaded,
   total,
   blockedReason,
 }: {
   backedUp: boolean;
+  connected: boolean;
   uploaded: number;
   total: number;
   blockedReason: string | null;
@@ -30,10 +35,13 @@ export const getGoogleDriveIndicator = ({
   if (!backedUp) {
     return null;
   }
+  if (!connected) {
+    return 'disconnected';
+  }
   if (blockedReason) {
     return 'blocked';
   }
-  return total - uploaded > 0 ? 'syncing' : 'synced';
+  return total > uploaded ? 'syncing' : 'synced';
 };
 
 /**

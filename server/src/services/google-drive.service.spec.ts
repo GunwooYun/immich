@@ -1269,7 +1269,12 @@ describe(GoogleDriveService.name, () => {
       mocks.googleDrive.countPendingUploads.mockResolvedValue(17);
       mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 3, blockedReason: null });
 
-      await expect(sut.getMyStatus(userId)).resolves.toEqual({ pending: 17, failed: 3, blockedReason: null });
+      await expect(sut.getMyStatus(userId)).resolves.toEqual({
+        connected: false,
+        pending: 17,
+        failed: 3,
+        blockedReason: null,
+      });
     });
 
     it('should carry the block alongside the count, not in a separate endpoint', async () => {
@@ -1284,10 +1289,29 @@ describe(GoogleDriveService.name, () => {
       });
 
       await expect(sut.getMyStatus(userId)).resolves.toEqual({
+        connected: false,
         pending: 1800,
         failed: 1,
         blockedReason: GoogleDriveUploadErrorClass.QuotaExceeded,
       });
+    });
+
+    it('should report the connection alongside the counts', async () => {
+      // Albums stay selected after a disconnect or revocation, and a revocation is not a blocking
+      // class — so this flag is the only thing in the response that tells "backing up" apart from
+      // "backup selected but nothing can upload" (wave9a review C1).
+      const userId = newUuid();
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      mocks.googleDrive.countPendingUploads.mockResolvedValue(5);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
+
+      await expect(sut.getMyStatus(userId)).resolves.toEqual({
+        connected: true,
+        pending: 5,
+        failed: 0,
+        blockedReason: null,
+      });
+      expect(mocks.googleDrive.getCredentials).toHaveBeenCalledWith(userId);
     });
   });
 

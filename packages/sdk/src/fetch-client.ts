@@ -1245,6 +1245,8 @@ export type GoogleDriveSetFolderDto = {
 export type GoogleDriveMyStatusDto = {
     /** Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing' */
     blockedReason: string | null;
+    /** Whether this user currently has a Google Drive connection */
+    connected: boolean;
     /** Assets whose last upload attempt failed */
     failed: number;
     /** Assets selected for backup that are not yet in this user Drive */
