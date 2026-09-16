@@ -478,9 +478,11 @@ SQL
   평소 사용은 LAN 주소 그대로다. **모바일 앱 엔드포인트는 바꾸지 않는다** — serve는 기존 2283 위에
   HTTPS 입구를 *추가*하는 것이지 대체가 아니다.
 
-  자격증명은 랩탑 `~/immich-app/.env`의 `IMMICH_GOOGLE_DRIVE_CLIENT_ID` / `_CLIENT_SECRET` /
-  `_API_KEY` / `_REDIRECT_URL`에서 온다(**값은 절대 커밋하지 않는다** — §1). redirect URL은 External
-  Domain에서 파생되는 것이 기본이고, 이 배포처럼 그럴 수 없을 때만 환경변수로 지정한다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
+  **자격증명은 지금 전부 저장된 설정 row에서 온다.** 랩탑 `~/immich-app/.env`, 컨테이너 환경,
+  compose 파일 어디에도 `IMMICH_GOOGLE_DRIVE_*` 변수는 **하나도 없다**(2026-09-16 이름만 확인).
+  env로 옮기려면 네 값(`_CLIENT_ID` / `_CLIENT_SECRET` / `_API_KEY` / `_REDIRECT_URL`)을 사용자가
+  직접 `.env`에 넣어야 한다(**값은 절대 커밋·출력하지 않는다** — §1). redirect URL은 External
+  Domain에서 파생되는 것이 기본이고, 이 배포처럼 그럴 수 없을 때만 따로 지정한다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
 
 - **SSH 터널은 이제 개발용 폴백이다.** 두 경우에 아직 쓴다: ① dev container에서 `localhost:2283`
   redirect로 OAuth를 시험할 때, ② 데스크탑 브라우저로 운영 화면을 확인할 때(tailnet 주소를 쓰면
@@ -530,9 +532,16 @@ SQL
   row에 `googleDrive.clientId`가 들어 있으면 env를 비워도 꺼지지 않는다. **운영 row에는 다섯 키가
   모두 들어 있다**(2026-09-14 확인: clientId·clientSecret·apiKey·redirectUrl·enabled). 즉 이 인스턴스는
   아직 env로 기술되지 않는다.
-  **정리 방법**: env가 row와 같은 값을 갖게 한 뒤 관리 화면에서 아무 설정이나 한 번 저장하면 된다 —
-  `updateConfig`는 defaults와 같은 값을 저장에서 빼므로 googleDrive partial이 통째로 사라진다.
-  DB를 직접 손댈 필요가 없다.
+  **정리 방법** (wave8b 리뷰 C1이 조건을 바로잡음):
+  1. 네 키(clientId·clientSecret·apiKey·redirectUrl) **전부**를 env에 row와 같은 값으로 넣고 재시작한다.
+  2. `GET /api/system-config/defaults`(관리자)로 env 값이 defaults에 들어왔는지 **확인한다** — 값을
+     출력하지 말고 키별로 비었는지·row와 해시가 같은지만 본다.
+  3. 관리 화면에서 **실제로 값 하나를 바꿔** 저장한다. 웹은 전체 설정을 보내지만, 아무것도 안 바꾸면
+     `isEqual`에 걸려 요청 자체가 나가지 않는다. 바꾼 값은 다음 저장에서 되돌리면 된다.
+  `updateConfig`는 defaults와 같은 값을 저장에서 빼므로, 네 키가 모두 같을 때만 googleDrive partial이
+  통째로 사라진다. **하나라도 다르면 그 키만 row에 남아** 계속 env를 이긴다. 폐지된 `enabled`는
+  스키마가 모르는 키라 이 저장에서 함께 떨어진다. DB를 직접 손댈 필요가 없다.
+  **정리하지 않아도 배포는 안전하다** — row가 모든 값을 공급하므로 기능은 그대로 켜져 있다.
 
 - **Drive는 최종 저장소가 아니라 Pixel로 가는 경유지다.** 따라서 Drive에서 파일이 사라지는
   것은 정상 운영이고, 원장(ledger)이 "이미 올렸음"을 기억하는 것이 옳다.

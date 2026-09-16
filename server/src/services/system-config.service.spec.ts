@@ -532,9 +532,10 @@ describe(SystemConfigService.name, () => {
 
     it('should not persist values that merely equal the defaults', async () => {
       // This is what makes environment-provided credentials safe (Wave 6). Those values ARE the
-      // defaults, so the admin form shows them pre-filled — and if saving the untouched form wrote
-      // them into the stored config, they would be frozen there: a later change to the environment
-      // would be silently ignored, and the operator would have no idea why. updateConfig only
+      // defaults, and the web client sends the whole effective config whenever *any* settings
+      // section is saved — so if an unchanged googleDrive section were written back, the
+      // environment's values would be frozen into the stored config and a later change to the
+      // environment would be silently ignored. updateConfig only
       // persists what differs from the defaults, so a no-op save persists nothing at all.
       mocks.systemMetadata.get.mockResolvedValue({});
 

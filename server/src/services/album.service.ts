@@ -299,7 +299,8 @@ export class AlbumService extends BaseService {
   }
 
   /**
-   * Whether Google Drive sync is switched on *and* fully configured, for the queueing calls above.
+   * Whether Google Drive sync is fully configured — which is also what "on" means now that there
+   * is no separate enable flag — for the queueing calls above.
    *
    * Wrapped in a method rather than inlined at both call sites so the two can't drift apart, and
    * so the condition stays the same one the upload worker applies (`isGoogleDriveEnabled`) — a

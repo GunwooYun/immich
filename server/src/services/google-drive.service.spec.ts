@@ -84,7 +84,6 @@ vi.mock('googleapis', () => ({
  * care about behaviour past that first gate stub this in explicitly.
  */
 const enabledConfig = {
-  enabled: true,
   clientId: 'client-id',
   clientSecret: 'client-secret',
   redirectUrl: 'http://localhost:2283/api/google-drive/callback',
@@ -265,6 +264,11 @@ describe(GoogleDriveService.name, () => {
       // Not merely "it threw": the message has to name the two settings that would fix it, because
       // a wrong redirect URL otherwise surfaces only as an opaque error from Google.
       await expect(sut.getAuthUrl(newUuid())).rejects.toThrow(/redirect URL.*External Domain/i);
+      // And it has to send the operator to where the fix now lives. The admin screen this message
+      // used to name was removed; reverting the wording would point at a page that does not exist,
+      // and nothing asserted it until now.
+      await expect(sut.getAuthUrl(newUuid())).rejects.toThrow('IMMICH_GOOGLE_DRIVE_REDIRECT_URL');
+      await expect(sut.getAuthUrl(newUuid())).rejects.toThrow('IMMICH_GOOGLE_DRIVE_* variables');
       // And it must fail *before* building a client with an empty redirect URL.
       expect(oauth2Constructed).not.toHaveBeenCalled();
     });
@@ -939,6 +943,20 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('album subscriptions', () => {
+    it('should refuse to subscribe when the feature is not configured', async () => {
+      // The gate had no test. Three guards in a row here all throw BadRequestException — this one,
+      // access control, and "not connected" — so a test asserting only the type cannot tell which
+      // one fired, and deleting the gate left the suite green. Asserted on the message, with a
+      // witness that it stopped before access control ran.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, clientId: '' } });
+
+      await expect(sut.subscribeAlbum(AuthFactory.create(UserFactory.create()), 'album-1')).rejects.toThrow(
+        'Google Drive sync is not enabled on this server',
+      );
+      expect(mocks.access.album.checkOwnerAccess).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
+    });
+
     it('should refuse to subscribe when Drive is not connected', async () => {
       // Selecting albums before connecting would silently accumulate work with nowhere to send it.
       const user = UserFactory.create();
@@ -946,7 +964,9 @@ describe(GoogleDriveService.name, () => {
       mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set(['album-1']));
       mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
 
-      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toThrow(
+        'Connect Google Drive before choosing albums to back up',
+      );
       expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
     });
 
@@ -1001,8 +1021,11 @@ describe(GoogleDriveService.name, () => {
       // restricted to viewing, backing it up must be refused for the same reason downloading is.
       const user = UserFactory.create();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
-      // No access grant stubbed → requireAccess rejects.
+      // No access grant stubbed → requireAccess rejects. `toBeDefined` alone would pass for any
+      // rejection at all, so the witness is that the credentials lookup — which runs after access
+      // control — never happened.
       await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toBeDefined();
+      expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
       expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
     });
 
@@ -1304,7 +1327,9 @@ describe(GoogleDriveService.name, () => {
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, apiKey: 'api-key' } });
       mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
 
-      await expect(sut.getPickerConfig(newUuid())).rejects.toBeInstanceOf(BadRequestException);
+      // On the message: with the guard removed this used to fail only by luck, on a TypeError from
+      // dereferencing the missing credentials — which a type-only assertion cannot tell apart.
+      await expect(sut.getPickerConfig(newUuid())).rejects.toThrow('Google Drive is not connected');
     });
 
     it('should clear a revoked grant instead of only refusing', async () => {

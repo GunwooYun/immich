@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * these tests must stub the environment and then re-import, not rely on the static import at the
  * top of a spec file (which would already have been evaluated with the real environment).
  *
- * What the *rest* of the arrangement guarantees — that a value saved in the admin UI still wins,
- * and that saving an untouched form doesn't freeze the environment's values into the database —
+ * What the *rest* of the arrangement guarantees — that a value stored in system config still wins,
+ * and that saving other settings doesn't freeze the environment's values into the database —
  * lives in system-config.service.spec.ts, because it is a property of updateConfig, not of these
  * defaults. The one exception is the second describe block below: it is an updateConfig property,
  * but the only one that needs `defaults` built against a *non-empty* environment, which is a thing
@@ -124,9 +124,9 @@ describe('updateConfig with credentials from the environment', () => {
       googleDrive: { ...defaults.googleDrive, clientId: '' },
     });
 
-    // Nothing written at all — so the effective value falls back to the environment's. Clearing the
-    // field in the admin UI cannot remove an env-supplied credential; `enabled: false` is the
-    // control that turns the feature off.
+    // Nothing written at all — so the effective value falls back to the environment's. A stored
+    // empty value cannot override an env-supplied credential; to turn the feature off, blank the
+    // variable in the environment (there is no enable flag any more).
     expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {});
 
     // And the consequence, asserted on the value the admin gets back rather than only on what was
