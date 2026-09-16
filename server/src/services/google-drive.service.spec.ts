@@ -1021,10 +1021,13 @@ describe(GoogleDriveService.name, () => {
       // restricted to viewing, backing it up must be refused for the same reason downloading is.
       const user = UserFactory.create();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
-      // No access grant stubbed → requireAccess rejects. `toBeDefined` alone would pass for any
-      // rejection at all, so the witness is that the credentials lookup — which runs after access
-      // control — never happened.
-      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toBeDefined();
+      // No access grant stubbed → requireAccess rejects. Asserted on the message because it names
+      // the permission: the mocks answer read and download checks identically, so this is the only
+      // thing that fails if the call is weakened to AlbumRead. The witness that the credentials
+      // lookup never happened pins the order — access control before anything else.
+      await expect(sut.subscribeAlbum(AuthFactory.create(user), 'album-1')).rejects.toThrow(
+        'Not found or no album.download access',
+      );
       expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
       expect(mocks.googleDrive.subscribe).not.toHaveBeenCalled();
     });
@@ -1607,6 +1610,19 @@ describe(GoogleDriveService.name, () => {
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
 
+    it('should gate syncing on download access, not merely read access', async () => {
+      // Same egress rule as subscribing, and until now untested here: weakening this call to
+      // AlbumRead left the suite green. The permission is only visible in the message, since the
+      // mocks cannot tell a read check from a download check.
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+
+      await expect(sut.syncAlbum(AuthFactory.create(UserFactory.create()), 'album-1')).rejects.toThrow(
+        'Not found or no album.download access',
+      );
+      expect(mocks.album.getById).not.toHaveBeenCalled();
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
     it('should reject an album the caller has not chosen to back up', async () => {
       // Ownership is no longer the gate — subscription is. Syncing an album you can see but do not
       // back up would be asking for work with nowhere to put it.
@@ -1616,7 +1632,11 @@ describe(GoogleDriveService.name, () => {
       mocks.album.getById.mockResolvedValue(getForAlbum(album));
       mocks.googleDrive.isSubscribed.mockResolvedValue(false);
 
-      await expect(sut.syncAlbum(AuthFactory.create(user), album.id)).rejects.toBeInstanceOf(BadRequestException);
+      // On the message: four guards in a row here throw BadRequestException, so the class alone
+      // cannot say this one fired.
+      await expect(sut.syncAlbum(AuthFactory.create(user), album.id)).rejects.toThrow(
+        'Add this album to your Google Drive backups before syncing it',
+      );
 
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });

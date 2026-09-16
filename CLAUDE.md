@@ -534,8 +534,11 @@ SQL
   아직 env로 기술되지 않는다.
   **정리 방법** (wave8b 리뷰 C1이 조건을 바로잡음):
   1. 네 키(clientId·clientSecret·apiKey·redirectUrl) **전부**를 env에 row와 같은 값으로 넣고 재시작한다.
-  2. `GET /api/system-config/defaults`(관리자)로 env 값이 defaults에 들어왔는지 **확인한다** — 값을
-     출력하지 말고 키별로 비었는지·row와 해시가 같은지만 본다.
+  2. `GET /api/system-config/defaults`(관리자 API 키, `systemConfig.read` 권한)로 env 값이 defaults에
+     들어왔는지 **확인한다**. ⚠ 이 응답은 `clientSecret`을 **평문으로** 돌려준다 — 절대 그대로
+     출력하지 말고 파이프로 길이만 뽑는다:
+     `curl -s -H "x-api-key: $KEY" .../api/system-config/defaults | python3 -c 'import json,sys; g=json.load(sys.stdin)["googleDrive"]; print({k: len(v) for k, v in g.items()})'`
+     defaults는 모듈 로드 시 `process.env`로 만들어지므로 env를 바꾼 뒤에는 재시작이 필요하다.
   3. 관리 화면에서 **실제로 값 하나를 바꿔** 저장한다. 웹은 전체 설정을 보내지만, 아무것도 안 바꾸면
      `isEqual`에 걸려 요청 자체가 나가지 않는다. 바꾼 값은 다음 저장에서 되돌리면 된다.
   `updateConfig`는 defaults와 같은 값을 저장에서 빼므로, 네 키가 모두 같을 때만 googleDrive partial이

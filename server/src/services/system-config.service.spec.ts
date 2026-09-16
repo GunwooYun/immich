@@ -545,17 +545,17 @@ describe(SystemConfigService.name, () => {
     });
 
     it('should persist a googleDrive credential only when it differs from the default', async () => {
-      // The other half of the same rule, asserted on this feature's fields specifically: typing a
-      // value in the admin UI must still win over whatever the environment supplies.
+      // The other half of the same rule, asserted on this feature's fields specifically: a stored
+      // value that differs from the environment's must still be written, and so still win.
       mocks.systemMetadata.get.mockResolvedValue({});
 
       await sut.updateSystemConfig({
         ...defaults,
-        googleDrive: { ...defaults.googleDrive, clientId: 'typed-in-the-admin-ui' },
+        googleDrive: { ...defaults.googleDrive, clientId: 'differs-from-env' },
       });
 
       expect(mocks.systemMetadata.set).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig, {
-        googleDrive: { clientId: 'typed-in-the-admin-ui' },
+        googleDrive: { clientId: 'differs-from-env' },
       });
     });
 
