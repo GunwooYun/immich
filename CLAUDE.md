@@ -537,7 +537,7 @@ SQL
   2. `GET /api/system-config/defaults`(관리자 API 키, `systemConfig.read` 권한)로 env 값이 defaults에
      들어왔는지 **확인한다**. ⚠ 이 응답은 `clientSecret`을 **평문으로** 돌려준다 — 절대 그대로
      출력하지 말고 파이프로 길이만 뽑는다:
-     `curl -s -H "x-api-key: $KEY" .../api/system-config/defaults | python3 -c 'import json,sys; g=json.load(sys.stdin)["googleDrive"]; print({k: len(v) for k, v in g.items()})'`
+     `curl -s -H "x-api-key: $KEY" http://192.168.50.211:2283/api/system-config/defaults | python3 -c 'import json,sys; g=json.load(sys.stdin)["googleDrive"]; print({k: len(v) for k, v in g.items()})'`
      defaults는 모듈 로드 시 `process.env`로 만들어지므로 env를 바꾼 뒤에는 재시작이 필요하다.
   3. 관리 화면에서 **실제로 값 하나를 바꿔** 저장한다. 웹은 전체 설정을 보내지만, 아무것도 안 바꾸면
      `isEqual`에 걸려 요청 자체가 나가지 않는다. 바꾼 값은 다음 저장에서 되돌리면 된다.
