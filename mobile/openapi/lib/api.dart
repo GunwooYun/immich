@@ -182,6 +182,8 @@ part 'model/google_drive_picker_config_response_dto.dart';
 part 'model/google_drive_set_folder_dto.dart';
 part 'model/google_drive_status_response_dto.dart';
 part 'model/google_drive_storage_dto.dart';
+part 'model/google_drive_uploaded_lookup_dto.dart';
+part 'model/google_drive_uploaded_lookup_response_dto.dart';
 part 'model/hls_video_resolution.dart';
 part 'model/image_format.dart';
 part 'model/integrity_report.dart';

@@ -15,6 +15,7 @@
     mdiCameraBurst,
     mdiCheckCircle,
     mdiFileGifBox,
+    mdiGoogleDrive,
     mdiHeart,
     mdiMagnifyPlusOutline,
     mdiMotionPauseOutline,
@@ -44,6 +45,12 @@
     brokenAssetClass?: ClassValue;
     dimmed?: boolean;
     albumUsers?: UserResponseDto[];
+    /**
+     * Already in the viewer's Google Drive. A plain boolean rather than the lookup itself, so this
+     * shared component stays ignorant of the Drive feature — Timeline owns where the answer comes
+     * from (googleDriveUploadedManager).
+     */
+    driveUploaded?: boolean;
     onClick?: (asset: TimelineAsset) => void;
     onPreview?: (asset: TimelineAsset) => void;
     onSelect?: (asset: TimelineAsset) => void;
@@ -64,6 +71,7 @@
     showArchiveIcon = false,
     showStackedIcon = true,
     albumUsers = [],
+    driveUploaded = false,
     onClick = undefined,
     onPreview = undefined,
     onSelect = undefined,
@@ -336,6 +344,20 @@
         {#if !authManager.isSharedLink && asset.isFavorite}
           <div class="absolute inset-s-2 bottom-2 z-2">
             <Icon data-icon-favorite icon={mdiHeart} size="24" class="text-white" />
+          </div>
+        {/if}
+
+        <!-- Bottom-right, the one corner nothing else claims except the owner name on shared albums;
+             lifted above that name rather than hidden, since both facts are useful at once. -->
+        {#if !authManager.isSharedLink && driveUploaded}
+          <div
+            data-icon-google-drive
+            class={[
+              'absolute inset-e-2 z-2 drop-shadow-[0_0_2px_rgba(0,0,0,0.6)]',
+              assetOwner ? 'bottom-7' : 'bottom-2',
+            ]}
+          >
+            <Icon icon={mdiGoogleDrive} size="18" class="text-white" />
           </div>
         {/if}
 

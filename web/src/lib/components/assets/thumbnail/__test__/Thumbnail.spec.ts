@@ -49,6 +49,29 @@ describe('Thumbnail component', () => {
     expect(tabbables.length).toBe(0);
   });
 
+  describe('Google Drive badge', () => {
+    const imageAsset = () => assetFactory.build({ originalPath: 'image.jpg', originalMimeType: 'image/jpeg' });
+
+    it('shows the badge for an asset already in Drive', () => {
+      const { baseElement } = render(Thumbnail, { asset: imageAsset(), driveUploaded: true });
+      expect(baseElement.querySelector('[data-icon-google-drive]')).not.toBeNull();
+    });
+
+    it('shows no badge otherwise', () => {
+      const { baseElement } = render(Thumbnail, { asset: imageAsset() });
+      expect(baseElement.querySelector('[data-icon-google-drive]')).toBeNull();
+      // Witness that the thumbnail rendered, so the absence is about the badge alone.
+      expect(baseElement.querySelector('[data-thumbnail-focus-container]')).not.toBeNull();
+    });
+
+    it('adds nothing tabbable', () => {
+      // Same guard as the container test above: a decoration must not become a tab stop.
+      const { baseElement } = render(Thumbnail, { asset: imageAsset(), driveUploaded: true });
+      const container = baseElement.querySelector('[data-thumbnail-focus-container]');
+      expect(getTabbable(container!).length).toBe(0);
+    });
+  });
+
   it('shows thumbhash while image is loading', () => {
     const asset = assetFactory.build({ originalPath: 'image.jpg', originalMimeType: 'image/jpeg' });
     const sut = render(Thumbnail, {

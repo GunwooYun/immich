@@ -1250,6 +1250,14 @@ export type GoogleDriveMyStatusDto = {
     /** Assets selected for backup that are not yet in this user Drive */
     pending: number;
 };
+export type GoogleDriveUploadedLookupDto = {
+    /** Asset IDs to check, at most 1000 per request */
+    assetIds: string[];
+};
+export type GoogleDriveUploadedLookupResponseDto = {
+    /** The subset of the requested asset IDs already uploaded to the caller connected Drive */
+    assetIds: string[];
+};
 export type GoogleDrivePickerConfigResponseDto = {
     /** Short-lived OAuth access token for the Picker to use */
     accessToken: string;
@@ -5043,6 +5051,22 @@ export function getMyGoogleDriveStatus(opts?: Oazapfts.RequestOpts) {
     }>("/google-drive/me/status", {
         ...opts
     }));
+}
+/**
+ * The per-photo badge's data. Read-only despite the POST (see the DTO for why a body): it answers
+ * "which of these are already in my Drive" and changes nothing, hence 200 rather than 201.
+ */
+export function getMyGoogleDriveUploadedAssets({ googleDriveUploadedLookupDto }: {
+    googleDriveUploadedLookupDto: GoogleDriveUploadedLookupDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveUploadedLookupResponseDto;
+    }>("/google-drive/me/uploaded", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: googleDriveUploadedLookupDto
+    })));
 }
 /**
  * Get configuration for the Google Drive folder picker

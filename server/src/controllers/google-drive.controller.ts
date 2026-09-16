@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
@@ -12,6 +12,8 @@ import {
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
   GoogleDriveStorageDto,
+  GoogleDriveUploadedLookupDto,
+  GoogleDriveUploadedLookupResponseDto,
 } from 'src/dtos/google-drive.dto';
 import { ApiTag, ImmichCookie } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
@@ -258,6 +260,26 @@ export class GoogleDriveController {
   })
   async getMyGoogleDriveStatus(@Auth() auth: AuthDto): Promise<GoogleDriveMyStatusDto> {
     return this.googleDriveService.getMyStatus(auth.user.id);
+  }
+
+  /**
+   * The per-photo badge's data. Read-only despite the POST (see the DTO for why a body): it answers
+   * "which of these are already in my Drive" and changes nothing, hence 200 rather than 201.
+   */
+  @Post('me/uploaded')
+  @HttpCode(HttpStatus.OK)
+  @Authenticated()
+  @Endpoint({
+    summary: 'Check which assets are uploaded to the authenticated user Google Drive',
+    description:
+      'Return the subset of the given asset IDs that are already uploaded to the Drive account this user has connected. Empty when Drive is not connected.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getMyGoogleDriveUploadedAssets(
+    @Auth() auth: AuthDto,
+    @Body() dto: GoogleDriveUploadedLookupDto,
+  ): Promise<GoogleDriveUploadedLookupResponseDto> {
+    return this.googleDriveService.getUploadedAssets(auth.user.id, dto.assetIds);
   }
 
   @Get('picker-config')

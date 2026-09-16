@@ -855,6 +855,27 @@ export class GoogleDriveService extends BaseService {
    * user-scoped source from the start means the progress UI has one honest thing to poll rather
    * than a per-album endpoint that later needs retrofitting.
    */
+  /**
+   * The subset of `assetIds` already in this user's connected Drive, for the thumbnail badge.
+   *
+   * Not connected → empty, deliberately checked first. The ledger lookup scopes rows to the
+   * current Drive account, and with no connection that account reads as '' — which matches every
+   * unstamped legacy row. Without this gate a disconnected user would see "in Drive" badges for a
+   * Drive they are no longer attached to. Database-only: no Google call, no identity probe, so it
+   * is safe to call on every scroll.
+   */
+  async getUploadedAssets(userId: string, assetIds: string[]): Promise<{ assetIds: string[] }> {
+    if (assetIds.length === 0 || !(await this.isEnabled())) {
+      return { assetIds: [] };
+    }
+    const credentials = await this.googleDriveRepository.getCredentials(userId);
+    if (!credentials) {
+      return { assetIds: [] };
+    }
+    const uploaded = await this.googleDriveRepository.getUploadedAssetIds(userId, assetIds);
+    return { assetIds: [...uploaded] };
+  }
+
   async getMyStatus(userId: string): Promise<{
     pending: number;
     failed: number;

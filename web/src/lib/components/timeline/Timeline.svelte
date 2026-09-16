@@ -13,6 +13,9 @@
   import Skeleton from '$lib/elements/Skeleton.svelte';
   import type { AssetMultiSelectManager } from '$lib/managers/asset-multi-select-manager.svelte';
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
+  import { authManager } from '$lib/managers/auth-manager.svelte';
+  import { featureFlagsManager } from '$lib/managers/feature-flags-manager.svelte';
+  import { googleDriveUploadedManager } from '$lib/managers/google-drive-uploaded-manager.svelte';
   import type { TimelineDay } from '$lib/managers/timeline-manager/timeline-day.svelte';
   import { isIntersecting } from '$lib/managers/timeline-manager/internal/intersection-support.svelte';
   import type { TimelineMonth } from '$lib/managers/timeline-manager/timeline-month.svelte';
@@ -87,6 +90,26 @@
 
   timelineManager = new TimelineManager();
   onDestroy(() => timelineManager.destroy());
+
+  // Drive badges for what is on (or about to be on) screen. Collected from months that are both
+  // near the viewport and loaded — the same set the grid renders — so scrolling a 30,000-photo
+  // library asks about a few hundred ids at a time, never the whole library. The manager skips ids
+  // it already knows and debounces, so re-running on every scroll step is cheap. Shared-link
+  // viewers are outsiders to the owner's Drive and are never asked about.
+  $effect(() => {
+    if (!featureFlagsManager.value.googleDrive || authManager.isSharedLink) {
+      return;
+    }
+    const ids: string[] = [];
+    for (const month of timelineManager.months) {
+      if (month.isInOrNearViewport && month.isLoaded) {
+        for (const asset of month.getAssets()) {
+          ids.push(asset.id);
+        }
+      }
+    }
+    googleDriveUploadedManager.request(ids);
+  });
   $effect(() => options && void timelineManager.updateOptions(options));
 
   let scrollableElement: HTMLElement | undefined = $state();
@@ -664,6 +687,7 @@
                 {showArchiveIcon}
                 {asset}
                 {albumUsers}
+                driveUploaded={googleDriveUploadedManager.has(asset.id)}
                 {groupIndex}
                 onClick={(asset) => {
                   if (typeof onThumbnailClick === 'function') {

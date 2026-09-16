@@ -6768,6 +6768,61 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/google-drive/me/uploaded": {
+      "post": {
+        "description": "Return the subset of the given asset IDs that are already uploaded to the Drive account this user has connected. Empty when Drive is not connected.",
+        "operationId": "getMyGoogleDriveUploadedAssets",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleDriveUploadedLookupDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveUploadedLookupResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "The per-photo badge's data. Read-only despite the POST (see the DTO for why a body): it answers\n\"which of these are already in my Drive\" and changes nothing, hence 200 rather than 201.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/picker-config": {
       "get": {
         "description": "Return a short-lived `drive.file`-scoped access token plus the OAuth client id and Google API key, which the browser-side Google Picker widget needs in order to open. Fails if the user has not connected an account or no API key is configured.",
@@ -20063,6 +20118,39 @@
           "usageBytes",
           "usageInDriveBytes",
           "usageInDriveTrashBytes"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveUploadedLookupDto": {
+        "properties": {
+          "assetIds": {
+            "description": "Asset IDs to check, at most 1000 per request",
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          }
+        },
+        "required": [
+          "assetIds"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveUploadedLookupResponseDto": {
+        "properties": {
+          "assetIds": {
+            "description": "The subset of the requested asset IDs already uploaded to the caller connected Drive",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "assetIds"
         ],
         "type": "object"
       },

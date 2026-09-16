@@ -146,6 +146,32 @@ const GoogleDriveMyStatusSchema = z
   })
   .meta({ id: 'GoogleDriveMyStatusDto' });
 
+/**
+ * Which of a batch of assets are already in the caller's Drive — what the thumbnail badge asks for.
+ *
+ * A POST with a body rather than a GET with `?ids=`: this codebase has no array query parameter
+ * convention, and a screenful of UUIDs would push a query string past what proxies accept. The
+ * cap is what one timeline month loads at most in practice; the client batches under it.
+ */
+export const GOOGLE_DRIVE_UPLOADED_LOOKUP_MAX = 1000;
+
+const GoogleDriveUploadedLookupSchema = z
+  .object({
+    assetIds: z
+      .array(z.uuidv4())
+      .max(GOOGLE_DRIVE_UPLOADED_LOOKUP_MAX)
+      .describe('Asset IDs to check, at most 1000 per request'),
+  })
+  .meta({ id: 'GoogleDriveUploadedLookupDto' });
+
+const GoogleDriveUploadedLookupResponseSchema = z
+  .object({
+    assetIds: z
+      .array(z.string())
+      .describe('The subset of the requested asset IDs already uploaded to the caller connected Drive'),
+  })
+  .meta({ id: 'GoogleDriveUploadedLookupResponseDto' });
+
 /** One album's backup state for the viewing user — what the album menu and Wave 3 poll. */
 const GoogleDriveAlbumStatusSchema = z
   .object({
@@ -164,3 +190,5 @@ export class GoogleDriveAuthUrlResponseDto extends createZodDto(GoogleDriveAuthU
 export class GoogleDrivePickerConfigResponseDto extends createZodDto(GoogleDrivePickerConfigResponseSchema) {}
 export class GoogleDriveSetFolderDto extends createZodDto(GoogleDriveSetFolderSchema) {}
 export class GoogleDriveStatusResponseDto extends createZodDto(GoogleDriveStatusResponseSchema) {}
+export class GoogleDriveUploadedLookupDto extends createZodDto(GoogleDriveUploadedLookupSchema) {}
+export class GoogleDriveUploadedLookupResponseDto extends createZodDto(GoogleDriveUploadedLookupResponseSchema) {}

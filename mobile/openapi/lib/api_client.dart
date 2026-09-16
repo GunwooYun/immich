@@ -407,6 +407,10 @@ class ApiClient {
           return GoogleDriveStatusResponseDto.fromJson(value);
         case 'GoogleDriveStorageDto':
           return GoogleDriveStorageDto.fromJson(value);
+        case 'GoogleDriveUploadedLookupDto':
+          return GoogleDriveUploadedLookupDto.fromJson(value);
+        case 'GoogleDriveUploadedLookupResponseDto':
+          return GoogleDriveUploadedLookupResponseDto.fromJson(value);
         case 'HlsVideoResolution':
           return HlsVideoResolutionTypeTransformer().decode(value);
         case 'ImageFormat':

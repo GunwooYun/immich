@@ -412,6 +412,63 @@ class GoogleDriveApi {
     return null;
   }
 
+  /// The per-photo badge's data. Read-only despite the POST (see the DTO for why a body): it answers \"which of these are already in my Drive\" and changes nothing, hence 200 rather than 201.
+  ///
+  /// Return the subset of the given asset IDs that are already uploaded to the Drive account this user has connected. Empty when Drive is not connected.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [GoogleDriveUploadedLookupDto] googleDriveUploadedLookupDto (required):
+  Future<Response> getMyGoogleDriveUploadedAssetsWithHttpInfo(GoogleDriveUploadedLookupDto googleDriveUploadedLookupDto, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/me/uploaded';
+
+    // ignore: prefer_final_locals
+    Object? postBody = googleDriveUploadedLookupDto;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>['application/json'];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'POST',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// The per-photo badge's data. Read-only despite the POST (see the DTO for why a body): it answers \"which of these are already in my Drive\" and changes nothing, hence 200 rather than 201.
+  ///
+  /// Return the subset of the given asset IDs that are already uploaded to the Drive account this user has connected. Empty when Drive is not connected.
+  ///
+  /// Parameters:
+  ///
+  /// * [GoogleDriveUploadedLookupDto] googleDriveUploadedLookupDto (required):
+  Future<GoogleDriveUploadedLookupResponseDto?> getMyGoogleDriveUploadedAssets(GoogleDriveUploadedLookupDto googleDriveUploadedLookupDto, { Future<void>? abortTrigger, }) async {
+    final response = await getMyGoogleDriveUploadedAssetsWithHttpInfo(googleDriveUploadedLookupDto, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveUploadedLookupResponseDto',) as GoogleDriveUploadedLookupResponseDto;
+    
+    }
+    return null;
+  }
+
   /// Reached via browser redirect from Google once the user approves (or declines).  This route now requires an authenticated session, and the flow is additionally bound to the browser through an HttpOnly cookie set by getAuthUrl. It used to be fully public, trusting the signed `state` alone — see GoogleDriveService#handleCallback for the account-takeover that made possible, and why signing by itself was not enough.  Requiring auth here is safe because Google's redirect is a top-level GET navigation, which SameSite=Lax cookies (Immich's default, see utils/response.ts) are sent on. It also matches Immich's own OIDC link endpoint, which is `@Authenticated()`.  We always respond with a redirect back into the Immich web app's settings page, with a `google-drive` query flag so the frontend can show a \"connected!\" or \"something went wrong\" toast to the user — whether things succeeded or failed, the user ends up looking at a normal Immich page rather than a raw JSON error or a blank screen.  The `isOpen=google-drive-sync` part is load-bearing, not cosmetic: settings sections are accordions that only render their contents while expanded (see SettingAccordion.svelte's `{#if isOpen}`), and expansion is driven by that query parameter. Without it the Google Drive panel stays collapsed, never mounts, and so never reads the `google-drive` flag — meaning the user would land on a settings page with no indication whatsoever of whether linking worked.
   ///
   /// Redirect target for Google after the user approves or declines consent. Exchanges the authorization code for a refresh token and always responds with a 302 back into the Immich settings page — never JSON, so this is not meaningfully callable from an SDK.

@@ -1217,6 +1217,52 @@ describe(GoogleDriveService.name, () => {
     });
   });
 
+  describe('getUploadedAssets', () => {
+    it('should return the uploaded subset for a connected user', async () => {
+      const userId = newUuid();
+      const [a, b, c] = [newUuid(), newUuid(), newUuid()];
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set([a, c]));
+
+      const result = await sut.getUploadedAssets(userId, [a, b, c]);
+
+      expect(result.assetIds.toSorted()).toEqual([a, c].toSorted());
+      expect(mocks.googleDrive.getUploadedAssetIds).toHaveBeenCalledWith(userId, [a, b, c]);
+    });
+
+    it('should return nothing for a user who is not connected, without consulting the ledger', async () => {
+      // With no connection the ledger's account scope reads as '', which matches every unstamped
+      // legacy row — so asking would badge photos "in Drive" for a Drive this user is no longer
+      // attached to. The witness that we got as far as the connection check is getCredentials.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set(['would-be-a-lie']));
+
+      await expect(sut.getUploadedAssets(userId, [newUuid()])).resolves.toEqual({ assetIds: [] });
+      expect(mocks.googleDrive.getCredentials).toHaveBeenCalledWith(userId);
+      expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
+    });
+
+    it('should return nothing when the feature is not configured', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, clientId: '' } });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+      mocks.googleDrive.getUploadedAssetIds.mockResolvedValue(new Set(['would-be-a-lie']));
+
+      await expect(sut.getUploadedAssets(userId, [newUuid()])).resolves.toEqual({ assetIds: [] });
+      expect(mocks.systemMetadata.get).toHaveBeenCalled();
+      expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
+    });
+
+    it('should not touch the database for an empty batch', async () => {
+      await expect(sut.getUploadedAssets(newUuid(), [])).resolves.toEqual({ assetIds: [] });
+      expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.getUploadedAssetIds).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getMyStatus', () => {
     it('should combine the pending count with the failure summary', async () => {
       const userId = newUuid();
