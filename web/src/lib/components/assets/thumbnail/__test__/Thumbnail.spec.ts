@@ -2,7 +2,7 @@ import { render } from '@testing-library/svelte';
 import { getIntersectionObserverMock } from '$lib/__mocks__/intersection-observer.mock';
 import Thumbnail from '$lib/components/assets/thumbnail/Thumbnail.svelte';
 import { getTabbable } from '$lib/utils/focus-util';
-import { assetFactory } from '@test-data/factories/asset-factory';
+import { assetFactory, timelineAssetFactory } from '@test-data/factories/asset-factory';
 
 vi.mock('$lib/utils/navigation', () => ({
   currentUrlReplaceAssetId: vi.fn(),
@@ -50,7 +50,9 @@ describe('Thumbnail component', () => {
   });
 
   describe('Google Drive badge', () => {
-    const imageAsset = () => assetFactory.build({ originalPath: 'image.jpg', originalMimeType: 'image/jpeg' });
+    // TimelineAsset, which is what Thumbnail takes — not AssetResponseDto like the older cases above,
+    // whose mismatch is a pre-existing svelte-check baseline entry this block should not add to.
+    const imageAsset = () => timelineAssetFactory.build({ isImage: true });
 
     it('shows the badge for an asset already in Drive', () => {
       const { baseElement } = render(Thumbnail, { asset: imageAsset(), driveUploaded: true });
