@@ -1,7 +1,7 @@
 # Review request — wave9c: wave9a fold-in + CAS on connectionId
 
 **Branch:** `feat/google-drive-album-sync-v3.1.0`
-**Commits:** `97c745e83` (wave9a review fixes), `c9523c5de` (CAS move), `18…` evidence commit right after (see `git log`)
+**Commits:** `97c745e83` (wave9a review fixes), `c9523c5de` (CAS move), evidence commit right after c9523c5de
 **Previous:** `review/google-drive-wave9a-album-menu-state-20260916-2315-review.md` — BLOCKED (C1, C2; N1–N5)
 **Separate, still under review:** wave9b (per-photo badge). Its commits sit between wave9a and these; ignore them here.
 
