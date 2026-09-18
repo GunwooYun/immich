@@ -9,6 +9,9 @@
  * - `disconnected` beats everything else: a backed-up album whose owner has no Drive connection
  *   (disconnected, or the grant was revoked — which deletes only the connection, not the album
  *   selection) uploads nothing at all. Reading "backing up" there was wave9a review C1.
+ * - `failing` means the album's whole remaining backlog has already failed — most often an asset
+ *   whose original is gone from disk, which will never upload no matter how long you wait. Before
+ *   this the dot sat on "backing up" forever in exactly that case (wave9c review N4).
  * - `blocked` comes next: an account-level pause (quota, missing folder) means *nothing* is
  *   uploading, and an album that looks "syncing" or "done" while that is true is the exact
  *   silent-failure this exists to surface.
@@ -17,19 +20,21 @@
  * - `syncing` vs `synced` is only the album's own backlog (`total - uploaded`), not the user-wide
  *   pending count — same scoping rule as the menu's sync row.
  */
-export type GoogleDriveIndicator = 'disconnected' | 'blocked' | 'syncing' | 'synced' | null;
+export type GoogleDriveIndicator = 'disconnected' | 'blocked' | 'failing' | 'syncing' | 'synced' | null;
 
 export const getGoogleDriveIndicator = ({
   backedUp,
   connected,
   uploaded,
   total,
+  failed,
   blockedReason,
 }: {
   backedUp: boolean;
   connected: boolean;
   uploaded: number;
   total: number;
+  failed: number;
   blockedReason: string | null;
 }): GoogleDriveIndicator => {
   if (!backedUp) {
@@ -41,7 +46,13 @@ export const getGoogleDriveIndicator = ({
   if (blockedReason) {
     return 'blocked';
   }
-  return total > uploaded ? 'syncing' : 'synced';
+  const pending = total - uploaded;
+  if (pending <= 0) {
+    return 'synced';
+  }
+  // Only when *everything* left has failed. With one stuck asset among a hundred still uploading,
+  // "backing up" is the more useful thing to say; the failure surfaces in the progress card.
+  return failed >= pending ? 'failing' : 'syncing';
 };
 
 /**

@@ -19938,6 +19938,12 @@
             "minimum": -9007199254740991,
             "type": "integer"
           },
+          "failedCount": {
+            "description": "Of the remainder, how many have a recorded upload failure",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
           "subscribed": {
             "description": "Whether this album is backed up to the authenticated user Drive",
             "type": "boolean"
@@ -19952,6 +19958,7 @@
         "required": [
           "accessLost",
           "assetCount",
+          "failedCount",
           "subscribed",
           "uploadedCount"
         ],

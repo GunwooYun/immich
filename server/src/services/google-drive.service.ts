@@ -1504,6 +1504,7 @@ export class GoogleDriveService extends BaseService {
       accessLost: !!row?.accessLost,
       assetCount: Number(row?.assetCount ?? 0),
       uploadedCount: Number(row?.uploadedCount ?? 0),
+      failedCount: Number(row?.failedCount ?? 0),
     };
   }
 

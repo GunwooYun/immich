@@ -1227,6 +1227,8 @@ export type GoogleDriveAlbumStatusDto = {
     accessLost: boolean;
     /** Assets in the album, excluding trashed */
     assetCount: number;
+    /** Of the remainder, how many have a recorded upload failure */
+    failedCount: number;
     /** Whether this album is backed up to the authenticated user Drive */
     subscribed: boolean;
     /** Of those, how many are already in this user Drive */

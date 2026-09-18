@@ -1327,6 +1327,7 @@ describe(GoogleDriveService.name, () => {
         accessLost: 0 as never,
         assetCount: 40,
         uploadedCount: 12,
+        failedCount: 3,
       });
 
       await expect(sut.getAlbumBackupStatus(AuthFactory.create(user), 'a1')).resolves.toEqual({
@@ -1334,6 +1335,9 @@ describe(GoogleDriveService.name, () => {
         accessLost: false,
         assetCount: 40,
         uploadedCount: 12,
+        // Album-scoped, unlike the user-wide `failed` on /me/status: it is what lets the album
+        // tell "still uploading" from "the rest can never upload" (wave9c review N4).
+        failedCount: 3,
       });
       expect(mocks.googleDrive.getSubscribableAlbums).not.toHaveBeenCalled();
     });
@@ -1348,6 +1352,7 @@ describe(GoogleDriveService.name, () => {
         accessLost: false,
         assetCount: 0,
         uploadedCount: 0,
+        failedCount: 0,
       });
     });
   });

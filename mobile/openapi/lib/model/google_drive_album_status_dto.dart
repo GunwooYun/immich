@@ -15,6 +15,7 @@ class GoogleDriveAlbumStatusDto {
   GoogleDriveAlbumStatusDto({
     required this.accessLost,
     required this.assetCount,
+    required this.failedCount,
     required this.subscribed,
     required this.uploadedCount,
   });
@@ -27,6 +28,12 @@ class GoogleDriveAlbumStatusDto {
   /// Minimum value: -9007199254740991
   /// Maximum value: 9007199254740991
   int assetCount;
+
+  /// Of the remainder, how many have a recorded upload failure
+  ///
+  /// Minimum value: -9007199254740991
+  /// Maximum value: 9007199254740991
+  int failedCount;
 
   /// Whether this album is backed up to the authenticated user Drive
   bool subscribed;
@@ -41,6 +48,7 @@ class GoogleDriveAlbumStatusDto {
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveAlbumStatusDto &&
     other.accessLost == accessLost &&
     other.assetCount == assetCount &&
+    other.failedCount == failedCount &&
     other.subscribed == subscribed &&
     other.uploadedCount == uploadedCount;
 
@@ -49,16 +57,18 @@ class GoogleDriveAlbumStatusDto {
     // ignore: unnecessary_parenthesis
     (accessLost.hashCode) +
     (assetCount.hashCode) +
+    (failedCount.hashCode) +
     (subscribed.hashCode) +
     (uploadedCount.hashCode);
 
   @override
-  String toString() => 'GoogleDriveAlbumStatusDto[accessLost=$accessLost, assetCount=$assetCount, subscribed=$subscribed, uploadedCount=$uploadedCount]';
+  String toString() => 'GoogleDriveAlbumStatusDto[accessLost=$accessLost, assetCount=$assetCount, failedCount=$failedCount, subscribed=$subscribed, uploadedCount=$uploadedCount]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'accessLost'] = this.accessLost;
       json[r'assetCount'] = this.assetCount;
+      json[r'failedCount'] = this.failedCount;
       json[r'subscribed'] = this.subscribed;
       json[r'uploadedCount'] = this.uploadedCount;
     return json;
@@ -75,6 +85,7 @@ class GoogleDriveAlbumStatusDto {
       return GoogleDriveAlbumStatusDto(
         accessLost: mapValueOfType<bool>(json, r'accessLost')!,
         assetCount: mapValueOfType<int>(json, r'assetCount')!,
+        failedCount: mapValueOfType<int>(json, r'failedCount')!,
         subscribed: mapValueOfType<bool>(json, r'subscribed')!,
         uploadedCount: mapValueOfType<int>(json, r'uploadedCount')!,
       );
@@ -126,6 +137,7 @@ class GoogleDriveAlbumStatusDto {
   static const requiredKeys = <String>{
     'accessLost',
     'assetCount',
+    'failedCount',
     'subscribed',
     'uploadedCount',
   };

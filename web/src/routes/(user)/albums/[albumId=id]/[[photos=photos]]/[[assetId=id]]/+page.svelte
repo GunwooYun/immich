@@ -363,6 +363,7 @@
   let driveTogglePending = $state(false);
   let driveConnected = $state(false);
   let driveBlockedReason = $state<string | null>(null);
+  let driveFailed = $state(0);
 
   // The toolbar dot. Everything else in the menu stays lazy (storage and connection status go all
   // the way to Google), but these two are plain database reads, and without them the icon cannot
@@ -385,15 +386,27 @@
     driveBackedUp = albumStatus.value.subscribed;
     driveUploaded = albumStatus.value.uploadedCount;
     driveTotal = albumStatus.value.assetCount;
+    driveFailed = albumStatus.value.failedCount;
     driveBlockedReason = myStatus.value.blockedReason ?? null;
     driveConnected = myStatus.value.connected;
   };
 
   $effect(() => {
+    // This component is reused when navigating between albums, so the previous album's answer is
+    // still sitting in these variables. Clear them first: otherwise album A's dot shows on album B
+    // until B's load lands, and stays there for good if B's calls fail (wave9c review N1).
+    const albumId = album.id;
+    driveBackedUp = false;
+    driveConnected = false;
+    driveUploaded = 0;
+    driveTotal = 0;
+    driveFailed = 0;
+    driveBlockedReason = null;
+
     // assetCount too: the Drive button is only rendered for non-empty albums, so there is no icon
     // to put a dot on otherwise.
     if (featureFlagsManager.value.googleDrive && album.assetCount > 0) {
-      void loadGoogleDriveIndicator(album.id);
+      void loadGoogleDriveIndicator(albumId);
     }
   });
 
@@ -403,11 +416,12 @@
       connected: driveConnected,
       uploaded: driveUploaded,
       total: driveTotal,
+      failed: driveFailed,
       blockedReason: driveBlockedReason,
     }),
   );
   const driveIndicatorClass = $derived(
-    driveIndicator === 'blocked' || driveIndicator === 'disconnected'
+    driveIndicator === 'blocked' || driveIndicator === 'disconnected' || driveIndicator === 'failing'
       ? 'bg-amber-500'
       : driveIndicator === 'syncing'
         ? 'bg-sky-500'
@@ -435,15 +449,25 @@
         getMyGoogleDriveStatus(),
       ]);
 
-      driveConnected = status.status === 'fulfilled' && status.value.connected;
-      driveFolderId = status.status === 'fulfilled' ? status.value.folderId : null;
-      driveBackedUp = albumStatus.status === 'fulfilled' && albumStatus.value.subscribed;
-      driveUploaded = albumStatus.status === 'fulfilled' ? albumStatus.value.uploadedCount : 0;
-      driveTotal = albumStatus.status === 'fulfilled' ? albumStatus.value.assetCount : 0;
+      // Assign only what actually came back. These variables also feed the toolbar dot now, and
+      // zeroing them on a rejected call would repaint it "not connected" / "not backed up" out of a
+      // failed request — exactly the invention the indicator loader avoids (wave9c review N2).
+      if (status.status === 'fulfilled') {
+        driveConnected = status.value.connected;
+        driveFolderId = status.value.folderId;
+      }
+      if (albumStatus.status === 'fulfilled') {
+        driveBackedUp = albumStatus.value.subscribed;
+        driveUploaded = albumStatus.value.uploadedCount;
+        driveTotal = albumStatus.value.assetCount;
+        driveFailed = albumStatus.value.failedCount;
+      }
       // Absent rather than zeroed when unavailable — a gauge reading 0 would be a lie, where a
       // missing gauge is just a missing gauge.
       driveStorage = storage.status === 'fulfilled' ? storage.value : null;
-      driveBlockedReason = myStatus.status === 'fulfilled' ? (myStatus.value.blockedReason ?? null) : null;
+      if (myStatus.status === 'fulfilled') {
+        driveBlockedReason = myStatus.value.blockedReason ?? null;
+      }
     } catch (error) {
       handleError(error, $t('errors.unable_to_load_google_drive_status'));
     } finally {

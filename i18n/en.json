@@ -1202,6 +1202,7 @@
   "google_drive_resumed": "Uploads resumed",
   "google_drive_status_blocked": "Google Drive: uploads paused",
   "google_drive_status_disconnected": "Google Drive: not connected, nothing is being backed up",
+  "google_drive_status_failing": "Google Drive: backup stopped on failed photos",
   "google_drive_status_synced": "Google Drive: backed up",
   "google_drive_status_syncing": "Google Drive: backing up",
   "google_drive_storage": "Drive storage",

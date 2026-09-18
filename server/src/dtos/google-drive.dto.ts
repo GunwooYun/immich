@@ -180,6 +180,7 @@ const GoogleDriveAlbumStatusSchema = z
     accessLost: z.boolean().describe('Selected but no longer shared with this user, so uploads have stopped'),
     assetCount: z.int().describe('Assets in the album, excluding trashed'),
     uploadedCount: z.int().describe('Of those, how many are already in this user Drive'),
+    failedCount: z.int().describe('Of the remainder, how many have a recorded upload failure'),
   })
   .meta({ id: 'GoogleDriveAlbumStatusDto' });
 

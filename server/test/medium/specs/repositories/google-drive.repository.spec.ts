@@ -1384,6 +1384,58 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({ uploadedCount: 1 });
     });
 
+    it("should count an album's stuck assets, and stop counting one once it uploads", async () => {
+      // The album-scoped failure count (wave9c review N4). It decides whether the toolbar dot says
+      // "backing up" or "stopped", so the join has to be scoped the same three ways as the rest of
+      // this query — user, album, and "no ledger row beside the error".
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      await connect(ctx, guest.id, 'account-x', CONNECTION_B);
+      await connect(ctx, owner.id, 'account-x', CONNECTION_A);
+      await ctx.database.insertInto('google_drive_album').values({ userId: guest.id, albumId: album.id }).execute();
+      // The *owner's* failure on the same asset must not appear in the guest's album status.
+      await ctx.database
+        .insertInto('google_drive_upload_error')
+        .values({
+          userId: owner.id,
+          assetId: asset.id,
+          error: GoogleDriveUploadErrorClass.SourceUnreadable,
+          detail: null,
+          attempts: 1,
+          lastFailedAt: new Date(),
+        })
+        .execute();
+
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({ failedCount: 0 });
+
+      await ctx.database
+        .insertInto('google_drive_upload_error')
+        .values({
+          userId: guest.id,
+          assetId: asset.id,
+          error: GoogleDriveUploadErrorClass.SourceUnreadable,
+          detail: null,
+          attempts: 1,
+          lastFailedAt: new Date(),
+        })
+        .execute();
+
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({
+        assetCount: 1,
+        uploadedCount: 0,
+        failedCount: 1,
+      });
+
+      // A retry that finally succeeds writes the ledger row; the error row can outlive it, and a
+      // count that ignored the ledger would leave the album reading "stopped" for ever — the
+      // opposite of the bug this fixes.
+      await ledger(ctx, guest.id, asset.id, 'account-x', CONNECTION_B);
+      await expect(sut.getAlbumBackupStatus(guest.id, album.id)).resolves.toMatchObject({
+        uploadedCount: 1,
+        failedCount: 0,
+      });
+    });
+
     it('should not report an album as subscribed because somebody else selected it', async () => {
       // The other direction of the same two joins. Asking as the guest — who *has* a selection and
       // *is* a member — cannot distinguish a correctly scoped join from one that matches any row;

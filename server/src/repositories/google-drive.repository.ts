@@ -109,11 +109,12 @@ export class GoogleDriveRepository {
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID, DummyValue.STRING] })
   async setDriveAccountId(userId: string, connectionId: string, driveAccountId: string): Promise<string | null> {
     // Matching on the connection, not just on the user, is what makes this safe against a re-link
-    // that lands while the probe is in flight. It used to match on the refresh token, which asked
+    // that lands while the probe is in flight — account A's id must never end up on account B's
+    // connection. It used to match on the refresh token, which asked
     // the same question less directly: connectionId *is* "the connection I read", re-minted on every
     // re-link (upsertCredentials), non-null by schema, and it keeps the token out of every
     // repository signature except the two that must carry it. Without it the row could end up holding account A's id
-    // beside account B's token — permanently wrong, and wrong in the direction that silently stops
+    // on account B's connection — permanently wrong, and wrong in the direction that silently stops
     // uploads. Requiring the id to be null means this can only ever fill in a blank.
     await this.db
       .updateTable('user_google_drive')
@@ -485,6 +486,30 @@ export class GoogleDriveRepository {
           .where('asset.deletedAt', 'is', null)
           .select((inner) => inner.fn.countAll<number>().as('c'))
           .as('uploadedCount'),
+        // Album-scoped failures, by the same rule getErrorSummary uses user-wide: an error row
+        // with no ledger row beside it. Without this the album's remaining backlog is
+        // indistinguishable from work still in flight, and an asset that can never upload (a
+        // missing original, for instance — this has actually happened here) leaves the album
+        // reading "backing up" for good.
+        eb
+          .selectFrom('album_asset')
+          .innerJoin('asset', 'asset.id', 'album_asset.assetId')
+          .innerJoin('google_drive_upload_error', (join) =>
+            join
+              .onRef('google_drive_upload_error.assetId', '=', 'album_asset.assetId')
+              .on('google_drive_upload_error.userId', '=', userId),
+          )
+          .leftJoin('google_drive_upload', (join) =>
+            join
+              .onRef('google_drive_upload.assetId', '=', 'album_asset.assetId')
+              .on('google_drive_upload.userId', '=', userId)
+              .on(ledgerMatches(userId)),
+          )
+          .whereRef('album_asset.albumId', '=', 'album.id')
+          .where('asset.deletedAt', 'is', null)
+          .where('google_drive_upload.assetId', 'is', null)
+          .select((inner) => inner.fn.countAll<number>().as('c'))
+          .as('failedCount'),
       ])
       .executeTakeFirst();
   }
