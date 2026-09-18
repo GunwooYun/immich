@@ -1,5 +1,6 @@
 import { getMyGoogleDriveUploadedAssets } from '@immich/sdk';
 import { SvelteSet } from 'svelte/reactivity';
+import { eventManager } from '$lib/managers/event-manager.svelte';
 
 /**
  * Which on-screen assets are already in the user's Google Drive, for the thumbnail badge.
@@ -23,6 +24,15 @@ const DEBOUNCE_MS = 250;
 const REASK_AFTER_MS = 60_000;
 
 class GoogleDriveUploadedManager {
+  constructor() {
+    // Logging out is an SPA navigation here, not a page load, so a module singleton outlives the
+    // session unless it clears itself — the same reason upload/memory/plugin/search managers all
+    // subscribe to this. Without it the next user in the same tab sees "in my Drive" badges for
+    // assets the *previous* user uploaded (shared albums make that reachable), and nothing can
+    // correct it: lookups only ever add to this set, never remove.
+    eventManager.on({ AuthLogout: () => this.reset() });
+  }
+
   #uploaded = new SvelteSet<string>();
   /** asset id → when it was last asked about and came back not uploaded (or is in flight). */
   #askedAt = new Map<string, number>();
@@ -33,7 +43,16 @@ class GoogleDriveUploadedManager {
     return this.#uploaded.has(assetId);
   }
 
-  /** Queue ids for lookup; cheap to call on every render pass — known answers are skipped. */
+  /**
+   * Queue ids for lookup; cheap to call on every render pass — known answers are skipped.
+   *
+   * Reading `#uploaded` here is a *reactive* read inside Timeline's effect (SvelteSet.has on a
+   * missing key subscribes to the set's version), so every flush that adds something runs the
+   * effect again. That is not a loop, but not for the reason the first version of this comment
+   * claimed: the re-run simply finds nothing new to queue — ids now known are filtered here, ids
+   * that came back absent are held by the re-ask window below, and a failed batch that re-queues
+   * adds nothing to the set, so it cannot re-trigger itself.
+   */
   request(assetIds: Iterable<string>, now = Date.now()) {
     for (const id of assetIds) {
       if (this.#uploaded.has(id) || this.#queue.has(id)) {
@@ -75,7 +94,7 @@ class GoogleDriveUploadedManager {
     }
   }
 
-  /** For logout / tests. */
+  /** Called on logout (see the constructor), on disconnect, and by tests. */
   reset() {
     clearTimeout(this.#timer);
     this.#timer = undefined;

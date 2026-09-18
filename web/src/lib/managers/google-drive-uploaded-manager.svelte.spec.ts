@@ -1,4 +1,5 @@
 import { getMyGoogleDriveUploadedAssets } from '@immich/sdk';
+import { eventManager } from '$lib/managers/event-manager.svelte';
 import { googleDriveUploadedManager as manager } from '$lib/managers/google-drive-uploaded-manager.svelte';
 
 vi.mock('@immich/sdk', () => ({ getMyGoogleDriveUploadedAssets: vi.fn() }));
@@ -57,6 +58,21 @@ describe('googleDriveUploadedManager', () => {
     manager.request(['b'], t0 + 61_000);
     await vi.runAllTimersAsync();
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops everything it knows when the session ends', async () => {
+    // wave9b review C1: logging out here is an SPA navigation, so this module singleton survives
+    // it. The next user in the same tab would otherwise see "in my Drive" badges for assets the
+    // previous user uploaded — reachable through a shared album — and no later lookup can undo it,
+    // because lookups only add to the set.
+    lookup.mockResolvedValue({ assetIds: ['a'] });
+    manager.request(['a']);
+    await vi.runAllTimersAsync();
+    expect(manager.has('a')).toBe(true);
+
+    eventManager.emit('AuthLogout');
+
+    expect(manager.has('a')).toBe(false);
   });
 
   it('splits more than 1000 ids into server-sized batches', async () => {

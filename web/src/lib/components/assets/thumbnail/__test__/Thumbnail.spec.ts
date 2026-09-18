@@ -49,6 +49,11 @@ describe('Thumbnail component', () => {
     expect(tabbables.length).toBe(0);
   });
 
+  // Not covered here: the shared-link guard on the badge (wave9b review N3). `authManager
+  // .isSharedLink` is a $derived over a non-reactive mocked `page.route`, so it is computed once
+  // per module and a test cannot flip it without mocking the manager itself — which would weaken
+  // every other case in this file. The guard's real enforcement is in Timeline, which never looks
+  // anything up on a shared link.
   describe('Google Drive badge', () => {
     // TimelineAsset, which is what Thumbnail takes — not AssetResponseDto like the older cases above,
     // whose mismatch is a pre-existing svelte-check baseline entry this block should not add to.

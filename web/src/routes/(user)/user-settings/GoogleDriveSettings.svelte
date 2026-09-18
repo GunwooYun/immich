@@ -10,6 +10,7 @@
   import { goto } from '$app/navigation';
   import SettingInputField from '$lib/components/shared-components/settings/SettingInputField.svelte';
   import { SettingInputFieldType } from '$lib/constants';
+  import { googleDriveUploadedManager } from '$lib/managers/google-drive-uploaded-manager.svelte';
   import { pickGoogleDriveFolder } from '$lib/utils/google-picker';
   import { handleError } from '$lib/utils/handle-error';
   // The generated client handles the base URL, auth headers, and throws on any non-2xx response —
@@ -241,6 +242,11 @@
   const handleDisconnect = async () => {
     try {
       await disconnectGoogleDrive();
+      // The badge cache is keyed to a connection, and disconnecting is an SPA state change: without
+      // this the thumbnails keep their "in Drive" badges for the rest of the session while the
+      // server has already started answering with nothing. (Re-connecting needs no such call — it
+      // leaves the page for Google and comes back on a full load.)
+      googleDriveUploadedManager.reset();
       // Reset locally rather than re-fetching: we already know the resulting state, and this keeps
       // the UI from flashing stale "connected" content while a round trip completes.
       connected = false;
