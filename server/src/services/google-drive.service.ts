@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { drive_v3, google } from 'googleapis';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
-import { OnJob } from 'src/decorators';
+import { OnEvent, OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES,
@@ -14,6 +14,7 @@ import {
   QueueName,
   SystemMetadataKey,
 } from 'src/enum';
+import { ArgOf } from 'src/repositories/event.repository';
 import { BaseService } from 'src/services/base.service';
 import { GoogleDriveStorage, JobItem } from 'src/types';
 import {
@@ -360,6 +361,19 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Failed to link Google account');
     }
 
+    await this.storeGrant(userId, refreshToken);
+  }
+
+  /**
+   * Everything that happens *after* a refresh token is in hand, whatever produced it.
+   *
+   * Split out of linkAccount when a Google *login* became a second way to arrive here (see the
+   * GoogleDriveLoginGrant handler below). The token exchange differs between the two paths — one
+   * spends a code from the Drive consent screen, the other is handed a token the login already
+   * obtained — but what a new grant means for the ledger does not, and the ordering below is the
+   * part that must not be reinvented by a second caller.
+   */
+  private async storeGrant(userId: string, refreshToken: string): Promise<void> {
     // Record which Google account this token belongs to. The ledger is keyed by account, so this
     // is what makes "already uploaded" mean "already uploaded *to this Drive*" — connect a
     // different account and none of the old rows match, so the backlog recomputes by itself. No
@@ -385,6 +399,42 @@ export class GoogleDriveService extends BaseService {
     // connected account blocked at the worker's entrance with nothing in the flow saying to press
     // Resume.
     await this.googleDriveRepository.clearErrors(userId, Object.values(GoogleDriveUploadErrorClass));
+  }
+
+  /**
+   * Connects Drive from a Google *login*, using the refresh token that login already produced.
+   *
+   * The point of this path is that a user who signs in to Immich with the same Google account they
+   * would have connected by hand never has to walk the "Connect Google Drive" flow at all. It only
+   * exists when the deployment made it exist: the emitting gate requires the login client to be the
+   * Drive client and drive.file to be in the login scope (see isGoogleDriveLoginGrantEnabled), so
+   * on an unconfigured instance this listener is dead code that never receives an event.
+   *
+   * **First link only.** If any connection already exists we stop, without upserting. That is not
+   * an optimisation — upsertCredentials mints a fresh connectionId, and the ledger's ownership is
+   * keyed on it: replacing the row would orphan every "already uploaded" mark belonging to the old
+   * connection, and the next backfill would re-upload thousands of files that Drive's files.create
+   * has no way to deduplicate. A login happens constantly and must never be able to cause that.
+   * Re-linking stays a deliberate act on the settings page, which drains the old rows first.
+   *
+   * The enabled check repeats what the emitter already decided, on purpose: the config can change
+   * between the login and this handler, and a listener that trusts its caller's gate is one
+   * refactor away from writing credentials for a feature that is switched off.
+   */
+  @OnEvent({ name: 'GoogleDriveLoginGrant' })
+  async onGoogleDriveLoginGrant({ userId, refreshToken }: ArgOf<'GoogleDriveLoginGrant'>): Promise<void> {
+    if (!(await this.isEnabled())) {
+      return;
+    }
+
+    const existing = await this.googleDriveRepository.getCredentials(userId);
+    if (existing) {
+      this.logger.debug(`User ${userId} is already connected to Google Drive; leaving the connection untouched`);
+      return;
+    }
+
+    this.logger.log(`Connecting Google Drive for user ${userId} from their Google login`);
+    await this.storeGrant(userId, refreshToken);
   }
 
   /**

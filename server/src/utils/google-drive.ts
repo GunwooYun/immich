@@ -1,6 +1,8 @@
+import { SystemConfig } from 'src/config';
 import { GoogleDriveUploadErrorClass, JobName } from 'src/enum';
 import { GoogleDriveRepository } from 'src/repositories/google-drive.repository';
 import { JobRepository } from 'src/repositories/job.repository';
+import { isGoogleDriveEnabled } from 'src/utils/misc';
 
 /**
  * Thrown by the upload path when Drive's stored byte count doesn't match what we sent — kept as a
@@ -222,4 +224,75 @@ export const queueGoogleDriveUploads = async (
   await job.queueAll(
     pending.map((assetId) => ({ name: JobName.GoogleDriveUpload, data: { userId: ownerId, assetId } })),
   );
+};
+
+/**
+ * The only Drive scope this feature ever asks for. Exported because it now has two consumers: the
+ * dedicated "Connect Google Drive" flow, and the login grant gate below, which treats the presence
+ * of this scope in the *login* scope list as the operator's opt-in.
+ */
+export const GOOGLE_DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+/** OAuth scope strings are space-delimited (RFC 6749 §3.3); tolerate any run of whitespace. */
+export const hasGoogleDriveFileScope = (scope: string | undefined): boolean =>
+  !!scope && scope.split(/\s+/).includes(GOOGLE_DRIVE_FILE_SCOPE);
+
+const GOOGLE_ISSUER = 'https://accounts.google.com';
+const DISCOVERY_SUFFIX = '/.well-known/openid-configuration';
+
+/**
+ * Reduces the spellings an operator plausibly types for Google's issuer to one form.
+ *
+ * The admin form accepts either the bare issuer or its discovery document URL (openid-client
+ * resolves both), and a trailing slash is the most common copy-paste artefact. Anything that still
+ * differs after this is treated as "not Google" — a false negative only means the login does not
+ * also connect Drive, which is the safe direction.
+ */
+const normalizeIssuerUrl = (issuerUrl: string): string => {
+  let url = issuerUrl.trim().toLowerCase().replace(/\/+$/, '');
+  if (url.endsWith(DISCOVERY_SUFFIX)) {
+    url = url.slice(0, -DISCOVERY_SUFFIX.length).replace(/\/+$/, '');
+  }
+  return url;
+};
+
+/**
+ * Whether an OAuth login may also connect the user's Google Drive, using the refresh token Google
+ * hands back from the login itself.
+ *
+ * Every clause guards a way this could store a token the Drive worker cannot use, or ask for
+ * something the operator never agreed to:
+ *
+ *   - OAuth login must be on and the issuer must be Google — any other provider's refresh token is
+ *     meaningless to the Drive API.
+ *   - The login client must BE the Drive client. A Google refresh token is bound to the client
+ *     that minted it, and the upload worker refreshes with the googleDrive credentials; a token
+ *     from a different client would be stored as "connected" and then fail every refresh with
+ *     `unauthorized_client`, which is worse than not connecting at all.
+ *   - The login scope must include drive.file. This is the opt-in, deliberately with no separate
+ *     flag: if the operator did not add the scope, users never saw a Drive consent screen, and
+ *     silently asking for offline access would be a change they did not make.
+ *   - The Drive feature itself must be usable (credentials and a derivable redirect URL), otherwise
+ *     there is nowhere for the token to go.
+ */
+export const isGoogleDriveLoginGrantEnabled = (config: SystemConfig): boolean => {
+  const { oauth, googleDrive, server } = config;
+
+  if (!oauth.enabled) {
+    return false;
+  }
+
+  if (normalizeIssuerUrl(oauth.issuerUrl) !== GOOGLE_ISSUER) {
+    return false;
+  }
+
+  if (!googleDrive.clientId || oauth.clientId !== googleDrive.clientId) {
+    return false;
+  }
+
+  if (!hasGoogleDriveFileScope(oauth.scope)) {
+    return false;
+  }
+
+  return isGoogleDriveEnabled(googleDrive, server);
 };

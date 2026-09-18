@@ -70,6 +70,18 @@ type EventMap = {
   // queue events
   QueueStart: [QueueStartEvent];
 
+  // google drive events
+  /**
+   * An OAuth login (or account link) against Google came back with a refresh token that also
+   * covers Drive, and the deployment is configured so that the login client *is* the Drive client.
+   * Carries the token rather than a "go fetch it" signal because the authorization code is
+   * single-use and already spent by the time anyone could react to it.
+   *
+   * Emitted best-effort: the auth service swallows whatever a listener throws, because a Drive
+   * connection is a bonus and a failed login is not.
+   */
+  GoogleDriveLoginGrant: [{ userId: string; refreshToken: string }];
+
   // session events
   SessionDelete: [{ sessionId: string }];
 

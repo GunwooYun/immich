@@ -41,7 +41,18 @@ export class OAuthRepository {
     this.logger.setContext(OAuthRepository.name);
   }
 
-  async authorize(config: OAuthConfig, redirectUrl: string, state?: string, codeChallenge?: string) {
+  /**
+   * @param extraParams provider-specific authorization parameters. Applied first so the protocol
+   *   parameters below (redirect, scope, state, PKCE) can never be overridden by them. Used for
+   *   Google's `access_type=offline`, which is what makes a login also return a refresh token.
+   */
+  async authorize(
+    config: OAuthConfig,
+    redirectUrl: string,
+    state?: string,
+    codeChallenge?: string,
+    extraParams?: Record<string, string>,
+  ) {
     const client = await this.getClient(config);
     state ??= randomState();
 
@@ -54,6 +65,7 @@ export class OAuthRepository {
     }
 
     const params: Record<string, string> = {
+      ...extraParams,
       redirect_uri: redirectUrl,
       scope: config.scope,
       state,
@@ -83,7 +95,7 @@ export class OAuthRepository {
     url: string,
     expectedState: string,
     codeVerifier: string,
-  ): Promise<{ profile: OAuthProfile; sid?: string; idToken?: string }> {
+  ): Promise<{ profile: OAuthProfile; sid?: string; idToken?: string; refreshToken?: string; grantedScope?: string }> {
     const client = await this.getClient(config);
     const pkceCodeVerifier = client.serverMetadata().supportsPKCE() ? codeVerifier : undefined;
 
@@ -111,7 +123,16 @@ export class OAuthRepository {
         }
       }
 
-      return { profile, sid, idToken: tokens.id_token };
+      // The refresh token and granted scope are passed through for the Google Drive login grant
+      // (see isGoogleDriveLoginGrantEnabled). They are returned, never logged: the refresh token is
+      // a long-lived credential, and the error path below logs only the exception message.
+      return {
+        profile,
+        sid,
+        idToken: tokens.id_token,
+        refreshToken: tokens.refresh_token,
+        grantedScope: tokens.scope,
+      };
     } catch (error: Error | any) {
       if (error.message.includes('unexpected JWT alg received')) {
         this.logger.warn(

@@ -1429,4 +1429,210 @@ describe(AuthService.name, () => {
       await expect(sut.resetPinCode(AuthFactory.create(user), { pinCode: '000000' })).rejects.toThrow('Wrong PIN code');
     });
   });
+  /**
+   * "Logging in with Google also connects Google Drive."
+   *
+   * Every negative here asserts that the token exchange still happened. Without that witness a
+   * test would pass just as happily if the whole OAuth path had thrown before reaching the grant,
+   * which is precisely the failure mode this fork has been bitten by twice.
+   */
+  describe('Google Drive login grant', () => {
+    const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+    /** A config where the gate holds; `over` breaks one clause at a time. */
+    const gatedConfig = (over: { oauth?: object; googleDrive?: object } = {}) => ({
+      oauth: {
+        enabled: true,
+        autoRegister: true,
+        issuerUrl: 'https://accounts.google.com',
+        clientId: 'shared-client-id',
+        scope: `openid email profile ${DRIVE_SCOPE}`,
+        ...over.oauth,
+      },
+      googleDrive: {
+        clientId: 'shared-client-id',
+        clientSecret: 'client-secret',
+        redirectUrl: 'https://immich.example.com/api/google-drive/callback',
+        ...over.googleDrive,
+      },
+    });
+
+    const arrangeCallback = (over: { refreshToken?: string; grantedScope?: string } = {}) => {
+      const user = UserFactory.create();
+      mocks.oauth.getProfileAndOAuthSid.mockResolvedValue({
+        profile: OAuthProfileFactory.create(),
+        refreshToken: 'refresh-token',
+        grantedScope: `openid email ${DRIVE_SCOPE}`,
+        ...over,
+      });
+      mocks.user.getByEmail.mockResolvedValue(user);
+      mocks.user.update.mockResolvedValue(user);
+      mocks.session.create.mockResolvedValue(SessionFactory.create());
+      return {
+        user,
+        run: () =>
+          sut.callback(
+            { url: 'http://immich/auth/login?code=abc123', state: 'xyz789', codeVerifier: 'foobar' },
+            {},
+            loginDetails,
+          ),
+      };
+    };
+
+    const arrangeLink = (over: { refreshToken?: string; grantedScope?: string } = {}) => {
+      const user = UserFactory.create();
+      const auth = AuthFactory.from(user).apiKey({ permissions: [] }).build();
+      mocks.oauth.getProfileAndOAuthSid.mockResolvedValue({
+        profile: { sub: 'sub' },
+        refreshToken: 'refresh-token',
+        grantedScope: `openid email ${DRIVE_SCOPE}`,
+        ...over,
+      });
+      mocks.user.update.mockResolvedValue(user);
+      return {
+        user,
+        run: () =>
+          sut.link(auth, { url: 'http://immich/user-settings?code=abc123', state: 'xyz789', codeVerifier: 'foo' }, {}),
+      };
+    };
+
+    describe('authorize', () => {
+      it('should ask Google for offline access when the gate holds', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+
+        await sut.authorize({ redirectUri: 'https://immich.example.com' });
+
+        expect(mocks.oauth.authorize).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, undefined, {
+          access_type: 'offline',
+          include_granted_scopes: 'true',
+        });
+      });
+
+      it.each([
+        ['the issuer is not Google', { oauth: { issuerUrl: 'https://auth.example.com' } }],
+        ['the login client is not the Drive client', { oauth: { clientId: 'other-client' } }],
+        ['the login scope does not include drive.file', { oauth: { scope: 'openid email profile' } }],
+        ['the Drive feature is not configured', { googleDrive: { clientId: '', clientSecret: '' } }],
+      ])('should send no Google-specific parameters when %s', async (_, over) => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig(over));
+
+        await sut.authorize({ redirectUri: 'https://immich.example.com' });
+
+        // The authorization still happens — this is about the parameters, not about breaking login.
+        expect(mocks.oauth.authorize).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          undefined,
+          undefined,
+          undefined,
+        );
+      });
+    });
+
+    describe('callback', () => {
+      it('should emit the grant when gated, with a refresh token and the drive.file scope', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { user, run } = arrangeCallback();
+
+        await run();
+
+        expect(mocks.event.emit).toHaveBeenCalledWith('GoogleDriveLoginGrant', {
+          userId: user.id,
+          refreshToken: 'refresh-token',
+        });
+      });
+
+      it('should not emit when the deployment is not gated', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig({ googleDrive: { clientId: 'a-different-client' } }));
+        const { run } = arrangeCallback();
+
+        await run();
+
+        expect(mocks.oauth.getProfileAndOAuthSid).toHaveBeenCalled();
+        expect(mocks.event.emit).not.toHaveBeenCalledWith('GoogleDriveLoginGrant', expect.anything());
+      });
+
+      it('should not emit when Google returned no refresh token', async () => {
+        // The normal case for a returning user whose grant is still valid: an access token only.
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { run } = arrangeCallback({ refreshToken: undefined });
+
+        await run();
+
+        expect(mocks.oauth.getProfileAndOAuthSid).toHaveBeenCalled();
+        expect(mocks.event.emit).not.toHaveBeenCalledWith('GoogleDriveLoginGrant', expect.anything());
+      });
+
+      it('should not emit when the user declined the Drive scope', async () => {
+        // Google lets a user untick individual scopes on the consent screen, so "we asked for
+        // drive.file" and "they granted drive.file" are different facts. Only the second one may
+        // be acted on: a token without the scope would be stored as a connection that 403s.
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { run } = arrangeCallback({ grantedScope: 'openid email profile' });
+
+        await run();
+
+        expect(mocks.oauth.getProfileAndOAuthSid).toHaveBeenCalled();
+        expect(mocks.event.emit).not.toHaveBeenCalledWith('GoogleDriveLoginGrant', expect.anything());
+      });
+
+      it('should still log the user in when connecting Drive throws', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { run } = arrangeCallback();
+        mocks.event.emit.mockRejectedValue(new Error('Drive is having a day'));
+
+        await expect(run()).resolves.toEqual(expect.objectContaining({ accessToken: expect.any(String) }));
+
+        expect(mocks.event.emit).toHaveBeenCalledWith('GoogleDriveLoginGrant', expect.anything());
+        expect(mocks.session.create).toHaveBeenCalled();
+      });
+
+      it('should never put the refresh token in the log line', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { user, run } = arrangeCallback();
+        mocks.event.emit.mockRejectedValue(new Error('Drive is having a day'));
+
+        await run();
+
+        expect(mocks.logger.warn).toHaveBeenCalledWith(expect.stringContaining(user.id));
+        for (const [message] of mocks.logger.warn.mock.calls) {
+          expect(message).not.toContain('refresh-token');
+        }
+      });
+    });
+
+    describe('link', () => {
+      it('should emit the grant when gated', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { user, run } = arrangeLink();
+
+        await run();
+
+        expect(mocks.event.emit).toHaveBeenCalledWith('GoogleDriveLoginGrant', {
+          userId: user.id,
+          refreshToken: 'refresh-token',
+        });
+      });
+
+      it('should not emit when the user declined the Drive scope', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { run } = arrangeLink({ grantedScope: 'openid email profile' });
+
+        await run();
+
+        expect(mocks.oauth.getProfileAndOAuthSid).toHaveBeenCalled();
+        expect(mocks.event.emit).not.toHaveBeenCalledWith('GoogleDriveLoginGrant', expect.anything());
+      });
+
+      it('should still link the account when connecting Drive throws', async () => {
+        mocks.systemMetadata.get.mockResolvedValue(gatedConfig());
+        const { user, run } = arrangeLink();
+        mocks.event.emit.mockRejectedValue(new Error('Drive is having a day'));
+
+        await expect(run()).resolves.toEqual(expect.objectContaining({ id: user.id }));
+
+        expect(mocks.user.update).toHaveBeenCalledWith(user.id, { oauthId: 'sub' });
+      });
+    });
+  });
 });

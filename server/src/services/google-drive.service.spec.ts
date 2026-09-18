@@ -185,6 +185,9 @@ const unidentified = (userId: string) => ({
 
 // The shape streamPendingUploads returns. Module scope and the `await` are the house style for
 // these (see trash.service.spec.ts): ESLint rejects a nested generator that never awaits.
+/** The payload a Google login hands to the Drive feature. */
+const grant = (userId: string) => ({ userId, refreshToken: 'login-refresh-token' });
+
 async function* pendingUploads(
   userId: string,
   count: number,
@@ -2103,6 +2106,55 @@ describe(GoogleDriveService.name, () => {
       // or the credentials missing, or the ledger already satisfied.
       expect(mocks.storage.createReadStream).not.toHaveBeenCalled();
       expect(mocks.asset.getById).toHaveBeenCalled();
+    });
+  });
+  /**
+   * Connecting Drive as a side effect of signing in with Google. The event only ever arrives on a
+   * deployment whose login client *is* the Drive client (the auth service holds that gate), so
+   * these tests are about what the handler does once it has arrived.
+   */
+  describe('onGoogleDriveLoginGrant', () => {
+    it('should connect a user who has never connected Drive', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+      driveAboutGet.mockResolvedValue({ data: { user: { permissionId: 'account-a' } } });
+
+      await sut.onGoogleDriveLoginGrant(grant(userId));
+
+      expect(mocks.googleDrive.upsertCredentials).toHaveBeenCalledWith(userId, 'login-refresh-token', 'account-a');
+      // Same post-grant bookkeeping as the manual link, because it is literally the same method.
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(userId, Object.values(GoogleDriveUploadErrorClass));
+    });
+
+    it('should leave an existing connection completely alone', async () => {
+      // The guarantee this handler exists to keep. upsertCredentials mints a new connectionId, and
+      // ledger ownership is keyed on it — re-minting on a login would orphan every "already
+      // uploaded" mark and re-upload thousands of files that files.create cannot deduplicate.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(userId));
+
+      await sut.onGoogleDriveLoginGrant(grant(userId));
+
+      // Witness: the handler got past the enabled gate and actually looked, so the negatives below
+      // are about the existing connection and not about an early bail.
+      expect(mocks.googleDrive.getCredentials).toHaveBeenCalledWith(userId);
+      expect(mocks.googleDrive.upsertCredentials).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.adoptUnstampedUploads).not.toHaveBeenCalled();
+      expect(driveAboutGet).not.toHaveBeenCalled();
+    });
+
+    it('should do nothing at all when the feature is not configured', async () => {
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({});
+
+      await sut.onGoogleDriveLoginGrant(grant(userId));
+
+      // Witness: the handler ran and consulted the config, rather than the event never arriving.
+      expect(mocks.systemMetadata.get).toHaveBeenCalledWith(SystemMetadataKey.SystemConfig);
+      expect(mocks.googleDrive.getCredentials).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.upsertCredentials).not.toHaveBeenCalled();
     });
   });
 });

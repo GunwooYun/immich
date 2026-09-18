@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, UnauthorizedExcept
 import { parse } from 'cookie';
 import { DateTime } from 'luxon';
 import { IncomingHttpHeaders } from 'node:http';
+import { SystemConfig } from 'src/config';
 import { LOGIN_DUMMY_HASH, LOGIN_URL, MOBILE_REDIRECT, SALT_ROUNDS } from 'src/constants';
 import { AuthSharedLink, AuthUser, UserAdmin } from 'src/database';
 import {
@@ -26,6 +27,7 @@ import { OAuthProfile } from 'src/repositories/oauth.repository';
 import { BaseService } from 'src/services/base.service';
 import { isGranted } from 'src/utils/access';
 import { HumanReadableSize } from 'src/utils/bytes';
+import { hasGoogleDriveFileScope, isGoogleDriveLoginGrantEnabled } from 'src/utils/google-drive';
 import { generateProfileImage } from 'src/utils/profile-image';
 import { getUserAgentDetails } from 'src/utils/request';
 export interface LoginDetails {
@@ -278,22 +280,44 @@ export class AuthService extends BaseService {
   }
 
   async authorize(dto: OAuthConfigDto) {
-    const { oauth } = await this.getConfig({ withCache: false });
+    const config = await this.getConfig({ withCache: false });
+    const { oauth } = config;
 
     if (!oauth.enabled) {
       throw new BadRequestException('OAuth is not enabled');
     }
+
+    /*
+     * Whether a Google login also yields a refresh token is decided here, at the authorization
+     * request, and nowhere else: without `access_type=offline` the code exchange returns an access
+     * token only, and there is no second chance to ask once the code has been spent. So the two
+     * Google-specific parameters go out with the login itself when the gate holds.
+     *
+     * `include_granted_scopes` keeps Google's incremental-authorization contract: a user who has
+     * already granted drive.file is not asked again, and the token response still reports the full
+     * granted scope list — which is exactly what the callback below checks before believing the
+     * grant covers Drive.
+     *
+     * Sent only when gated because these are Google's spellings. An unrelated provider would at
+     * best ignore them and at worst reject the request, which would break plain OAuth login for a
+     * feature that deployment is not even using.
+     */
+    const extraParams = isGoogleDriveLoginGrantEnabled(config)
+      ? { access_type: 'offline', include_granted_scopes: 'true' }
+      : undefined;
 
     return await this.oauthRepository.authorize(
       oauth,
       this.resolveRedirectUri(oauth, dto.redirectUri),
       dto.state,
       dto.codeChallenge,
+      extraParams,
     );
   }
 
   async callback(dto: OAuthCallbackDto, headers: IncomingHttpHeaders, loginDetails: LoginDetails) {
-    const { oauth } = await this.getConfig({ withCache: false });
+    const config = await this.getConfig({ withCache: false });
+    const { oauth } = config;
     if (!oauth.enabled) {
       throw new BadRequestException('OAuth is not enabled');
     }
@@ -313,6 +337,8 @@ export class AuthService extends BaseService {
       profile,
       sid: oauthSid,
       idToken: oauthBearerToken,
+      refreshToken,
+      grantedScope,
     } = await this.oauthRepository.getProfileAndOAuthSid(oauth, url, expectedState, codeVerifier);
     const normalizedEmail = profile.email ? profile.email.trim().toLowerCase() : undefined;
     const { autoRegister, defaultStorageQuota, storageLabelClaim, storageQuotaClaim, roleClaim } = oauth;
@@ -382,6 +408,8 @@ export class AuthService extends BaseService {
       await this.syncProfilePicture(user, profile.picture);
     }
 
+    await this.connectGoogleDriveFromLogin(config, user.id, refreshToken, grantedScope);
+
     return this.createLoginResponse(user, loginDetails, oauthSid, oauthBearerToken);
   }
 
@@ -419,11 +447,14 @@ export class AuthService extends BaseService {
       throw new BadRequestException('OAuth code verifier is missing');
     }
 
-    const { oauth } = await this.getConfig({ withCache: false });
+    const config = await this.getConfig({ withCache: false });
+    const { oauth } = config;
     const {
       profile: { sub: oauthId },
       sid,
       idToken,
+      refreshToken,
+      grantedScope,
     } = await this.oauthRepository.getProfileAndOAuthSid(oauth, dto.url, expectedState, codeVerifier);
     const duplicate = await this.userRepository.getByOAuthId(oauthId);
     if (duplicate && duplicate.id !== auth.user.id) {
@@ -439,7 +470,42 @@ export class AuthService extends BaseService {
     }
 
     const user = await this.userRepository.update(auth.user.id, { oauthId });
+
+    await this.connectGoogleDriveFromLogin(config, user.id, refreshToken, grantedScope);
+
     return mapUserAdmin(user);
+  }
+
+  /**
+   * Hands a Google login's refresh token to the Drive feature, when that login actually was one.
+   *
+   * Three things have to be true and each rules out a different way of storing a token that cannot
+   * work: the deployment must be configured so the login client *is* the Drive client
+   * (isGoogleDriveLoginGrantEnabled), Google must have returned a refresh token at all (it omits
+   * one when the user has an unexpired grant and the authorization did not ask for offline access),
+   * and the scope the user actually consented to must include drive.file — the requested scope is
+   * only what we asked for, and a user can decline the Drive checkbox while approving the login.
+   *
+   * Nothing here may make a login fail. A Drive connection is a convenience; being unable to log in
+   * is an outage, and the listener on the far side talks to Google over the network. Hence the
+   * catch, and hence the warning naming only the user: the payload is a long-lived credential and
+   * has no business in a log line.
+   */
+  private async connectGoogleDriveFromLogin(
+    config: SystemConfig,
+    userId: string,
+    refreshToken?: string,
+    grantedScope?: string,
+  ): Promise<void> {
+    if (!refreshToken || !hasGoogleDriveFileScope(grantedScope) || !isGoogleDriveLoginGrantEnabled(config)) {
+      return;
+    }
+
+    try {
+      await this.eventRepository.emit('GoogleDriveLoginGrant', { userId, refreshToken });
+    } catch (error: Error | any) {
+      this.logger.warn(`Unable to connect Google Drive from the OAuth login of user ${userId}: ${error}`);
+    }
   }
 
   async unlink(auth: AuthDto): Promise<UserAdminResponseDto> {
