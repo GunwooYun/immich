@@ -573,53 +573,50 @@ SQL
 
 ---
 
-## Current Project: Google Drive 연결 운영 경로 확정
+## Current Project: Google Drive 연결을 의식 없이 유지하기 (In production 이후)
 
 ### Context
-- 목표: 관리자 본인의 Drive 연결이 **끊기지 않고, 매주 의식 없이** 유지되게 만든다.
-  가족은 이 기능을 쓰지 않는다 — 같은 LAN에서 immich 모바일 앱만 쓰므로 별도 작업이 없다.
-- 현재 운영 상태 (2026-09-02 측정, 배포본은 Wave 5 이미지 `immich-server:3.1.0-gdrive`):
-  `googleDrive.redirectUrl = http://localhost:2283/api/google-drive/callback`,
-  `server.externalDomain = (unset)`, `enabled = true`,
-  ledger 6,965건 / 대기 35건(그중 2건은 `source_unreadable` 영구 실패), 마지막 업로드 09-02 00:13 KST.
-- 접속 경로: Windows에서 SSH 터널(`-L 2283:localhost:2283`) → `http://localhost:2283`.
-  구글이 사설 IP redirect를 거부하기 때문이고, localhost는 허용된다.
-- Tailscale은 랩탑에서 컨테이너로 돌고 `serve`로 `https://laptop-server.tail68cec7.ts.net`이
-  tailnet 내부에서 200을 준다. 단 **Windows PC가 tailnet에 없어** 지금은 쓰지 못한다.
+- 목표는 그대로다: 관리자 본인의 Drive 연결이 **끊기지 않고, 매주 재연결 의식 없이** 유지되게 한다.
+  가족은 이 기능을 쓰지 않는다(같은 LAN에서 immich 모바일 앱만 사용).
+- **OAuth 앱을 "In production"으로 게시했다 (2026-09-14).** 이것이 이 프로젝트의 전환점이다 —
+  Testing 상태의 **7일 refresh token 만료가 사라졌다**. 게시 조건이던 홈페이지·개인정보처리방침 URL은
+  GitHub Pages(`myimmich.babystory.co.kr`, 저장소 `GunwooYun/myimmich-site`)로 충족했고, 스코프는
+  `drive.file`(비민감)이라 앱 심사는 필요 없었다.
+- 운영 상태 (2026-09-19 측정, 배포본 `immich-server:3.1.0-gdrive-w8` = 커밋 `39d4b5900`):
+  원장 8,098건 / 오류 0 / 연결 1명(식별됨) / `connectedAt = 2026-09-14 12:49`(재연결 후 5일째 생존),
+  마지막 업로드 2026-09-18 21:28 KST.
+- 접속 경로는 그대로다: 평소 `http://192.168.50.211:2283`(LAN), Drive 연결 플로우만
+  `https://ha-server.tail68cec7.ts.net`.
 
 ### Decisions
-- **공개 노출(funnel) 금지, 도메인 구입 보류** — 사용자 결정. 그래서 경로는 localhost 터널 또는
-  tailnet 둘 중 하나다.
-- **폴더 설정은 앞으로의 업로드에만 적용된다.** 이미 루트에 올라간 6,965건을 옮기는 코드는 없다
-  (`addParents`/`files.update` 없음). Drive 웹에서 수동으로 옮겨도 안전하다 — ledger는
-  `driveFileId` 기준이고 이동해도 ID가 바뀌지 않는다.
-- **일괄 업로드는 자동으로 돌지 않는다.** `GoogleDriveUploadQueueAll`의 유일한 생산자는
-  관리자 Jobs 화면(`queue.service.ts:249`)이다. 새 사진은 이벤트로 개별 큐잉된다.
+- **도메인 구입 보류 결정은 끝났다.** 기존 `babystory.co.kr`의 서브도메인을 빌려 쓰는 것으로 해결했고,
+  공개 노출(funnel)은 여전히 하지 않는다 — GitHub Pages는 정적 문서 두 장뿐이고 immich는 노출되지 않는다.
+- **관리 화면의 Google Drive 설정 항목은 삭제했다** (wave8). 설정의 출처는 `IMMICH_GOOGLE_DRIVE_*`
+  환경변수와 저장된 설정 row뿐이고, `enabled` 플래그는 폐지했다. 자세한 내용과 row 정리 절차는 §8.
+- **M8의 `refreshToken` nullable(소프트 해제)은 버렸다.** CAS만 `connectionId`로 옮겼다 — §7 item 10.
+- **사진별 배지는 타임라인 쿼리에 조인하지 않는다.** 화면에 보이는 자산만 별도 엔드포인트로 묻는다.
 
 ### Notes (지뢰)
-- **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다.** `isGoogleDriveEnabled`는
-  redirect URL을 *파생할 수 있을 때만* 참이다. 예전에는 관리자 폼의 "비워두면 External Domain을
-  쓴다"는 안내가 정확히 그 상태로 유도했다 — 그 폼과 안내 문구는 함께 제거됐다. 지금 값의 출처는
-  `IMMICH_GOOGLE_DRIVE_REDIRECT_URL`과 저장된 설정 row 둘뿐이다.
-- **redirect URL을 바꿔도 저장된 refresh token은 무효화되지 않는다.** `redirect_uri`는 코드 교환
-  때만 쓰이고 refresh 요청에는 실리지 않는다. ledger도 그대로다.
-- **`TS_HOSTNAME=ha-server`** 가 컨테이너 env에 있어 재시작 시 콘솔 이름(`laptop-server`)을 되돌릴
-  수 있다. ts.net 경로를 쓰기로 하면 **먼저** compose를 고쳐야 한다 — 이름이 바뀌면 인증서와
-  구글 콘솔 등록이 함께 어긋난다.
-- **데스크탑 dev container가 호스트 2283을 점유**해 터널과 상호 배타적이다. dev를 다른 호스트
-  포트로 바인딩하면 둘이 공존한다.
+- **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다** — 배포 전 유일한 하드 게이트(§7).
+- **운영 row에는 아직 다섯 키가 남아 있고 env를 이긴다.** 랩탑 `.env`·컨테이너 env·compose 어디에도
+  `IMMICH_GOOGLE_DRIVE_*`는 없다(2026-09-16 이름만 확인). 그래서 로그에 폐지된 `enabled` 키 때문에
+  `Unknown keys found` 경고가 매 기동 뜬다 — 무해하고, §8의 정리 절차를 밟으면 사라진다.
+- **재연결하면 폴더를 다시 골라야 한다**(권한 취소 시 행 전체가 삭제되므로). In production 전환으로
+  빈도는 "매주"에서 "사용자가 직접 취소할 때"로 떨어졌다.
+- **데스크탑 dev container가 호스트 2283을 점유**해 SSH 터널과 상호 배타적이다.
 
 ### Tasks
-1. ~~Jobs에서 큐 실행 → 폴더 검증~~ **완료 (2026-09-02).** 업로드 6,996건, **대기 0**,
-   선택한 폴더로 들어가는 것까지 확인. 1차 목표(연결 → 로그인 → 자동 업로드) 달성.
-2. ~~`source_unreadable` 2건~~ **완료.** 원본 파일이 디스크에서 실제로 사라진 깨진 자산이었고,
-   immich에서 삭제해 해결. **failedCount는 `asset.deletedAt is null`을 보므로 휴지통에 넣는 즉시
-   0이 되고**, 휴지통을 비우면 FK CASCADE로 에러 행까지 사라진다 — DB 직접 수정은 필요 없었다.
-   (에러 행만 지우는 방법은 틀렸다: 자산이 추적 앨범에 남아 있으면 다음 큐 실행에서 재생성된다.
-   실제로 시도 횟수가 9→10으로 오르는 것으로 확인했다.)
-3. OAuth 앱 "In production" 전환 시도 — 스코프가 `drive.file`(비민감)이고 redirect가 localhost라
-   도메인 검증이 불필요할 가능성이 크다. 성공하면 7일 만료가 사라져 주 1회 재연결 의식이 없어진다
-4. Wave 6 배포 전 redirect 정책 확정(둘 중 하나를 반드시 채운 상태로)
-5. (ts.net 경로로 갈 경우에만) `TS_HOSTNAME` 고정 → Windows에 Tailscale 설치 → 콘솔에 URI 추가
-6. dev container를 다른 호스트 포트로 옮겨 터널과 공존
-7. round-11 리뷰 종료 후 Wave 6 배포
+1. ~~Jobs 큐 실행 → 폴더 검증~~ **완료 (2026-09-02).**
+2. ~~`source_unreadable` 2건~~ **완료.**
+3. ~~OAuth 앱 "In production" 전환~~ **완료 (2026-09-14).**
+4. ~~Wave 6 배포 전 redirect 정책 확정~~ **완료** — row의 `redirectUrl`이 채워져 있다.
+5. ~~wave8 배포~~ **완료 (2026-09-16, `-w8` 이미지).** 롤백용 `-w7b` 이미지와
+   `~/immich-app/docker-compose.yml.bak-w7b`가 랩탑에 남아 있다.
+6. **2026-09-21에 연결 생존을 확인한다** — `connectedAt`이 9/14 그대로이고 업로드가 이어지면
+   7일 만료가 사라졌다는 증거가 된다. 이 프로젝트의 원래 목표가 그때 닫힌다.
+7. **구글 로그인만으로 Drive 연결** (진행 중) — 로그인 동의에서 받은 refresh token을 첫 연결에 한해
+   저장한다. 세 조건(구글 issuer / 로그인 clientId == Drive clientId / 로그인 스코프에 `drive.file`)을
+   모두 만족할 때만 동작하고, 그 전까지는 코드가 있어도 아무 일도 하지 않는다. 켜려면 사용자가
+   Google 콘솔에 redirect URI를 추가하고 관리 화면 OAuth를 설정해야 한다(autoRegister는 꺼 둘 것).
+8. (선택) 설정 row 정리 → env 기술로 전환. 네 값을 사용자가 직접 `.env`에 넣어야 한다(§8).
+9. (선택) dev container를 다른 호스트 포트로 옮겨 터널과 공존.
