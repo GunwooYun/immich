@@ -783,6 +783,7 @@
                       togglePending={driveTogglePending}
                       uploaded={driveUploaded}
                       total={driveTotal}
+                      failed={driveFailed}
                       storage={driveStorage}
                       folderId={driveFolderId}
                       onToggle={handleToggleGoogleDriveBackup}

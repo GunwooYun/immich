@@ -1182,7 +1182,7 @@
   "google_drive_connected_since": "Connected to Google Drive since {date}.",
   "google_drive_disconnect": "Disconnect",
   "google_drive_disconnected": "Google Drive disconnected",
-  "google_drive_failed_count": "{count} uploads failed. They will be retried on the next sync.",
+  "google_drive_failed_count": "{count} failed — press to retry",
   "google_drive_folder_change": "Change",
   "google_drive_folder_current": "Uploading to: {folder}",
   "google_drive_folder_id": "Target folder ID",

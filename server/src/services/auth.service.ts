@@ -290,13 +290,8 @@ export class AuthService extends BaseService {
     /*
      * Whether a Google login also yields a refresh token is decided here, at the authorization
      * request, and nowhere else: without `access_type=offline` the code exchange returns an access
-     * token only, and there is no second chance to ask once the code has been spent. So the two
-     * Google-specific parameters go out with the login itself when the gate holds.
-     *
-     * `include_granted_scopes` keeps Google's incremental-authorization contract: a user who has
-     * already granted drive.file is not asked again, and the token response still reports the full
-     * granted scope list — which is exactly what the callback below checks before believing the
-     * grant covers Drive.
+     * token only, and there is no second chance to ask once the code has been spent. So the
+     * Google-specific parameter goes out with the login itself when the gate holds.
      *
      * Sent only when gated because this is Google's spelling. An unrelated provider would at best
      * ignore it and at worst reject the request, which would break plain OAuth login for a feature

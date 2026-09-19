@@ -265,10 +265,13 @@ const normalizeIssuerUrl = (issuerUrl: string): string => {
  *
  *   - OAuth login must be on and the issuer must be Google — any other provider's refresh token is
  *     meaningless to the Drive API.
- *   - The login client must BE the Drive client. A Google refresh token is bound to the client
- *     that minted it, and the upload worker refreshes with the googleDrive credentials; a token
- *     from a different client would be stored as "connected" and then fail every refresh with
- *     `unauthorized_client`, which is worse than not connecting at all.
+ *   - The login client must BE the Drive client, secret included. A Google refresh token is
+ *     bound to the client that minted it, and the upload worker refreshes with the googleDrive
+ *     credentials; a token from another client — or the same client with a different secret —
+ *     would be stored as "connected" and then fail every refresh, which is worse than not
+ *     connecting at all.
+ *   - `prompt=consent` is refused: it mints a refresh token on every login while only the first
+ *     is ever used, and Google drops the oldest once an account holds 100 for one client.
  *   - The login scope must include drive.file. This is the opt-in, deliberately with no separate
  *     flag: if the operator did not add the scope, users never saw a Drive consent screen, and
  *     silently asking for offline access would be a change they did not make.
@@ -305,7 +308,15 @@ export const isGoogleDriveLoginGrantEnabled = (config: SystemConfig): boolean =>
   // outstanding for a client — so the churn would eventually invalidate the very token the upload
   // worker is using. An operator who wants that setting keeps it; they just do not get the
   // login grant with it.
-  if (oauth.prompt.trim().toLowerCase().split(/\s+/).includes('consent')) {
+  // OIDC says prompt is space-delimited, but commas are a common mis-spelling and Google would
+  // reject that login anyway — splitting on both keeps this clause from opening on a typo.
+  if (
+    oauth.prompt
+      .trim()
+      .toLowerCase()
+      .split(/[\s,]+/)
+      .includes('consent')
+  ) {
     return false;
   }
 

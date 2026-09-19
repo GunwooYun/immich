@@ -22,6 +22,7 @@
     togglePending={false}
     uploaded={3}
     total={10}
+    failed={0}
     storage={{ limitBytes: 100, usageBytes: 50, usageInDriveTrashBytes: 0 }}
     folderId="folder-1"
     blockedReason={null}

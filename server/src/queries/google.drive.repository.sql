@@ -216,15 +216,44 @@ select
     where
       "album_asset"."albumId" = "album"."id"
       and "asset"."deletedAt" is null
-  ) as "uploadedCount"
+  ) as "uploadedCount",
+  (
+    select
+      count(*) as "c"
+    from
+      "album_asset"
+      inner join "asset" on "asset"."id" = "album_asset"."assetId"
+      inner join "google_drive_upload_error" on "google_drive_upload_error"."assetId" = "album_asset"."assetId"
+      and "google_drive_upload_error"."userId" = $3
+      left join "google_drive_upload" on "google_drive_upload"."assetId" = "album_asset"."assetId"
+      and "google_drive_upload"."userId" = $4
+      and (
+        "google_drive_upload"."driveAccountId" = coalesce(
+          (
+            select
+              "driveAccountId"
+            from
+              "user_google_drive"
+            where
+              "userId" = $5
+          ),
+          ''
+        )
+        or "google_drive_upload"."driveAccountId" = ''
+      )
+    where
+      "album_asset"."albumId" = "album"."id"
+      and "asset"."deletedAt" is null
+      and "google_drive_upload"."assetId" is null
+  ) as "failedCount"
 from
   "album"
   left join "album_user" on "album_user"."albumId" = "album"."id"
-  and "album_user"."userId" = $3
+  and "album_user"."userId" = $6
   left join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
-  and "google_drive_album"."userId" = $4
+  and "google_drive_album"."userId" = $7
 where
-  "album"."id" = $5
+  "album"."id" = $8
   and "album"."deletedAt" is null
   and (
     "album_user"."userId" is not null

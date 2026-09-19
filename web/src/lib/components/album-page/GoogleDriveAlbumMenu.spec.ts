@@ -24,6 +24,7 @@ const baseProps = {
   togglePending: false,
   uploaded: 3,
   total: 10,
+  failed: 0,
   storage: { limitBytes: 100, usageBytes: 96, usageInDriveTrashBytes: 0 },
   folderId: 'folder-1',
   blockedReason: null as string | null,
@@ -258,6 +259,27 @@ describe('GoogleDriveAlbumMenu', () => {
       expect(open).toHaveBeenCalledWith('https://drive.google.com/settings/storage', '_blank', 'noopener');
       expect(goto).not.toHaveBeenCalled();
       expect(closeCallback).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('failed assets on the sync row', () => {
+    it('should name the failures when some of the backlog has already failed', () => {
+      // Otherwise the menu says "7 waiting" under a toolbar dot that says "backup stopped".
+      const { getByText } = renderMenu({ uploaded: 3, total: 10, failed: 7 });
+      expect(getByText(/7 failed/)).toBeInTheDocument();
+    });
+
+    it('should say nothing about failures when there are none', () => {
+      const { getByText, queryByText } = renderMenu({ uploaded: 3, total: 10, failed: 0 });
+      expect(queryByText(/failed/)).not.toBeInTheDocument();
+      // Witness that the sync row rendered, so the absence is about the failure line alone.
+      expect(getByText('7 waiting')).toBeInTheDocument();
+    });
+
+    it('should say nothing once the album is fully uploaded, however stale the error rows', () => {
+      const { getByText, queryByText } = renderMenu({ uploaded: 10, total: 10, failed: 4 });
+      expect(queryByText(/failed/)).not.toBeInTheDocument();
+      expect(getByText('All synced')).toBeInTheDocument();
     });
   });
 

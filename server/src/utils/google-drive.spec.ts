@@ -256,6 +256,9 @@ describe('isGoogleDriveLoginGrantEnabled', () => {
     // the churn would eventually kill the token the upload worker is refreshing with.
     expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'consent' } }))).toBe(false);
     expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'select_account consent' } }))).toBe(false);
+    // Commas are not OIDC's delimiter, but they are a common mis-spelling and we would rather the
+    // clause hold than open on a typo (wave9e review N4).
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'consent,select_account' } }))).toBe(false);
     // Other prompt values are none of this feature's business.
     expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'select_account' } }))).toBe(true);
   });

@@ -35,6 +35,14 @@
     togglePending: boolean;
     uploaded: number;
     total: number;
+    /**
+     * Assets in this album whose last attempt failed and which are still not in Drive.
+     *
+     * The toolbar dot turns amber when the whole remaining backlog is these, so the menu has to be
+     * able to say the same thing — a dot reading "stopped" above a row reading "12 waiting" is the
+     * menu contradicting the icon that opened it (wave9e review N3).
+     */
+    failed: number;
     storage: { limitBytes: number | null; usageBytes: number; usageInDriveTrashBytes: number } | null;
     folderId: string | null;
     /**
@@ -56,6 +64,7 @@
     togglePending,
     uploaded,
     total,
+    failed,
     storage,
     folderId,
     blockedReason,
@@ -237,6 +246,11 @@
             ? $t('google_drive_all_synced')
             : $t('google_drive_pending_count', { values: { count: pending } })}
         </div>
+        {#if failed > 0 && pending > 0}
+          <div class="text-xs text-amber-600 dark:text-amber-500">
+            {$t('google_drive_failed_count', { values: { count: failed } })}
+          </div>
+        {/if}
         {#if pending > 0 && storageCritical}
           <div class="text-xs text-red-600 dark:text-red-500">{$t('google_drive_storage_almost_full')}</div>
         {/if}
