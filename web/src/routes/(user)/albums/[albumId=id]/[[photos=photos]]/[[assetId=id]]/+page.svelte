@@ -364,6 +364,8 @@
   let driveConnected = $state(false);
   let driveBlockedReason = $state<string | null>(null);
   let driveFailed = $state(0);
+  /** Which album the counters above describe, so a reload of the same album keeps its dot. */
+  let driveIndicatorAlbumId = $state<string | undefined>(undefined);
 
   // The toolbar dot. Everything else in the menu stays lazy (storage and connection status go all
   // the way to Google), but these two are plain database reads, and without them the icon cannot
@@ -393,15 +395,23 @@
 
   $effect(() => {
     // This component is reused when navigating between albums, so the previous album's answer is
-    // still sitting in these variables. Clear them first: otherwise album A's dot shows on album B
-    // until B's load lands, and stays there for good if B's calls fail (wave9c review N1).
+    // still sitting in these variables. Clear them when the album actually changes: otherwise
+    // album A's dot shows on album B until B's load lands, and stays there for good if B's calls
+    // fail (wave9c review N1).
+    //
+    // Only when it *changes*, though. `album` is replaced by every refreshAlbum() and album
+    // update as well, and clearing on those blanked the dot for a round trip each time with
+    // nothing to show for it (wave9e review N1).
     const albumId = album.id;
-    driveBackedUp = false;
-    driveConnected = false;
-    driveUploaded = 0;
-    driveTotal = 0;
-    driveFailed = 0;
-    driveBlockedReason = null;
+    if (driveIndicatorAlbumId !== albumId) {
+      driveIndicatorAlbumId = albumId;
+      driveBackedUp = false;
+      driveConnected = false;
+      driveUploaded = 0;
+      driveTotal = 0;
+      driveFailed = 0;
+      driveBlockedReason = null;
+    }
 
     // assetCount too: the Drive button is only rendered for non-empty albums, so there is no icon
     // to put a dot on otherwise.

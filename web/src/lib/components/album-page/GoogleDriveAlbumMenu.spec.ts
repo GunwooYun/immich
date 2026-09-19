@@ -269,6 +269,13 @@ describe('GoogleDriveAlbumMenu', () => {
       expect(getByText(/7 failed/)).toBeInTheDocument();
     });
 
+    it('should name a single failure too', () => {
+      // wave9f review N1: every case used 7/0/4, so `failed > 0` could be weakened to `failed > 1`
+      // without a test noticing.
+      const { getByText } = renderMenu({ uploaded: 9, total: 10, failed: 1 });
+      expect(getByText(/1 failed/)).toBeInTheDocument();
+    });
+
     it('should say nothing about failures when there are none', () => {
       const { getByText, queryByText } = renderMenu({ uploaded: 3, total: 10, failed: 0 });
       expect(queryByText(/failed/)).not.toBeInTheDocument();
