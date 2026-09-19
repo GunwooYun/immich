@@ -1446,12 +1446,14 @@ describe(AuthService.name, () => {
         autoRegister: true,
         issuerUrl: 'https://accounts.google.com',
         clientId: 'shared-client-id',
+        clientSecret: 'shared-client-secret',
         scope: `openid email profile ${DRIVE_SCOPE}`,
+        prompt: '',
         ...over.oauth,
       },
       googleDrive: {
         clientId: 'shared-client-id',
-        clientSecret: 'client-secret',
+        clientSecret: 'shared-client-secret',
         redirectUrl: 'https://immich.example.com/api/google-drive/callback',
         ...over.googleDrive,
       },
@@ -1504,13 +1506,14 @@ describe(AuthService.name, () => {
 
         expect(mocks.oauth.authorize).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, undefined, {
           access_type: 'offline',
-          include_granted_scopes: 'true',
         });
       });
 
       it.each([
         ['the issuer is not Google', { oauth: { issuerUrl: 'https://auth.example.com' } }],
         ['the login client is not the Drive client', { oauth: { clientId: 'other-client' } }],
+        ['the login secret is not the Drive secret', { oauth: { clientSecret: 'other-secret' } }],
+        ['every login is forced through a fresh consent', { oauth: { prompt: 'consent' } }],
         ['the login scope does not include drive.file', { oauth: { scope: 'openid email profile' } }],
         ['the Drive feature is not configured', { googleDrive: { clientId: '', clientSecret: '' } }],
       ])('should send no Google-specific parameters when %s', async (_, over) => {

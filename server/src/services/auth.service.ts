@@ -298,13 +298,16 @@ export class AuthService extends BaseService {
      * granted scope list — which is exactly what the callback below checks before believing the
      * grant covers Drive.
      *
-     * Sent only when gated because these are Google's spellings. An unrelated provider would at
-     * best ignore them and at worst reject the request, which would break plain OAuth login for a
-     * feature that deployment is not even using.
+     * Sent only when gated because this is Google's spelling. An unrelated provider would at best
+     * ignore it and at worst reject the request, which would break plain OAuth login for a feature
+     * that deployment is not even using.
+     *
+     * `include_granted_scopes` was here too and has been dropped: under this gate the login scope
+     * already contains drive.file, so the union it asks for adds nothing, and the comment
+     * explaining it described re-consent behaviour that belongs to `prompt`, not to this parameter
+     * (wave9d review N3).
      */
-    const extraParams = isGoogleDriveLoginGrantEnabled(config)
-      ? { access_type: 'offline', include_granted_scopes: 'true' }
-      : undefined;
+    const extraParams = isGoogleDriveLoginGrantEnabled(config) ? { access_type: 'offline' } : undefined;
 
     return await this.oauthRepository.authorize(
       oauth,

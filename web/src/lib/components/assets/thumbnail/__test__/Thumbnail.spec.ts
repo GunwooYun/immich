@@ -1,6 +1,7 @@
 import { render } from '@testing-library/svelte';
 import { getIntersectionObserverMock } from '$lib/__mocks__/intersection-observer.mock';
 import Thumbnail from '$lib/components/assets/thumbnail/Thumbnail.svelte';
+import { authManager } from '$lib/managers/auth-manager.svelte';
 import { getTabbable } from '$lib/utils/focus-util';
 import { assetFactory, timelineAssetFactory } from '@test-data/factories/asset-factory';
 
@@ -49,11 +50,6 @@ describe('Thumbnail component', () => {
     expect(tabbables.length).toBe(0);
   });
 
-  // Not covered here: the shared-link guard on the badge (wave9b review N3). `authManager
-  // .isSharedLink` is a $derived over a non-reactive mocked `page.route`, so it is computed once
-  // per module and a test cannot flip it without mocking the manager itself — which would weaken
-  // every other case in this file. The guard's real enforcement is in Timeline, which never looks
-  // anything up on a shared link.
   describe('Google Drive badge', () => {
     // TimelineAsset, which is what Thumbnail takes — not AssetResponseDto like the older cases above,
     // whose mismatch is a pre-existing svelte-check baseline entry this block should not add to.
@@ -69,6 +65,23 @@ describe('Thumbnail component', () => {
       expect(baseElement.querySelector('[data-icon-google-drive]')).toBeNull();
       // Witness that the thumbnail rendered, so the absence is about the badge alone.
       expect(baseElement.querySelector('[data-thumbnail-focus-container]')).not.toBeNull();
+    });
+
+    it('never shows the badge to a shared-link visitor', () => {
+      // Defence in depth beside the favourite and archive guards: Timeline already refuses to look
+      // anything up on a shared link, so this is what would stop a future caller leaking the
+      // owner's backup state to an outsider. wave9b review N3 asked for it and I wrongly called it
+      // untestable — `isSharedLink` is a $derived class field, which compiles to a prototype
+      // getter, so spying on it flips the value without mocking the manager (wave9d review N5).
+      const spy = vi.spyOn(authManager, 'isSharedLink', 'get').mockReturnValue(true);
+      try {
+        const { baseElement } = render(Thumbnail, { asset: imageAsset(), driveUploaded: true });
+
+        expect(baseElement.querySelector('[data-icon-google-drive]')).toBeNull();
+        expect(baseElement.querySelector('[data-thumbnail-focus-container]')).not.toBeNull();
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('adds nothing tabbable', () => {

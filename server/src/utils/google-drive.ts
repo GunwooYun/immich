@@ -290,6 +290,25 @@ export const isGoogleDriveLoginGrantEnabled = (config: SystemConfig): boolean =>
     return false;
   }
 
+  // The secret has to match too, and its failure mode is nastier than the client id's. Refreshing
+  // an upload token uses the googleDrive secret alone, and the account probe that follows a link
+  // swallows its error and stores the connection anyway — so a login token minted under a
+  // different secret is written as "connected" and then fails every refresh with invalid_client,
+  // which is not invalid_grant and therefore never clears the row. The manual Connect flow cannot
+  // reach that state: it exchanges the code with the Drive credentials and fails loudly.
+  if (!googleDrive.clientSecret || oauth.clientSecret !== googleDrive.clientSecret) {
+    return false;
+  }
+
+  // `prompt=consent` forces Google to mint a fresh refresh token on *every* login. This feature
+  // only ever uses the first one, and Google invalidates the oldest token once an account has 100
+  // outstanding for a client — so the churn would eventually invalidate the very token the upload
+  // worker is using. An operator who wants that setting keeps it; they just do not get the
+  // login grant with it.
+  if (oauth.prompt.trim().toLowerCase().split(/\s+/).includes('consent')) {
+    return false;
+  }
+
   if (!hasGoogleDriveFileScope(oauth.scope)) {
     return false;
   }

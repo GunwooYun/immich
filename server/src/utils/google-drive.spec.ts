@@ -167,12 +167,14 @@ const allTrue = (
       enabled: true,
       issuerUrl: 'https://accounts.google.com',
       clientId: 'shared-client-id',
+      clientSecret: 'shared-client-secret',
       scope: 'openid email profile https://www.googleapis.com/auth/drive.file',
+      prompt: '',
       ...over.oauth,
     },
     googleDrive: {
       clientId: 'shared-client-id',
-      clientSecret: 'client-secret',
+      clientSecret: 'shared-client-secret',
       redirectUrl: 'https://immich.example.com/api/google-drive/callback',
       apiKey: '',
       ...over.googleDrive,
@@ -237,6 +239,25 @@ describe('isGoogleDriveLoginGrantEnabled', () => {
     // This is the opt-in. No scope means users never saw a Drive consent screen, and asking for
     // offline access on their behalf would be a change the operator did not make.
     expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { scope: 'openid email profile' } }))).toBe(false);
+  });
+
+  it('should be false when the login secret is not the Drive secret', () => {
+    // wave9d review N2, and the worst of the mismatches: refreshing an upload token uses the Drive
+    // secret alone, and the probe that follows a link swallows its failure and stores the row
+    // anyway — so a token minted under another secret looks connected and then fails every
+    // refresh with invalid_client, which never clears the connection.
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { clientSecret: 'a-different-secret' } }))).toBe(false);
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ googleDrive: { clientSecret: '' } }))).toBe(false);
+  });
+
+  it('should be false when every login is forced through a fresh consent', () => {
+    // wave9d review N1: prompt=consent mints a refresh token on every login. Only the first is
+    // ever used, and Google invalidates the oldest once 100 are outstanding for an account — so
+    // the churn would eventually kill the token the upload worker is refreshing with.
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'consent' } }))).toBe(false);
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'select_account consent' } }))).toBe(false);
+    // Other prompt values are none of this feature's business.
+    expect(isGoogleDriveLoginGrantEnabled(allTrue({ oauth: { prompt: 'select_account' } }))).toBe(true);
   });
 
   it('should be false when the Drive feature itself is unusable', () => {
