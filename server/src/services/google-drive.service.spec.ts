@@ -1419,6 +1419,7 @@ describe(GoogleDriveService.name, () => {
       const user = UserFactory.create();
       const [failed, other] = [newUuid(), newUuid()];
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(user.id));
       // eslint-disable-next-line @typescript-eslint/require-await
       mocks.googleDrive.streamPendingUploads.mockImplementation(async function* () {
         yield { userId: user.id, assetId: other };
@@ -1439,6 +1440,7 @@ describe(GoogleDriveService.name, () => {
       // Arriving from the failure list rather than the banner must not need a second gesture.
       const user = UserFactory.create();
       mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(connected(user.id));
       mocks.googleDrive.streamPendingUploads.mockImplementation(async function* () {} as never);
 
       await sut.retryFailures(AuthFactory.create(user), []);
@@ -1451,8 +1453,29 @@ describe(GoogleDriveService.name, () => {
           GoogleDriveUploadErrorClass.SourceUnreadable,
         ]),
       );
+      // ...but never `revoked`: that is not a failed upload to retry, it is the record of a grant
+      // being taken away, and the settings page reads it to explain the disconnection.
+      expect(mocks.googleDrive.clearErrors.mock.calls[0][1]).not.toContain(GoogleDriveUploadErrorClass.Revoked);
       expect(mocks.googleDrive.clearErrorsForAssets).not.toHaveBeenCalled();
       expect(mocks.googleDrive.streamPendingUploads).toHaveBeenCalledWith(user.id);
+    });
+
+    it('should refuse to retry for a user who is not connected', async () => {
+      // Without a connection the pending query joins away every row, so the retry would queue
+      // nothing while erasing the `revoked` marker that explains the disconnection — leaving a
+      // toast saying "retrying", no banner, and no uploads (wave10a review M1).
+      const user = UserFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getCredentials.mockResolvedValue(void 0);
+
+      await expect(sut.retryFailures(AuthFactory.create(user), [])).rejects.toThrow(
+        'Connect Google Drive before retrying failed uploads',
+      );
+
+      expect(mocks.googleDrive.getCredentials).toHaveBeenCalledWith(user.id);
+      expect(mocks.googleDrive.clearErrors).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.clearErrorsForAssets).not.toHaveBeenCalled();
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
   });
 

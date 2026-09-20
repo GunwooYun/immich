@@ -319,6 +319,8 @@ export const getMocks = () => {
   // "moved", which would silently switch adoption off in every test that is not about it.
   // Adoption succeeds by default; false means the connection moved under the probe.
   googleDriveMock.adoptUnstampedUploads.mockResolvedValue(true);
+  googleDriveMock.getFailures.mockResolvedValue([]);
+  googleDriveMock.clearErrorsForAssets.mockResolvedValue([]);
   googleDriveMock.setDriveAccountId.mockImplementation((_userId: string, _connectionId: string, id: string) =>
     Promise.resolve(id),
   );

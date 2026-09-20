@@ -268,6 +268,11 @@
       case 'size_mismatch': {
         return $t('google_drive_failure_size');
       }
+      case 'revoked': {
+        // Reachable in the list even though retrying it is refused: the rows stay until a
+        // reconnect, and "why is this here" deserves an answer.
+        return $t('google_drive_failure_revoked');
+      }
       default: {
         return $t('google_drive_failure_unknown');
       }
@@ -305,12 +310,17 @@
   const retryFailures = async (assetIds: string[]) => {
     retrying = true;
     try {
-      await retryGoogleDriveFailures({ googleDriveRetryFailuresDto: { assetIds } });
-      toastManager.info($t('google_drive_retry_started'));
+      const { queued } = await retryGoogleDriveFailures({ googleDriveRetryFailuresDto: { assetIds } });
+      // Naming the number matters when it is zero: the failures are cleared, but the albums those
+      // photos belong to are no longer selected for backup, so nothing was queued. A flat
+      // "retrying" toast would promise work that is not going to happen (wave10a review N3).
+      toastManager.info($t('google_drive_retry_started', { values: { count: queued } }));
       const status = await getGoogleDriveStatus();
       failedCount = status.failedCount;
       blockedReason = status.blockedReason ?? null;
-      await loadFailures();
+      if (failuresOpen) {
+        await loadFailures();
+      }
     } catch (error) {
       handleError(error, $t('errors.unable_to_start_google_drive_sync'));
     } finally {
@@ -386,19 +396,32 @@
                  are the only way to tell "retried and fixed" from "retried and failed again". -->
             <div class="flex flex-wrap items-center gap-2">
               <p class="text-sm">{$t('google_drive_failed_count', { values: { count: failedCount } })}</p>
-              <Button shape="round" type="button" size="small" color="secondary" onclick={toggleFailures}>
-                {failuresOpen ? $t('google_drive_failures_hide') : $t('google_drive_failures_show')}
-              </Button>
               <Button
                 shape="round"
                 type="button"
                 size="small"
-                color="primary"
-                disabled={retrying}
-                onclick={() => retryFailures([])}
+                color="secondary"
+                aria-expanded={failuresOpen}
+                onclick={toggleFailures}
               >
-                {$t('google_drive_retry_all')}
+                {failuresOpen ? $t('google_drive_failures_hide') : $t('google_drive_failures_show')}
               </Button>
+              {#if connected}
+                <!-- Only while connected: with no connection the server refuses (it would queue
+                     nothing and erase the explanation of why uploads stopped), so offering the
+                     button would be offering a dead end. -->
+                <Button
+                  shape="round"
+                  type="button"
+                  size="small"
+                  color="primary"
+                  disabled={retrying}
+                  loading={retrying}
+                  onclick={() => retryFailures([])}
+                >
+                  {$t('google_drive_retry_all')}
+                </Button>
+              {/if}
             </div>
 
             {#if failuresOpen}
@@ -418,16 +441,20 @@
                           · {new Date(failure.lastFailedAt).toLocaleString($locale ?? undefined)}
                         </p>
                       </div>
-                      <Button
-                        shape="round"
-                        type="button"
-                        size="small"
-                        color="secondary"
-                        disabled={retrying}
-                        onclick={() => retryFailures([failure.assetId])}
-                      >
-                        {$t('google_drive_retry')}
-                      </Button>
+                      {#if connected}
+                        <Button
+                          shape="round"
+                          type="button"
+                          size="small"
+                          color="secondary"
+                          disabled={retrying}
+                          loading={retrying}
+                          aria-label={$t('google_drive_retry_file', { values: { file: failure.fileName } })}
+                          onclick={() => retryFailures([failure.assetId])}
+                        >
+                          {$t('google_drive_retry')}
+                        </Button>
+                      {/if}
                     </li>
                   {/each}
                 </ul>

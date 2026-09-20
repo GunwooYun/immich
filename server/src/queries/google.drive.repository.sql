@@ -506,3 +506,39 @@ order by
   end
 limit
   $5
+
+-- GoogleDriveRepository.getFailures
+select
+  "google_drive_upload_error"."assetId",
+  "google_drive_upload_error"."error",
+  "google_drive_upload_error"."detail",
+  "google_drive_upload_error"."attempts",
+  "google_drive_upload_error"."lastFailedAt",
+  "asset"."originalFileName"
+from
+  "google_drive_upload_error"
+  inner join "asset" on "asset"."id" = "google_drive_upload_error"."assetId"
+  left join "google_drive_upload" on "google_drive_upload"."assetId" = "google_drive_upload_error"."assetId"
+  and "google_drive_upload"."userId" = "google_drive_upload_error"."userId"
+  and (
+    "google_drive_upload"."driveAccountId" = coalesce(
+      (
+        select
+          "driveAccountId"
+        from
+          "user_google_drive"
+        where
+          "userId" = $1
+      ),
+      ''
+    )
+    or "google_drive_upload"."driveAccountId" = ''
+  )
+where
+  "google_drive_upload_error"."userId" = $2
+  and "asset"."deletedAt" is null
+  and "google_drive_upload"."assetId" is null
+order by
+  "google_drive_upload_error"."lastFailedAt" desc
+limit
+  $3

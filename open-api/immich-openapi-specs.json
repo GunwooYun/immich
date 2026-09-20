@@ -6785,6 +6785,13 @@
         },
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveRetryResultDto"
+                }
+              }
+            },
             "description": ""
           }
         },
@@ -20202,6 +20209,20 @@
             "type": "array"
           }
         },
+        "type": "object"
+      },
+      "GoogleDriveRetryResultDto": {
+        "properties": {
+          "queued": {
+            "description": "Uploads queued by this retry, which may be fewer than the failures cleared",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queued"
+        ],
         "type": "object"
       },
       "GoogleDriveSetFolderDto": {

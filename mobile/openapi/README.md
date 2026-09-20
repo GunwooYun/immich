@@ -477,6 +477,7 @@ Class | Method | HTTP request | Description
  - [GoogleDriveMyStatusDto](doc//GoogleDriveMyStatusDto.md)
  - [GoogleDrivePickerConfigResponseDto](doc//GoogleDrivePickerConfigResponseDto.md)
  - [GoogleDriveRetryFailuresDto](doc//GoogleDriveRetryFailuresDto.md)
+ - [GoogleDriveRetryResultDto](doc//GoogleDriveRetryResultDto.md)
  - [GoogleDriveSetFolderDto](doc//GoogleDriveSetFolderDto.md)
  - [GoogleDriveStatusResponseDto](doc//GoogleDriveStatusResponseDto.md)
  - [GoogleDriveStorageDto](doc//GoogleDriveStorageDto.md)

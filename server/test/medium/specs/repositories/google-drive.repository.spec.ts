@@ -1044,6 +1044,39 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
   });
 
   describe('failure bookkeeping', () => {
+    it('should list exactly the failures it counts', async () => {
+      // getFailures and getErrorSummary carry the same three predicates by hand — same user, no
+      // ledger row beside the error, asset not trashed. If they ever drift, the settings page
+      // shows "3 failed" over a list of five, and neither number can be trusted. This pins them
+      // to each other against a real database (wave10a review N6).
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser();
+      const { asset: failing } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: retried } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: trashed } = await ctx.newAsset({ ownerId: user.id, deletedAt: new Date() });
+      const { asset: othersAsset } = await ctx.newAsset({ ownerId: other.id });
+      await connect(ctx, user.id, 'account-x');
+
+      for (const [owner, asset] of [
+        [user, failing],
+        [user, retried],
+        [user, trashed],
+        [other, othersAsset],
+      ] as const) {
+        await sut.upsertError(owner.id, asset.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+      }
+      // `retried` later succeeded: the ledger row must win over its stale error row.
+      await ledger(ctx, user.id, retried.id, 'account-x');
+
+      const [rows, summary] = await Promise.all([sut.getFailures(user.id, 100), sut.getErrorSummary(user.id)]);
+
+      expect(rows.map((row: { assetId: string }) => row.assetId)).toEqual([failing.id]);
+      expect(rows.length).toBe(summary.failedCount);
+      // The row carries what the list renders, not just an id.
+      expect(rows[0]).toMatchObject({ error: GoogleDriveUploadErrorClass.SourceUnreadable, attempts: 1 });
+    });
+
     it('should call only the first failure of a class first, and count attempts after that', async () => {
       // firstOfClass gates the notification. Wrong in one direction it spams on every retry; wrong
       // in the other the user is never told their backups stopped.

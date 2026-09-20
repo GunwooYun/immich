@@ -12,6 +12,7 @@ import {
   GoogleDriveMyStatusDto,
   GoogleDrivePickerConfigResponseDto,
   GoogleDriveRetryFailuresDto,
+  GoogleDriveRetryResultDto,
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
   GoogleDriveStorageDto,
@@ -312,8 +313,11 @@ export class GoogleDriveController {
       'Forget the recorded failures for the given assets — or every failure when no asset is given — and queue whatever is still selected for backup.',
     history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
   })
-  async retryGoogleDriveFailures(@Auth() auth: AuthDto, @Body() dto: GoogleDriveRetryFailuresDto): Promise<void> {
-    await this.googleDriveService.retryFailures(auth, dto.assetIds);
+  async retryGoogleDriveFailures(
+    @Auth() auth: AuthDto,
+    @Body() dto: GoogleDriveRetryFailuresDto,
+  ): Promise<GoogleDriveRetryResultDto> {
+    return this.googleDriveService.retryFailures(auth, dto.assetIds);
   }
 
   @Get('picker-config')

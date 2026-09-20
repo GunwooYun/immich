@@ -62,7 +62,7 @@ describe('GoogleDriveSettings', () => {
     retry.mockReset();
     albums.mockResolvedValue([]);
     failures.mockResolvedValue({ failures: [], total: 0 });
-    retry.mockResolvedValue(undefined);
+    retry.mockResolvedValue({ queued: 1 });
   });
 
   it('should show the folder name and not its id', async () => {
@@ -176,6 +176,18 @@ describe('GoogleDriveSettings', () => {
       (await screen.findByText('Retry all')).click();
 
       await waitFor(() => expect(retry).toHaveBeenCalledWith({ googleDriveRetryFailuresDto: { assetIds: [] } }));
+    });
+
+    it('should not offer retry to a disconnected user', async () => {
+      // The server refuses it: with no connection the pending query queues nothing, and clearing
+      // would erase the `revoked` marker that explains the disconnection (wave10a review M1).
+      status.mockResolvedValue(connected({ connected: false, failedCount: 3, blockedReason: 'revoked' }));
+
+      render(GoogleDriveSettings);
+
+      expect(await screen.findByText(/3 failed/)).toBeInTheDocument();
+      expect(screen.getByText('Show failures')).toBeInTheDocument();
+      expect(screen.queryByText('Retry all')).not.toBeInTheDocument();
     });
 
     it('should say the list is capped rather than pretend it is complete', async () => {

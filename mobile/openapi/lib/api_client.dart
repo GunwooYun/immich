@@ -407,6 +407,8 @@ class ApiClient {
           return GoogleDrivePickerConfigResponseDto.fromJson(value);
         case 'GoogleDriveRetryFailuresDto':
           return GoogleDriveRetryFailuresDto.fromJson(value);
+        case 'GoogleDriveRetryResultDto':
+          return GoogleDriveRetryResultDto.fromJson(value);
         case 'GoogleDriveSetFolderDto':
           return GoogleDriveSetFolderDto.fromJson(value);
         case 'GoogleDriveStatusResponseDto':

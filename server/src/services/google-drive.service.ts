@@ -971,8 +971,23 @@ export class GoogleDriveService extends BaseService {
       throw new BadRequestException('Google Drive sync is not enabled on this server');
     }
 
+    // Refused rather than quietly doing nothing. Without a connection `streamPendingUploads`
+    // joins away every row, so a retry queues zero — while the clear below would have erased the
+    // `revoked` marker that is the only thing telling the user *why* their uploads stopped. The
+    // user would be left with a cheerful toast, no banner, and no uploads (wave10a review M1).
+    const credentials = await this.googleDriveRepository.getCredentials(auth.user.id);
+    if (!credentials) {
+      throw new BadRequestException('Connect Google Drive before retrying failed uploads');
+    }
+
     if (assetIds.length === 0) {
-      await this.googleDriveRepository.clearErrors(auth.user.id, Object.values(GoogleDriveUploadErrorClass));
+      // Every class except `revoked`: that one is not a failed upload to retry, it is the record
+      // of a grant that was taken away, and the settings page reads it to explain the
+      // disconnection. A reconnect clears it.
+      await this.googleDriveRepository.clearErrors(
+        auth.user.id,
+        Object.values(GoogleDriveUploadErrorClass).filter((error) => error !== GoogleDriveUploadErrorClass.Revoked),
+      );
     } else {
       await this.googleDriveRepository.clearErrorsForAssets(auth.user.id, assetIds);
     }

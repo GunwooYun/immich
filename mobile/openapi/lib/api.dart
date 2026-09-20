@@ -182,6 +182,7 @@ part 'model/google_drive_failure_list_dto.dart';
 part 'model/google_drive_my_status_dto.dart';
 part 'model/google_drive_picker_config_response_dto.dart';
 part 'model/google_drive_retry_failures_dto.dart';
+part 'model/google_drive_retry_result_dto.dart';
 part 'model/google_drive_set_folder_dto.dart';
 part 'model/google_drive_status_response_dto.dart';
 part 'model/google_drive_storage_dto.dart';

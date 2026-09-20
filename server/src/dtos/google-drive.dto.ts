@@ -210,6 +210,19 @@ const GoogleDriveRetryFailuresSchema = z
   })
   .meta({ id: 'GoogleDriveRetryFailuresDto' });
 
+/**
+ * What a retry actually did.
+ *
+ * `queued` can be zero with no error: the albums those assets belong to may no longer be selected
+ * for backup, and the pending query the retry runs through is what notices. Saying so beats a
+ * toast that implies work started.
+ */
+const GoogleDriveRetryResultSchema = z
+  .object({
+    queued: z.int().describe('Uploads queued by this retry, which may be fewer than the failures cleared'),
+  })
+  .meta({ id: 'GoogleDriveRetryResultDto' });
+
 /** One album's backup state for the viewing user — what the album menu and Wave 3 poll. */
 const GoogleDriveAlbumStatusSchema = z
   .object({
@@ -233,3 +246,4 @@ export class GoogleDriveUploadedLookupDto extends createZodDto(GoogleDriveUpload
 export class GoogleDriveUploadedLookupResponseDto extends createZodDto(GoogleDriveUploadedLookupResponseSchema) {}
 export class GoogleDriveFailureListDto extends createZodDto(GoogleDriveFailureListSchema) {}
 export class GoogleDriveRetryFailuresDto extends createZodDto(GoogleDriveRetryFailuresSchema) {}
+export class GoogleDriveRetryResultDto extends createZodDto(GoogleDriveRetryResultSchema) {}

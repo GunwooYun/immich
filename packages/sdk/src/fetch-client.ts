@@ -1268,6 +1268,10 @@ export type GoogleDriveRetryFailuresDto = {
     /** Assets to retry; empty retries every failure */
     assetIds?: string[];
 };
+export type GoogleDriveRetryResultDto = {
+    /** Uploads queued by this retry, which may be fewer than the failures cleared */
+    queued: number;
+};
 export type GoogleDriveMyStatusDto = {
     /** Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing' */
     blockedReason: string | null;
@@ -5084,7 +5088,10 @@ export function getMyGoogleDriveFailures(opts?: Oazapfts.RequestOpts) {
 export function retryGoogleDriveFailures({ googleDriveRetryFailuresDto }: {
     googleDriveRetryFailuresDto: GoogleDriveRetryFailuresDto;
 }, opts?: Oazapfts.RequestOpts) {
-    return oazapfts.ok(oazapfts.fetchText("/google-drive/me/failures/retry", oazapfts.json({
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveRetryResultDto;
+    }>("/google-drive/me/failures/retry", oazapfts.json({
         ...opts,
         method: "POST",
         body: googleDriveRetryFailuresDto
