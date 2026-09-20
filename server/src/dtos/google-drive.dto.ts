@@ -173,6 +173,43 @@ const GoogleDriveUploadedLookupResponseSchema = z
   })
   .meta({ id: 'GoogleDriveUploadedLookupResponseDto' });
 
+/**
+ * One failed upload, for the list under the failure count in settings.
+ *
+ * `error` is the classification, not a message: the client maps it to wording it can translate,
+ * and `detail` carries whatever Google actually said for the cases where that helps.
+ */
+export const GOOGLE_DRIVE_FAILURE_PAGE_MAX = 200;
+
+const GoogleDriveFailureSchema = z
+  .object({
+    assetId: z.string().describe('The asset that failed to upload'),
+    fileName: z.string().describe('Original file name, so the row is recognisable without a thumbnail'),
+    error: z.string().describe("Failure classification, e.g. 'source_unreadable' or 'quota_exceeded'"),
+    detail: z.string().nullable().describe('What the upload reported, when it said anything useful'),
+    attempts: z.int().describe('How many times this asset has been tried'),
+    lastFailedAt: isoDatetimeToDate.describe('When it last failed'),
+  })
+  .meta({ id: 'GoogleDriveFailureDto' });
+
+const GoogleDriveFailureListSchema = z
+  .object({
+    failures: z.array(GoogleDriveFailureSchema).describe('Newest first, capped'),
+    total: z.int().describe('All current failures, which may exceed the returned list'),
+  })
+  .meta({ id: 'GoogleDriveFailureListDto' });
+
+/** Which failures to retry. An empty list means every one of them. */
+const GoogleDriveRetryFailuresSchema = z
+  .object({
+    assetIds: z
+      .array(z.uuidv4())
+      .max(GOOGLE_DRIVE_FAILURE_PAGE_MAX)
+      .default([])
+      .describe('Assets to retry; empty retries every failure'),
+  })
+  .meta({ id: 'GoogleDriveRetryFailuresDto' });
+
 /** One album's backup state for the viewing user — what the album menu and Wave 3 poll. */
 const GoogleDriveAlbumStatusSchema = z
   .object({
@@ -194,3 +231,5 @@ export class GoogleDriveSetFolderDto extends createZodDto(GoogleDriveSetFolderSc
 export class GoogleDriveStatusResponseDto extends createZodDto(GoogleDriveStatusResponseSchema) {}
 export class GoogleDriveUploadedLookupDto extends createZodDto(GoogleDriveUploadedLookupSchema) {}
 export class GoogleDriveUploadedLookupResponseDto extends createZodDto(GoogleDriveUploadedLookupResponseSchema) {}
+export class GoogleDriveFailureListDto extends createZodDto(GoogleDriveFailureListSchema) {}
+export class GoogleDriveRetryFailuresDto extends createZodDto(GoogleDriveRetryFailuresSchema) {}

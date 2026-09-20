@@ -1244,6 +1244,30 @@ export type GoogleDriveSetFolderDto = {
     /** Display name of the folder, if known */
     folderName?: string;
 };
+export type GoogleDriveFailureDto = {
+    /** The asset that failed to upload */
+    assetId: string;
+    /** How many times this asset has been tried */
+    attempts: number;
+    /** What the upload reported, when it said anything useful */
+    detail: string | null;
+    /** Failure classification, e.g. 'source_unreadable' or 'quota_exceeded' */
+    error: string;
+    /** Original file name, so the row is recognisable without a thumbnail */
+    fileName: string;
+    /** When it last failed */
+    lastFailedAt: string;
+};
+export type GoogleDriveFailureListDto = {
+    /** Newest first, capped */
+    failures: GoogleDriveFailureDto[];
+    /** All current failures, which may exceed the returned list */
+    total: number;
+};
+export type GoogleDriveRetryFailuresDto = {
+    /** Assets to retry; empty retries every failure */
+    assetIds?: string[];
+};
 export type GoogleDriveMyStatusDto = {
     /** Account-level condition pausing uploads, if any: 'quota_exceeded' or 'folder_missing' */
     blockedReason: string | null;
@@ -5042,6 +5066,29 @@ export function disconnectGoogleDrive(opts?: Oazapfts.RequestOpts) {
         ...opts,
         method: "DELETE"
     }));
+}
+/**
+ * The failures behind the count on the settings page: what broke, why, and how often.
+ */
+export function getMyGoogleDriveFailures(opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: GoogleDriveFailureListDto;
+    }>("/google-drive/me/failures", {
+        ...opts
+    }));
+}
+/**
+ * Retry specific failures, or all of them when the list is empty.
+ */
+export function retryGoogleDriveFailures({ googleDriveRetryFailuresDto }: {
+    googleDriveRetryFailuresDto: GoogleDriveRetryFailuresDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText("/google-drive/me/failures/retry", oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: googleDriveRetryFailuresDto
+    })));
 }
 /**
  * Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads

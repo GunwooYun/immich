@@ -363,6 +363,55 @@ class GoogleDriveApi {
     return null;
   }
 
+  /// The failures behind the count on the settings page: what broke, why, and how often.
+  ///
+  /// Return the most recent failures for this user, newest first, with the classification and whatever detail the upload reported. Capped; `total` reports how many there are in all.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  Future<Response> getMyGoogleDriveFailuresWithHttpInfo({ Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/me/failures';
+
+    // ignore: prefer_final_locals
+    Object? postBody;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>[];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'GET',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// The failures behind the count on the settings page: what broke, why, and how often.
+  ///
+  /// Return the most recent failures for this user, newest first, with the classification and whatever detail the upload reported. Capped; `total` reports how many there are in all.
+  Future<GoogleDriveFailureListDto?> getMyGoogleDriveFailures({ Future<void>? abortTrigger, }) async {
+    final response = await getMyGoogleDriveFailuresWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+    // When a remote server returns no body with a status of 204, we shall not decode it.
+    // At the time of writing this, `dart:convert` will throw an "Unexpected end of input"
+    // FormatException when trying to decode an empty string.
+    if (response.body.isNotEmpty && response.statusCode != HttpStatus.noContent) {
+      return await apiClient.deserializeAsync(await _decodeBodyBytes(response), 'GoogleDriveFailureListDto',) as GoogleDriveFailureListDto;
+    
+    }
+    return null;
+  }
+
   /// Per-user backup progress, for the progress display. Deliberately not album-scoped: uploads are queued per (user, asset), so any album-scoped figure would be unable to describe work that spans albums.
   ///
   /// Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.
@@ -572,6 +621,55 @@ class GoogleDriveApi {
   /// Clear the account-level block (e.g. after freeing Drive storage) and immediately re-queue the user's pending uploads.
   Future<void> resumeGoogleDriveUploads({ Future<void>? abortTrigger, }) async {
     final response = await resumeGoogleDriveUploadsWithHttpInfo(abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
+
+  /// Retry specific failures, or all of them when the list is empty.
+  ///
+  /// Forget the recorded failures for the given assets — or every failure when no asset is given — and queue whatever is still selected for backup.
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [GoogleDriveRetryFailuresDto] googleDriveRetryFailuresDto (required):
+  Future<Response> retryGoogleDriveFailuresWithHttpInfo(GoogleDriveRetryFailuresDto googleDriveRetryFailuresDto, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final apiPath = r'/google-drive/me/failures/retry';
+
+    // ignore: prefer_final_locals
+    Object? postBody = googleDriveRetryFailuresDto;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>['application/json'];
+
+
+    return apiClient.invokeAPI(
+      apiPath,
+      'POST',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// Retry specific failures, or all of them when the list is empty.
+  ///
+  /// Forget the recorded failures for the given assets — or every failure when no asset is given — and queue whatever is still selected for backup.
+  ///
+  /// Parameters:
+  ///
+  /// * [GoogleDriveRetryFailuresDto] googleDriveRetryFailuresDto (required):
+  Future<void> retryGoogleDriveFailures(GoogleDriveRetryFailuresDto googleDriveRetryFailuresDto, { Future<void>? abortTrigger, }) async {
+    final response = await retryGoogleDriveFailuresWithHttpInfo(googleDriveRetryFailuresDto, abortTrigger: abortTrigger,);
     if (response.statusCode >= HttpStatus.badRequest) {
       throw ApiException(response.statusCode, await _decodeBodyBytes(response));
     }

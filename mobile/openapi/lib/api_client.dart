@@ -397,10 +397,16 @@ class ApiClient {
           return GoogleDriveAlbumStatusDto.fromJson(value);
         case 'GoogleDriveAuthUrlResponseDto':
           return GoogleDriveAuthUrlResponseDto.fromJson(value);
+        case 'GoogleDriveFailureDto':
+          return GoogleDriveFailureDto.fromJson(value);
+        case 'GoogleDriveFailureListDto':
+          return GoogleDriveFailureListDto.fromJson(value);
         case 'GoogleDriveMyStatusDto':
           return GoogleDriveMyStatusDto.fromJson(value);
         case 'GoogleDrivePickerConfigResponseDto':
           return GoogleDrivePickerConfigResponseDto.fromJson(value);
+        case 'GoogleDriveRetryFailuresDto':
+          return GoogleDriveRetryFailuresDto.fromJson(value);
         case 'GoogleDriveSetFolderDto':
           return GoogleDriveSetFolderDto.fromJson(value);
         case 'GoogleDriveStatusResponseDto':

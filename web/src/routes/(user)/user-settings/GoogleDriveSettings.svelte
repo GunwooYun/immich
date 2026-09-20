@@ -21,12 +21,15 @@
   // be importing a bare `getStatus`/`disconnect` and needing an alias on every single line.
   import {
     type GoogleDriveAlbumDto,
+    type GoogleDriveFailureDto,
     disconnectGoogleDrive,
     getGoogleDriveAlbums,
     getGoogleDriveAuthUrl,
+    getMyGoogleDriveFailures,
     getGoogleDrivePickerConfig,
     getGoogleDriveStatus,
     resumeGoogleDriveUploads,
+    retryGoogleDriveFailures,
     setGoogleDriveFolder,
     subscribeGoogleDriveAlbum,
     unsubscribeGoogleDriveAlbum,
@@ -55,6 +58,14 @@
   // drives the banner below; resuming is guarded like the picker so a slow round trip (it
   // re-queues the whole pending set) doesn't invite double-clicks.
   let failedCount = $state(0);
+  // The failures themselves, loaded only when the user asks for them: the count above answers
+  // "is anything wrong", and most of the time that is the whole question. Fetching a list nobody
+  // opened would cost a query on every settings visit.
+  let failures = $state<GoogleDriveFailureDto[]>([]);
+  let failureTotal = $state(0);
+  let failuresOpen = $state(false);
+  let failuresLoading = $state(false);
+  let retrying = $state(false);
   let blockedReason = $state<string | null>(null);
   let resuming = $state(false);
   // Whether the server has a Google API key, i.e. whether the picker can open at all. Without this
@@ -239,6 +250,74 @@
     }
   };
 
+  /**
+   * Wording per failure class. The server sends a classification rather than a sentence so this
+   * side can translate it — and so the two cases the user can actually fix say what to do.
+   */
+  const failureLabel = (error: string) => {
+    switch (error) {
+      case 'quota_exceeded': {
+        return $t('google_drive_failure_quota');
+      }
+      case 'folder_missing': {
+        return $t('google_drive_failure_folder');
+      }
+      case 'source_unreadable': {
+        return $t('google_drive_failure_source');
+      }
+      case 'size_mismatch': {
+        return $t('google_drive_failure_size');
+      }
+      default: {
+        return $t('google_drive_failure_unknown');
+      }
+    }
+  };
+
+  const loadFailures = async () => {
+    failuresLoading = true;
+    try {
+      const result = await getMyGoogleDriveFailures();
+      failures = result.failures;
+      failureTotal = result.total;
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_load_google_drive_status'));
+    } finally {
+      failuresLoading = false;
+    }
+  };
+
+  const toggleFailures = async () => {
+    failuresOpen = !failuresOpen;
+    if (failuresOpen) {
+      await loadFailures();
+    }
+  };
+
+  /**
+   * Retry one asset, or everything when given nothing.
+   *
+   * The server clears the recorded failures and re-runs its own pending query, so an asset whose
+   * album is no longer selected simply does not come back — which is why this cannot just queue
+   * the ids on screen. Afterwards both the list and the count are re-read rather than adjusted
+   * locally: the truth about what is still failing lives on the server.
+   */
+  const retryFailures = async (assetIds: string[]) => {
+    retrying = true;
+    try {
+      await retryGoogleDriveFailures({ googleDriveRetryFailuresDto: { assetIds } });
+      toastManager.info($t('google_drive_retry_started'));
+      const status = await getGoogleDriveStatus();
+      failedCount = status.failedCount;
+      blockedReason = status.blockedReason ?? null;
+      await loadFailures();
+    } catch (error) {
+      handleError(error, $t('errors.unable_to_start_google_drive_sync'));
+    } finally {
+      retrying = false;
+    }
+  };
+
   const handleDisconnect = async () => {
     try {
       await disconnectGoogleDrive();
@@ -301,8 +380,68 @@
                  underlying records server-side. -->
             <Alert color="warning" title={$t('google_drive_uploads_blocked_revoked')} />
           {/if}
-          {#if failedCount > 0 && !blockedReason}
-            <p class="text-sm">{$t('google_drive_failed_count', { values: { count: failedCount } })}</p>
+          {#if failedCount > 0}
+            <!-- Shown even when the account is blocked: the banner above says why everything
+                 stopped, this says which photos are affected, and after a resume the two numbers
+                 are the only way to tell "retried and fixed" from "retried and failed again". -->
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm">{$t('google_drive_failed_count', { values: { count: failedCount } })}</p>
+              <Button shape="round" type="button" size="small" color="secondary" onclick={toggleFailures}>
+                {failuresOpen ? $t('google_drive_failures_hide') : $t('google_drive_failures_show')}
+              </Button>
+              <Button
+                shape="round"
+                type="button"
+                size="small"
+                color="primary"
+                disabled={retrying}
+                onclick={() => retryFailures([])}
+              >
+                {$t('google_drive_retry_all')}
+              </Button>
+            </div>
+
+            {#if failuresOpen}
+              {#if failuresLoading}
+                <LoadingSpinner />
+              {:else}
+                <ul class="flex flex-col gap-1 text-sm">
+                  {#each failures as failure (failure.assetId)}
+                    <li
+                      class="flex items-center justify-between gap-2 rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-800"
+                    >
+                      <div class="min-w-0">
+                        <p class="truncate font-medium">{failure.fileName}</p>
+                        <p class="text-xs text-gray-500">
+                          {failureLabel(failure.error)}
+                          · {$t('google_drive_failure_attempts', { values: { count: failure.attempts } })}
+                          · {new Date(failure.lastFailedAt).toLocaleString($locale ?? undefined)}
+                        </p>
+                      </div>
+                      <Button
+                        shape="round"
+                        type="button"
+                        size="small"
+                        color="secondary"
+                        disabled={retrying}
+                        onclick={() => retryFailures([failure.assetId])}
+                      >
+                        {$t('google_drive_retry')}
+                      </Button>
+                    </li>
+                  {/each}
+                </ul>
+                {#if failureTotal > failures.length}
+                  <!-- A thousand failures are one cause, not a thousand problems; the list is
+                       capped and says so rather than pretending it is complete. -->
+                  <p class="text-xs text-gray-500">
+                    {$t('google_drive_failures_truncated', {
+                      values: { shown: failures.length, total: failureTotal },
+                    })}
+                  </p>
+                {/if}
+              {/if}
+            {/if}
           {/if}
           {#if connected}
             <p class="text-sm">

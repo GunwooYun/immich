@@ -6723,6 +6723,99 @@
         "x-immich-state": "Alpha"
       }
     },
+    "/google-drive/me/failures": {
+      "get": {
+        "description": "Return the most recent failures for this user, newest first, with the classification and whatever detail the upload reported. Capped; `total` reports how many there are in all.",
+        "operationId": "getMyGoogleDriveFailures",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoogleDriveFailureListDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "The failures behind the count on the settings page: what broke, why, and how often.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
+    "/google-drive/me/failures/retry": {
+      "post": {
+        "description": "Forget the recorded failures for the given assets — or every failure when no asset is given — and queue whatever is still selected for backup.",
+        "operationId": "retryGoogleDriveFailures",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleDriveRetryFailuresDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Retry specific failures, or all of them when the list is empty.",
+        "tags": [
+          "Google Drive"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3.0.0",
+            "state": "Added"
+          },
+          {
+            "version": "v3.0.0",
+            "state": "Alpha"
+          }
+        ],
+        "x-immich-state": "Alpha"
+      }
+    },
     "/google-drive/me/status": {
       "get": {
         "description": "Return how many assets are still waiting to be uploaded to this user Drive, and how many have failed. Not scoped to an album.",
@@ -19976,6 +20069,71 @@
         ],
         "type": "object"
       },
+      "GoogleDriveFailureDto": {
+        "properties": {
+          "assetId": {
+            "description": "The asset that failed to upload",
+            "type": "string"
+          },
+          "attempts": {
+            "description": "How many times this asset has been tried",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "detail": {
+            "description": "What the upload reported, when it said anything useful",
+            "nullable": true,
+            "type": "string"
+          },
+          "error": {
+            "description": "Failure classification, e.g. 'source_unreadable' or 'quota_exceeded'",
+            "type": "string"
+          },
+          "fileName": {
+            "description": "Original file name, so the row is recognisable without a thumbnail",
+            "type": "string"
+          },
+          "lastFailedAt": {
+            "description": "When it last failed",
+            "example": "2024-01-01T00:00:00.000Z",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetId",
+          "attempts",
+          "detail",
+          "error",
+          "fileName",
+          "lastFailedAt"
+        ],
+        "type": "object"
+      },
+      "GoogleDriveFailureListDto": {
+        "properties": {
+          "failures": {
+            "description": "Newest first, capped",
+            "items": {
+              "$ref": "#/components/schemas/GoogleDriveFailureDto"
+            },
+            "type": "array"
+          },
+          "total": {
+            "description": "All current failures, which may exceed the returned list",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "failures",
+          "total"
+        ],
+        "type": "object"
+      },
       "GoogleDriveMyStatusDto": {
         "properties": {
           "blockedReason": {
@@ -20028,6 +20186,22 @@
           "apiKey",
           "clientId"
         ],
+        "type": "object"
+      },
+      "GoogleDriveRetryFailuresDto": {
+        "properties": {
+          "assetIds": {
+            "default": [],
+            "description": "Assets to retry; empty retries every failure",
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "GoogleDriveSetFolderDto": {

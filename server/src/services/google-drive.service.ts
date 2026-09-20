@@ -926,6 +926,63 @@ export class GoogleDriveService extends BaseService {
     return { assetIds: [...uploaded] };
   }
 
+  /**
+   * The failures behind the count, plus the count itself so the list can say "showing 50 of 812".
+   *
+   * Read-only and cheap; the cap keeps a failure storm from turning a settings page into a
+   * thousand-row table nobody scrolls.
+   */
+  async getFailures(userId: string, limit: number) {
+    if (!(await this.isEnabled())) {
+      return { failures: [], total: 0 };
+    }
+
+    const [rows, { failedCount }] = await Promise.all([
+      this.googleDriveRepository.getFailures(userId, limit),
+      this.googleDriveRepository.getErrorSummary(userId),
+    ]);
+
+    return {
+      failures: rows.map((row) => ({
+        assetId: row.assetId,
+        fileName: row.originalFileName,
+        error: row.error,
+        detail: row.detail,
+        attempts: row.attempts,
+        lastFailedAt: row.lastFailedAt,
+      })),
+      total: failedCount,
+    };
+  }
+
+  /**
+   * Forgets the given failures (or all of them) and re-queues the user's pending set.
+   *
+   * Deliberately not "queue these asset ids": an error row outlives the album selection that
+   * created it, so queueing from this table could upload a photo out of an album the user has
+   * since unselected. Clearing the rows and running the ordinary pending query keeps that check —
+   * and the assets that are still selected come back through it immediately.
+   *
+   * Account-level blocks are cleared too when the user retries everything, which makes this the
+   * same gesture as "resume" for someone who arrived from the failure list rather than the banner.
+   */
+  async retryFailures(auth: AuthDto, assetIds: string[]): Promise<{ queued: number }> {
+    if (!(await this.isEnabled())) {
+      throw new BadRequestException('Google Drive sync is not enabled on this server');
+    }
+
+    if (assetIds.length === 0) {
+      await this.googleDriveRepository.clearErrors(auth.user.id, Object.values(GoogleDriveUploadErrorClass));
+    } else {
+      await this.googleDriveRepository.clearErrorsForAssets(auth.user.id, assetIds);
+    }
+
+    const queued = await this.queuePendingUploads(auth.user.id);
+    this.logger.log(`Retried Google Drive failures for user ${auth.user.id}: ${queued} job(s) queued`);
+
+    return { queued };
+  }
+
   async getMyStatus(userId: string): Promise<{
     connected: boolean;
     pending: number;

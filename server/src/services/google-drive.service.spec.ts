@@ -1357,6 +1357,105 @@ describe(GoogleDriveService.name, () => {
     });
   });
 
+  describe('getFailures', () => {
+    it('should return the failures with the total behind them', async () => {
+      const userId = newUuid();
+      const assetId = newUuid();
+      const lastFailedAt = new Date();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getFailures.mockResolvedValue([
+        {
+          assetId,
+          error: GoogleDriveUploadErrorClass.SourceUnreadable,
+          detail: 'ENOENT',
+          attempts: 3,
+          lastFailedAt,
+          originalFileName: 'IMG_0001.jpg',
+        },
+      ] as never);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 812, blockedReason: null });
+
+      await expect(sut.getFailures(userId, 200)).resolves.toEqual({
+        // `total` is the whole set, not the page — the list says "showing N of total".
+        total: 812,
+        failures: [
+          {
+            assetId,
+            fileName: 'IMG_0001.jpg',
+            error: GoogleDriveUploadErrorClass.SourceUnreadable,
+            detail: 'ENOENT',
+            attempts: 3,
+            lastFailedAt,
+          },
+        ],
+      });
+      expect(mocks.googleDrive.getFailures).toHaveBeenCalledWith(userId, 200);
+    });
+
+    it('should return nothing when the feature is not configured, without querying', async () => {
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { ...enabledConfig, clientId: '' } });
+
+      await expect(sut.getFailures(newUuid(), 200)).resolves.toEqual({ failures: [], total: 0 });
+
+      expect(mocks.systemMetadata.get).toHaveBeenCalled();
+      expect(mocks.googleDrive.getFailures).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retryFailures', () => {
+    it('should reject when the feature is disabled', async () => {
+      await expect(sut.retryFailures(AuthFactory.create(UserFactory.create()), [])).rejects.toThrow(
+        'Google Drive sync is not enabled on this server',
+      );
+      expect(mocks.googleDrive.clearErrors).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.clearErrorsForAssets).not.toHaveBeenCalled();
+    });
+
+    it('should clear the named failures and re-queue through the selection query', async () => {
+      // The load-bearing part: retrying does NOT queue the asset ids from the error table. An
+      // error row outlives the album selection that produced it, so queueing straight from it
+      // would upload a photo out of an album the user has since unselected. Clearing the rows and
+      // running the ordinary pending query keeps that check.
+      const user = UserFactory.create();
+      const [failed, other] = [newUuid(), newUuid()];
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      // eslint-disable-next-line @typescript-eslint/require-await
+      mocks.googleDrive.streamPendingUploads.mockImplementation(async function* () {
+        yield { userId: user.id, assetId: other };
+      } as never);
+
+      await expect(sut.retryFailures(AuthFactory.create(user), [failed])).resolves.toEqual({ queued: 1 });
+
+      expect(mocks.googleDrive.clearErrorsForAssets).toHaveBeenCalledWith(user.id, [failed]);
+      expect(mocks.googleDrive.clearErrors).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.streamPendingUploads).toHaveBeenCalledWith(user.id);
+      // What got queued is what the pending query returned, not what was passed in.
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.GoogleDriveUpload, data: { userId: user.id, assetId: other } },
+      ]);
+    });
+
+    it('should clear every class when retrying all, so a blocked account unblocks too', async () => {
+      // Arriving from the failure list rather than the banner must not need a second gesture.
+      const user = UserFactory.create();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.streamPendingUploads.mockImplementation(async function* () {} as never);
+
+      await sut.retryFailures(AuthFactory.create(user), []);
+
+      expect(mocks.googleDrive.clearErrors).toHaveBeenCalledWith(
+        user.id,
+        expect.arrayContaining([
+          GoogleDriveUploadErrorClass.QuotaExceeded,
+          GoogleDriveUploadErrorClass.FolderMissing,
+          GoogleDriveUploadErrorClass.SourceUnreadable,
+        ]),
+      );
+      expect(mocks.googleDrive.clearErrorsForAssets).not.toHaveBeenCalled();
+      expect(mocks.googleDrive.streamPendingUploads).toHaveBeenCalledWith(user.id);
+    });
+  });
+
   describe('resumeUploads', () => {
     it('should reject when the feature is disabled', async () => {
       await expect(sut.resumeUploads(AuthFactory.create(UserFactory.create()))).rejects.toBeInstanceOf(

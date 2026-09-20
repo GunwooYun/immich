@@ -923,4 +923,60 @@ export class GoogleDriveRepository {
 
     return { failedCount: Number(countRow?.count ?? 0), blockedReason };
   }
+
+  /**
+   * The failures themselves, for the list the settings page shows under the count.
+   *
+   * Same two reader rules as `getErrorSummary` — a ledger row wins over a stale error row, and a
+   * trashed asset is not the user's problem — so the list can never disagree with the number above
+   * it. Newest first, because the useful question is "what just broke", and capped by the caller:
+   * a thousand-row failure storm is a single account-level cause, and the banner above the list
+   * already names it.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, 100] })
+  getFailures(userId: string, limit: number) {
+    return this.db
+      .selectFrom('google_drive_upload_error')
+      .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
+      .leftJoin('google_drive_upload', (join) =>
+        join
+          .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
+          .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
+          .on(ledgerMatches(userId)),
+      )
+      .where('google_drive_upload_error.userId', '=', userId)
+      .where('asset.deletedAt', 'is', null)
+      .where('google_drive_upload.assetId', 'is', null)
+      .select([
+        'google_drive_upload_error.assetId',
+        'google_drive_upload_error.error',
+        'google_drive_upload_error.detail',
+        'google_drive_upload_error.attempts',
+        'google_drive_upload_error.lastFailedAt',
+        'asset.originalFileName',
+      ])
+      .orderBy('google_drive_upload_error.lastFailedAt', 'desc')
+      .limit(limit)
+      .execute();
+  }
+
+  /**
+   * Forgets the failures for specific assets, so the ordinary pending query picks them up again.
+   *
+   * Retrying deliberately goes through that query rather than queueing the ids directly: it is the
+   * one place that checks the asset is still in an album the user selected. Queueing an id from
+   * this table would upload a photo whose album the user has since unselected — the error row
+   * outlives the selection.
+   */
+  clearErrorsForAssets(userId: string, assetIds: string[]) {
+    if (assetIds.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.db
+      .deleteFrom('google_drive_upload_error')
+      .where('userId', '=', userId)
+      .where('assetId', 'in', assetIds)
+      .execute();
+  }
 }

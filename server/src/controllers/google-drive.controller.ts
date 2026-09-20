@@ -4,11 +4,14 @@ import { Request, Response } from 'express';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
+  GOOGLE_DRIVE_FAILURE_PAGE_MAX,
   GoogleDriveAlbumDto,
   GoogleDriveAlbumStatusDto,
   GoogleDriveAuthUrlResponseDto,
+  GoogleDriveFailureListDto,
   GoogleDriveMyStatusDto,
   GoogleDrivePickerConfigResponseDto,
+  GoogleDriveRetryFailuresDto,
   GoogleDriveSetFolderDto,
   GoogleDriveStatusResponseDto,
   GoogleDriveStorageDto,
@@ -280,6 +283,37 @@ export class GoogleDriveController {
     @Body() dto: GoogleDriveUploadedLookupDto,
   ): Promise<GoogleDriveUploadedLookupResponseDto> {
     return this.googleDriveService.getUploadedAssets(auth.user.id, dto.assetIds);
+  }
+
+  /**
+   * The failures behind the count on the settings page: what broke, why, and how often.
+   */
+  @Get('me/failures')
+  @Authenticated()
+  @Endpoint({
+    summary: 'List the authenticated user failed Google Drive uploads',
+    description:
+      'Return the most recent failures for this user, newest first, with the classification and whatever detail the upload reported. Capped; `total` reports how many there are in all.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async getMyGoogleDriveFailures(@Auth() auth: AuthDto): Promise<GoogleDriveFailureListDto> {
+    return this.googleDriveService.getFailures(auth.user.id, GOOGLE_DRIVE_FAILURE_PAGE_MAX);
+  }
+
+  /**
+   * Retry specific failures, or all of them when the list is empty.
+   */
+  @Post('me/failures/retry')
+  @HttpCode(HttpStatus.OK)
+  @Authenticated()
+  @Endpoint({
+    summary: 'Retry failed Google Drive uploads',
+    description:
+      'Forget the recorded failures for the given assets — or every failure when no asset is given — and queue whatever is still selected for backup.',
+    history: new HistoryBuilder().added('v3.0.0').alpha('v3.0.0'),
+  })
+  async retryGoogleDriveFailures(@Auth() auth: AuthDto, @Body() dto: GoogleDriveRetryFailuresDto): Promise<void> {
+    await this.googleDriveService.retryFailures(auth, dto.assetIds);
   }
 
   @Get('picker-config')
