@@ -364,8 +364,14 @@
   let driveConnected = $state(false);
   let driveBlockedReason = $state<string | null>(null);
   let driveFailed = $state(0);
-  /** Which album the counters above describe, so a reload of the same album keeps its dot. */
-  let driveIndicatorAlbumId = $state<string | undefined>(undefined);
+  /**
+   * Which album the counters above describe, so a reload of the same album keeps its dot.
+   *
+   * A plain `let`, not `$state`: nothing renders it, and as reactive state it was read and written
+   * inside the same `$effect`, which re-schedules that effect once — firing both indicator
+   * requests twice on mount and on every album change (wave9g review N1).
+   */
+  let driveIndicatorAlbumId: string | undefined = undefined;
 
   // The toolbar dot. Everything else in the menu stays lazy (storage and connection status go all
   // the way to Google), but these two are plain database reads, and without them the icon cannot
