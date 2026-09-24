@@ -917,6 +917,27 @@ export class GoogleDriveRepository {
       .where('google_drive_upload_error.userId', '=', userId)
       .where('asset.deletedAt', 'is', null)
       .where('google_drive_upload.assetId', 'is', null)
+      // Still selected, still shared, still there. A failure row outlives all three — unselecting
+      // an album, losing access to it, or the album being deleted leaves the row behind — and
+      // nothing ever clears it: retrying runs the pending query, which excludes exactly these, so
+      // the user is left with a failure they cannot act on or dismiss (wave10c review M1). The
+      // shape mirrors `streamPendingUploads`: selection ⋈ live membership ⋈ live album.
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('album_asset')
+            .innerJoin('album', 'album.id', 'album_asset.albumId')
+            .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album.id')
+            .innerJoin('album_user', (join) =>
+              join
+                .onRef('album_user.albumId', '=', 'album.id')
+                .onRef('album_user.userId', '=', 'google_drive_album.userId'),
+            )
+            .select(sql`1`.as('one'))
+            .whereRef('album_asset.assetId', '=', 'google_drive_upload_error.assetId')
+            .whereRef('google_drive_album.userId', '=', 'google_drive_upload_error.userId')
+            .where('album.deletedAt', 'is', null),
+        ),
+      )
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .executeTakeFirst();
     const blockedReason = await this.getBlockingError(userId);
@@ -940,32 +961,59 @@ export class GoogleDriveRepository {
    */
   @GenerateSql({ params: [DummyValue.UUID, 100] })
   getFailures(userId: string, limit: number) {
-    return this.db
-      .selectFrom('google_drive_upload_error')
-      .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
-      .innerJoin('user as owner', 'owner.id', 'asset.ownerId')
-      .leftJoin('google_drive_upload', (join) =>
-        join
-          .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
-          .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
-          .on(ledgerMatches(userId)),
-      )
-      .where('google_drive_upload_error.userId', '=', userId)
-      .where('asset.deletedAt', 'is', null)
-      .where('google_drive_upload.assetId', 'is', null)
-      .select([
-        'google_drive_upload_error.assetId',
-        'google_drive_upload_error.error',
-        'google_drive_upload_error.detail',
-        'google_drive_upload_error.attempts',
-        'google_drive_upload_error.lastFailedAt',
-        'asset.originalFileName',
-        'asset.ownerId',
-        'owner.name as ownerName',
-      ])
-      .orderBy('google_drive_upload_error.lastFailedAt', 'desc')
-      .limit(limit)
-      .execute();
+    return (
+      this.db
+        .selectFrom('google_drive_upload_error')
+        .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
+        // Inner join, not left: a hard-deleted user takes their assets with them (asset.ownerId
+        // CASCADE) and the error rows follow (assetId CASCADE), so there is no row left to widen
+        // for. A *soft*-deleted user still has their row, so the name keeps rendering during the
+        // deletion delay — which is what you want while their failures are still real.
+        .innerJoin('user as owner', 'owner.id', 'asset.ownerId')
+        .leftJoin('google_drive_upload', (join) =>
+          join
+            .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
+            .onRef('google_drive_upload.userId', '=', 'google_drive_upload_error.userId')
+            .on(ledgerMatches(userId)),
+        )
+        .where('google_drive_upload_error.userId', '=', userId)
+        .where('asset.deletedAt', 'is', null)
+        .where('google_drive_upload.assetId', 'is', null)
+        // Still selected, still shared, still there. A failure row outlives all three — unselecting
+        // an album, losing access to it, or the album being deleted leaves the row behind — and
+        // nothing ever clears it: retrying runs the pending query, which excludes exactly these, so
+        // the user is left with a failure they cannot act on or dismiss (wave10c review M1). The
+        // shape mirrors `streamPendingUploads`: selection ⋈ live membership ⋈ live album.
+        .where(({ exists, selectFrom }) =>
+          exists(
+            selectFrom('album_asset')
+              .innerJoin('album', 'album.id', 'album_asset.albumId')
+              .innerJoin('google_drive_album', 'google_drive_album.albumId', 'album.id')
+              .innerJoin('album_user', (join) =>
+                join
+                  .onRef('album_user.albumId', '=', 'album.id')
+                  .onRef('album_user.userId', '=', 'google_drive_album.userId'),
+              )
+              .select(sql`1`.as('one'))
+              .whereRef('album_asset.assetId', '=', 'google_drive_upload_error.assetId')
+              .whereRef('google_drive_album.userId', '=', 'google_drive_upload_error.userId')
+              .where('album.deletedAt', 'is', null),
+          ),
+        )
+        .select([
+          'google_drive_upload_error.assetId',
+          'google_drive_upload_error.error',
+          'google_drive_upload_error.detail',
+          'google_drive_upload_error.attempts',
+          'google_drive_upload_error.lastFailedAt',
+          'asset.originalFileName',
+          'asset.ownerId',
+          'owner.name as ownerName',
+        ])
+        .orderBy('google_drive_upload_error.lastFailedAt', 'desc')
+        .limit(limit)
+        .execute()
+    );
   }
 
   /**

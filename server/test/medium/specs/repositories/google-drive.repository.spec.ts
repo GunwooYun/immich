@@ -83,6 +83,36 @@ const sharedAlbum = async (ctx: any) => {
 };
 
 /**
+ * An album this user owns, holds these assets, and has selected for backup.
+ *
+ * Every failure row in production comes from this state — an upload is only ever attempted for an
+ * asset that sits in a selected album — so the failure queries now require it, and fixtures that
+ * created an error row with no album at all were describing a state the application cannot reach.
+ * `newAlbum` writes the owner's `album_user` row itself (role Owner, verified in medium.factory),
+ * so owning the album already satisfies the live-membership half; only the selection row is left
+ * to add here.
+ */
+const selectedAlbum = async (ctx: any, userId: string, assetIds: string[]) => {
+  const { album } = await ctx.newAlbum({ ownerId: userId }, assetIds);
+  await ctx.database.insertInto('google_drive_album').values({ userId, albumId: album.id }).execute();
+  return album;
+};
+
+/**
+ * The same, for an album somebody else owns: shared with the reader, and selected by the reader.
+ *
+ * This is the shape behind "the failing photo is not yours" — backing up a shared album uploads
+ * its owner's assets into the reader's Drive — and it is also the only way to test losing access,
+ * which an owner cannot do to themselves.
+ */
+const selectedSharedAlbum = async (ctx: any, ownerId: string, readerId: string, assetIds: string[]) => {
+  const { album } = await ctx.newAlbum({ ownerId }, assetIds);
+  await ctx.newAlbumUser({ albumId: album.id, userId: readerId });
+  await ctx.database.insertInto('google_drive_album').values({ userId: readerId, albumId: album.id }).execute();
+  return album;
+};
+
+/**
  * A connection that already points at a folder, for the backfill's guard tests. The connection id is
  * a parameter and the token is not, because the backfill's compare-and-set keys on the connection:
  * a fixture that varied the token would be varying something the write no longer looks at.
@@ -1057,6 +1087,13 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { asset: trashed } = await ctx.newAsset({ ownerId: user.id, deletedAt: new Date() });
       const { asset: othersAsset } = await ctx.newAsset({ ownerId: other.id });
       await connect(ctx, user.id, 'account-x');
+      // Both queries also require the failing asset to still be in an album the reader selected
+      // and can see, so the fixture has to put it in one. The other user's asset gets a selected
+      // album of its own rather than none: with none, dropping the `userId` filter from either
+      // query would still exclude their row via the membership predicate, and the user scope
+      // this test exists to hold would be unheld.
+      await selectedAlbum(ctx, user.id, [failing.id, retried.id, trashed.id]);
+      await selectedAlbum(ctx, other.id, [othersAsset.id]);
 
       for (const [owner, asset] of [
         [user, failing],
@@ -1090,6 +1127,9 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { user: other } = await ctx.newUser({ name: 'Seohui' });
       const { asset } = await ctx.newAsset({ ownerId: other.id });
       await connect(ctx, user.id, 'account-x');
+      // The album the comment describes, spelled out: the other member owns it and the photo, the
+      // reader selected it. That is also what the membership predicate now requires.
+      await selectedSharedAlbum(ctx, other.id, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
 
       const rows = await sut.getFailures(user.id, 100);
@@ -1176,6 +1216,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
       await connect(ctx, user.id, 'account-x');
+      await selectedAlbum(ctx, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
@@ -1199,14 +1240,17 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
       await connect(ctx, user.id, 'account-x');
+      const album = await selectedAlbum(ctx, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await ledger(ctx, user.id, asset.id, 'account-x');
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 0, blockedReason: null });
 
       // Witness: without the ledger row the same fixture counts one, so the zero above is the
-      // anti-join and not an empty table.
+      // anti-join and not an empty table. It goes into the same selected album, or the membership
+      // predicate would be the thing keeping it out and the witness would witness nothing.
       const { asset: other } = await ctx.newAsset({ ownerId: user.id });
+      await ctx.newAlbumAsset({ albumId: album.id, assetId: other.id });
       await sut.upsertError(user.id, other.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
     });
@@ -1220,6 +1264,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
       await connect(ctx, user.id, 'account-x');
+      await selectedAlbum(ctx, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await ledger(ctx, user.id, asset.id, 'account-other');
 
@@ -1254,6 +1299,9 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { asset } = await ctx.newAsset({ ownerId: user.id });
       await connect(ctx, user.id, 'account-x');
       await connect(ctx, other.id, 'account-x');
+      // The album is the reader's own; the other user needs nothing but the ledger row, which is
+      // the only thing this test is about.
+      await selectedAlbum(ctx, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
       await ledger(ctx, other.id, asset.id, 'account-x');
 
@@ -1267,6 +1315,7 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       const { ctx, sut } = setup();
       const { user } = await ctx.newUser();
       const { asset } = await ctx.newAsset({ ownerId: user.id });
+      await selectedAlbum(ctx, user.id, [asset.id]);
       await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
@@ -1274,6 +1323,84 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ctx.database.updateTable('asset').set({ deletedAt: new Date() }).where('id', '=', asset.id).execute();
 
       await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 0, blockedReason: null });
+    });
+
+    it('should stop reporting a failure once its album is unselected', async () => {
+      // The membership predicate, in the form the user meets it. A failure row outlives a
+      // deselect, and nothing ever clears it: retrying goes through the pending query, which
+      // already excludes an unselected album, so the row sat in the settings list for good with
+      // no action that could touch it (wave10c review M1). Both readers of the table have to
+      // agree about that, or the count and the list disagree about the same row.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: dropped } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: kept } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      const unselected = await selectedAlbum(ctx, user.id, [dropped.id]);
+      await selectedAlbum(ctx, user.id, [kept.id]);
+      await sut.upsertError(user.id, dropped.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+      await sut.upsertError(user.id, kept.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+
+      // Witness: while both albums are selected both failures are reported, so the disappearance
+      // below is the predicate and not a fixture that never produced a row.
+      const before = await sut.getFailures(user.id, 100);
+      expect(before.map((row: { assetId: string }) => row.assetId).sort()).toEqual([dropped.id, kept.id].sort());
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 2, blockedReason: null });
+
+      await sut.unsubscribe(user.id, unselected.id);
+
+      // The second witness, in the same test: the sibling failure in the still-selected album is
+      // untouched, so the predicate dropped exactly the row whose album went away.
+      const after = await sut.getFailures(user.id, 100);
+      expect(after.map((row: { assetId: string }) => row.assetId)).toEqual([kept.id]);
+      await expect(sut.getErrorSummary(user.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+
+      // The error row itself is still there. Hiding it is the fix; deleting it would throw away
+      // the attempt history that a re-selection makes relevant again.
+      const remaining = await ctx.database
+        .selectFrom('google_drive_upload_error')
+        .select('assetId')
+        .where('userId', '=', user.id)
+        .where('assetId', '=', dropped.id)
+        .execute();
+      expect(remaining).toEqual([{ assetId: dropped.id }]);
+    });
+
+    it('should stop reporting a failure once its album is no longer shared with the reader', async () => {
+      // The other half of the same join, and the reason a selection row is not evidence of
+      // access: it deliberately survives an unshare so that re-sharing resumes. A failure from an
+      // album the reader can no longer open is one they cannot retry, cannot dismiss, and cannot
+      // even look at — the settings page would be asking them to act on someone else's photo.
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: guest } = await ctx.newUser();
+      const { asset: lost } = await ctx.newAsset({ ownerId: owner.id });
+      const { asset: kept } = await ctx.newAsset({ ownerId: guest.id });
+      await connect(ctx, guest.id, 'account-x');
+      const shared = await selectedSharedAlbum(ctx, owner.id, guest.id, [lost.id]);
+      await selectedAlbum(ctx, guest.id, [kept.id]);
+      await sut.upsertError(guest.id, lost.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+      await sut.upsertError(guest.id, kept.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+
+      // Witness: while the share stands both failures are reported.
+      const before = await sut.getFailures(guest.id, 100);
+      expect(before.map((row: { assetId: string }) => row.assetId).sort()).toEqual([kept.id, lost.id].sort());
+      await expect(sut.getErrorSummary(guest.id)).resolves.toEqual({ failedCount: 2, blockedReason: null });
+
+      // Revoke the share; the selection row stays behind, exactly as the stream's unshare test has it.
+      await ctx.database
+        .deleteFrom('album_user')
+        .where('albumId', '=', shared.id)
+        .where('userId', '=', guest.id)
+        .execute();
+
+      // Second witness: the guest's own album is still selected and still reports its failure.
+      const after = await sut.getFailures(guest.id, 100);
+      expect(after.map((row: { assetId: string }) => row.assetId)).toEqual([kept.id]);
+      await expect(sut.getErrorSummary(guest.id)).resolves.toEqual({ failedCount: 1, blockedReason: null });
+      // …and the selection itself survives, so a re-share brings the failure back into view
+      // rather than losing it.
+      await expect(sut.isSubscribed(guest.id, shared.id)).resolves.toBe(true);
     });
 
     it("should clear only the uploading user's failure row", async () => {

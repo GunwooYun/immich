@@ -20109,7 +20109,7 @@
             "type": "string"
           },
           "ownerName": {
-            "description": "Who owns the asset, when that is not the caller — shared albums upload other people photos",
+            "description": "Who owns the asset, when that is not the caller — shared albums upload other people's photos",
             "nullable": true,
             "type": "string"
           }

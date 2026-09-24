@@ -43,7 +43,7 @@ class GoogleDriveFailureDto {
   /// When it last failed
   DateTime lastFailedAt;
 
-  /// Who owns the asset, when that is not the caller — shared albums upload other people photos
+  /// Who owns the asset, when that is not the caller — shared albums upload other people's photos
   String? ownerName;
 
   @override

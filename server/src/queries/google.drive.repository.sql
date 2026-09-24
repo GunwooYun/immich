@@ -492,6 +492,21 @@ where
   "google_drive_upload_error"."userId" = $2
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
+  and exists (
+    select
+      1 as "one"
+    from
+      "album_asset"
+      inner join "album" on "album"."id" = "album_asset"."albumId"
+      inner join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
+      inner join "album_user" on "album_user"."albumId" = "album"."id"
+      and "album_user"."userId" = "google_drive_album"."userId"
+    where
+      "album_asset"."assetId" = "google_drive_upload_error"."assetId"
+      and "google_drive_album"."userId" = "google_drive_upload_error"."userId"
+      and "album"."deletedAt" is null
+  )
+
 select
   "error"
 from
@@ -541,6 +556,20 @@ where
   "google_drive_upload_error"."userId" = $2
   and "asset"."deletedAt" is null
   and "google_drive_upload"."assetId" is null
+  and exists (
+    select
+      1 as "one"
+    from
+      "album_asset"
+      inner join "album" on "album"."id" = "album_asset"."albumId"
+      inner join "google_drive_album" on "google_drive_album"."albumId" = "album"."id"
+      inner join "album_user" on "album_user"."albumId" = "album"."id"
+      and "album_user"."userId" = "google_drive_album"."userId"
+    where
+      "album_asset"."assetId" = "google_drive_upload_error"."assetId"
+      and "google_drive_album"."userId" = "google_drive_upload_error"."userId"
+      and "album"."deletedAt" is null
+  )
 order by
   "google_drive_upload_error"."lastFailedAt" desc
 limit
