@@ -185,6 +185,10 @@ const GoogleDriveFailureSchema = z
   .object({
     assetId: z.string().describe('The asset that failed to upload'),
     fileName: z.string().describe('Original file name, so the row is recognisable without a thumbnail'),
+    ownerName: z
+      .string()
+      .nullable()
+      .describe('Who owns the asset, when that is not the caller — shared albums upload other people photos'),
     error: z.string().describe("Failure classification, e.g. 'source_unreadable' or 'quota_exceeded'"),
     detail: z.string().nullable().describe('What the upload reported, when it said anything useful'),
     attempts: z.int().describe('How many times this asset has been tried'),

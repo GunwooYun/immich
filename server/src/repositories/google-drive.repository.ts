@@ -927,6 +927,11 @@ export class GoogleDriveRepository {
   /**
    * The failures themselves, for the list the settings page shows under the count.
    *
+   * The owner travels with each row because this list is not necessarily about the reader's own
+   * photos: backing up a shared album means uploading other people's assets into your Drive, so a
+   * failure here can belong to someone else entirely — and a file name alone cannot say so. The
+   * first real failure after this shipped was exactly that case, and it cost a round of confusion.
+   *
    * Same two reader rules as `getErrorSummary` — a ledger row wins over a stale error row, and a
    * trashed asset is not the user's problem — so the list can never disagree with the number above
    * it. Newest first, because the useful question is "what just broke", and capped by the caller:
@@ -938,6 +943,7 @@ export class GoogleDriveRepository {
     return this.db
       .selectFrom('google_drive_upload_error')
       .innerJoin('asset', 'asset.id', 'google_drive_upload_error.assetId')
+      .innerJoin('user as owner', 'owner.id', 'asset.ownerId')
       .leftJoin('google_drive_upload', (join) =>
         join
           .onRef('google_drive_upload.assetId', '=', 'google_drive_upload_error.assetId')
@@ -954,6 +960,8 @@ export class GoogleDriveRepository {
         'google_drive_upload_error.attempts',
         'google_drive_upload_error.lastFailedAt',
         'asset.originalFileName',
+        'asset.ownerId',
+        'owner.name as ownerName',
       ])
       .orderBy('google_drive_upload_error.lastFailedAt', 'desc')
       .limit(limit)

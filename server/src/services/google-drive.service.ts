@@ -946,6 +946,9 @@ export class GoogleDriveService extends BaseService {
       failures: rows.map((row) => ({
         assetId: row.assetId,
         fileName: row.originalFileName,
+        // Only when it is somebody else's: naming the reader on every row of their own failures
+        // would be noise, and the one case that matters is the shared-album one.
+        ownerName: row.ownerId === userId ? null : row.ownerName,
         error: row.error,
         detail: row.detail,
         attempts: row.attempts,

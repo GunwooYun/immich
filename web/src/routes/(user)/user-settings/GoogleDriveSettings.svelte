@@ -434,7 +434,17 @@
                       class="flex items-center justify-between gap-2 rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-800"
                     >
                       <div class="min-w-0">
-                        <p class="truncate font-medium">{failure.fileName}</p>
+                        <p class="truncate font-medium">
+                          {failure.fileName}
+                          {#if failure.ownerName}
+                            <!-- Whose photo it is, when it is not yours. Backing up a shared album
+                                 uploads other people's assets into your Drive, and without this the
+                                 row names a file that is nowhere in your own library. -->
+                            <span class="font-normal text-gray-500">
+                              · {$t('google_drive_failure_owner', { values: { name: failure.ownerName } })}
+                            </span>
+                          {/if}
+                        </p>
                         <p class="text-xs text-gray-500">
                           {failureLabel(failure.error)}
                           · {$t('google_drive_failure_attempts', { values: { count: failure.attempts } })}

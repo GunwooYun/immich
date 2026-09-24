@@ -19,6 +19,7 @@ class GoogleDriveFailureDto {
     required this.error,
     required this.fileName,
     required this.lastFailedAt,
+    required this.ownerName,
   });
 
   /// The asset that failed to upload
@@ -42,6 +43,9 @@ class GoogleDriveFailureDto {
   /// When it last failed
   DateTime lastFailedAt;
 
+  /// Who owns the asset, when that is not the caller — shared albums upload other people photos
+  String? ownerName;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is GoogleDriveFailureDto &&
     other.assetId == assetId &&
@@ -49,7 +53,8 @@ class GoogleDriveFailureDto {
     other.detail == detail &&
     other.error == error &&
     other.fileName == fileName &&
-    other.lastFailedAt == lastFailedAt;
+    other.lastFailedAt == lastFailedAt &&
+    other.ownerName == ownerName;
 
   @override
   int get hashCode =>
@@ -59,10 +64,11 @@ class GoogleDriveFailureDto {
     (detail == null ? 0 : detail!.hashCode) +
     (error.hashCode) +
     (fileName.hashCode) +
-    (lastFailedAt.hashCode);
+    (lastFailedAt.hashCode) +
+    (ownerName == null ? 0 : ownerName!.hashCode);
 
   @override
-  String toString() => 'GoogleDriveFailureDto[assetId=$assetId, attempts=$attempts, detail=$detail, error=$error, fileName=$fileName, lastFailedAt=$lastFailedAt]';
+  String toString() => 'GoogleDriveFailureDto[assetId=$assetId, attempts=$attempts, detail=$detail, error=$error, fileName=$fileName, lastFailedAt=$lastFailedAt, ownerName=$ownerName]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -78,6 +84,11 @@ class GoogleDriveFailureDto {
       json[r'lastFailedAt'] = _isEpochMarker(r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/')
         ? this.lastFailedAt.millisecondsSinceEpoch
         : this.lastFailedAt.toUtc().toIso8601String();
+    if (this.ownerName != null) {
+      json[r'ownerName'] = this.ownerName;
+    } else {
+      json[r'ownerName'] = null;
+    }
     return json;
   }
 
@@ -96,6 +107,7 @@ class GoogleDriveFailureDto {
         error: mapValueOfType<String>(json, r'error')!,
         fileName: mapValueOfType<String>(json, r'fileName')!,
         lastFailedAt: mapDateTime(json, r'lastFailedAt', r'/^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$/')!,
+        ownerName: mapValueOfType<String>(json, r'ownerName'),
       );
     }
     return null;
@@ -149,6 +161,7 @@ class GoogleDriveFailureDto {
     'error',
     'fileName',
     'lastFailedAt',
+    'ownerName',
   };
 }
 

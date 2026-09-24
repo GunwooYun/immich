@@ -1185,6 +1185,7 @@
   "google_drive_failed_count": "{count} failed",
   "google_drive_failure_attempts": "{count} attempts",
   "google_drive_failure_folder": "The destination folder was missing",
+  "google_drive_failure_owner": "{name}'s photo",
   "google_drive_failure_quota": "Google Drive was full",
   "google_drive_failure_revoked": "Google Drive access was revoked",
   "google_drive_failure_size": "Google Drive received a different size than was sent",

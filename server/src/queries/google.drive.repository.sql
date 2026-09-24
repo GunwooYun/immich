@@ -514,10 +514,13 @@ select
   "google_drive_upload_error"."detail",
   "google_drive_upload_error"."attempts",
   "google_drive_upload_error"."lastFailedAt",
-  "asset"."originalFileName"
+  "asset"."originalFileName",
+  "asset"."ownerId",
+  "owner"."name" as "ownerName"
 from
   "google_drive_upload_error"
   inner join "asset" on "asset"."id" = "google_drive_upload_error"."assetId"
+  inner join "user" as "owner" on "owner"."id" = "asset"."ownerId"
   left join "google_drive_upload" on "google_drive_upload"."assetId" = "google_drive_upload_error"."assetId"
   and "google_drive_upload"."userId" = "google_drive_upload_error"."userId"
   and (

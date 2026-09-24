@@ -1257,6 +1257,8 @@ export type GoogleDriveFailureDto = {
     fileName: string;
     /** When it last failed */
     lastFailedAt: string;
+    /** Who owns the asset, when that is not the caller — shared albums upload other people photos */
+    ownerName: string | null;
 };
 export type GoogleDriveFailureListDto = {
     /** Newest first, capped */

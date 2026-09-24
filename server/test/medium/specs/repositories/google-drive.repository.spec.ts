@@ -1075,6 +1075,27 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       expect(rows.length).toBe(summary.failedCount);
       // The row carries what the list renders, not just an id.
       expect(rows[0]).toMatchObject({ error: GoogleDriveUploadErrorClass.SourceUnreadable, attempts: 1 });
+      // Including who owns it: a shared album's failures belong to other people, and the reader
+      // cannot tell from a file name. Here the owner is the reader, and the service is what
+      // blanks that — the query always reports it.
+      expect(rows[0]).toMatchObject({ ownerId: user.id });
+    });
+
+    it("should report another user's name on a failure from a shared album", async () => {
+      // The production case this came from: the album is shared, the photo belongs to the other
+      // member, and the reader's failure list showed only a file name they could not find in
+      // their own library.
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { user: other } = await ctx.newUser({ name: 'Seohui' });
+      const { asset } = await ctx.newAsset({ ownerId: other.id });
+      await connect(ctx, user.id, 'account-x');
+      await sut.upsertError(user.id, asset.id, GoogleDriveUploadErrorClass.SourceUnreadable, 'gone');
+
+      const rows = await sut.getFailures(user.id, 100);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ assetId: asset.id, ownerId: other.id, ownerName: 'Seohui' });
     });
 
     it('should call only the first failure of a class first, and count attempts after that', async () => {

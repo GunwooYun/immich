@@ -122,6 +122,7 @@ describe('GoogleDriveSettings', () => {
     const failure = (over: Record<string, unknown> = {}) => ({
       assetId: 'asset-1',
       fileName: 'IMG_0001.jpg',
+      ownerName: null,
       error: 'source_unreadable',
       detail: 'ENOENT',
       attempts: 3,
@@ -150,6 +151,29 @@ describe('GoogleDriveSettings', () => {
       expect(await screen.findByText('IMG_0001.jpg')).toBeInTheDocument();
       expect(screen.getByText(/The original file could not be read/)).toBeInTheDocument();
       expect(screen.getByText(/3 attempts/)).toBeInTheDocument();
+    });
+
+    it("should name the owner when the photo is somebody else's", async () => {
+      // A shared album's failures are other people's photos; the file name alone sent us looking
+      // in the wrong library once already.
+      status.mockResolvedValue(connected({ failedCount: 1 }));
+      failures.mockResolvedValue({ failures: [failure({ ownerName: 'Seohui' })], total: 1 });
+
+      render(GoogleDriveSettings);
+      (await screen.findByText('Show failures')).click();
+
+      expect(await screen.findByText(/Seohui's photo/)).toBeInTheDocument();
+    });
+
+    it('should not label the owner on your own photos', async () => {
+      status.mockResolvedValue(connected({ failedCount: 1 }));
+      failures.mockResolvedValue({ failures: [failure()], total: 1 });
+
+      render(GoogleDriveSettings);
+      (await screen.findByText('Show failures')).click();
+
+      expect(await screen.findByText('IMG_0001.jpg')).toBeInTheDocument();
+      expect(screen.queryByText(/'s photo/)).not.toBeInTheDocument();
     });
 
     it('should retry one asset by id, and re-read the truth afterwards', async () => {

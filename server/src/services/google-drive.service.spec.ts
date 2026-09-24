@@ -1371,6 +1371,8 @@ describe(GoogleDriveService.name, () => {
           attempts: 3,
           lastFailedAt,
           originalFileName: 'IMG_0001.jpg',
+          ownerId: userId,
+          ownerName: 'Me',
         },
       ] as never);
       mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 812, blockedReason: null });
@@ -1382,6 +1384,8 @@ describe(GoogleDriveService.name, () => {
           {
             assetId,
             fileName: 'IMG_0001.jpg',
+            // Own asset: no name, or every row of a normal failure list would repeat the reader.
+            ownerName: null,
             error: GoogleDriveUploadErrorClass.SourceUnreadable,
             detail: 'ENOENT',
             attempts: 3,
@@ -1390,6 +1394,31 @@ describe(GoogleDriveService.name, () => {
         ],
       });
       expect(mocks.googleDrive.getFailures).toHaveBeenCalledWith(userId, 200);
+    });
+
+    it("should name the owner when the failure is somebody else's photo", async () => {
+      // Backing up a shared album uploads other people's assets into your Drive, so a failure here
+      // can belong to someone else. The first real failure in production was exactly that, and a
+      // file name alone sent us looking for a photo that was not in this account at all.
+      const userId = newUuid();
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: enabledConfig });
+      mocks.googleDrive.getFailures.mockResolvedValue([
+        {
+          assetId: newUuid(),
+          error: GoogleDriveUploadErrorClass.SourceUnreadable,
+          detail: null,
+          attempts: 1,
+          lastFailedAt: new Date(),
+          originalFileName: 'IMG_0926.HEIC',
+          ownerId: newUuid(),
+          ownerName: 'Seohui',
+        },
+      ] as never);
+      mocks.googleDrive.getErrorSummary.mockResolvedValue({ failedCount: 1, blockedReason: null });
+
+      const { failures } = await sut.getFailures(userId, 200);
+
+      expect(failures[0]).toMatchObject({ fileName: 'IMG_0926.HEIC', ownerName: 'Seohui' });
     });
 
     it('should return nothing when the feature is not configured, without querying', async () => {
