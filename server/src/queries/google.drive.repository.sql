@@ -506,7 +506,6 @@ where
       and "google_drive_album"."userId" = "google_drive_upload_error"."userId"
       and "album"."deletedAt" is null
   )
-
 select
   "error"
 from
