@@ -672,28 +672,53 @@ SQL
 
 ---
 
-## Current Project: Google Drive 연결을 의식 없이 유지하기 (In production 이후)
+## Current Project: Google Drive sync 안정화 (wave11)
 
 ### Context
-- 목표는 그대로다: 관리자 본인의 Drive 연결이 **끊기지 않고, 매주 재연결 의식 없이** 유지되게 한다.
-  가족은 이 기능을 쓰지 않는다(같은 LAN에서 immich 모바일 앱만 사용).
-- **OAuth 앱을 "In production"으로 게시했다 (2026-09-14).** 이것이 이 프로젝트의 전환점이다 —
-  Testing 상태의 **7일 refresh token 만료가 사라졌다**. 게시 조건이던 홈페이지·개인정보처리방침 URL은
-  GitHub Pages(`myimmich.babystory.co.kr`, 저장소 `GunwooYun/myimmich-site`)로 충족했고, 스코프는
-  `drive.file`(비민감)이라 앱 심사는 필요 없었다.
-- 운영 상태 (2026-09-19 측정, 배포본 `immich-server:3.1.0-gdrive-w8` = 커밋 `39d4b5900`):
-  원장 8,098건 / 오류 0 / 연결 1명(식별됨) / `connectedAt = 2026-09-14 12:49`(재연결 후 5일째 생존),
-  마지막 업로드 2026-09-18 21:28 KST.
-- 접속 경로는 그대로다: 평소 `http://192.168.50.211:2283`(LAN), Drive 연결 플로우만
-  `https://ha-server.tail68cec7.ts.net`.
+- Goal: 사용자가 겪은 "가끔 업로드 실패하는 사진"을 없애고, 일시 실패가 사람 손 없이 복구되게 한다.
+  범위는 넓게(사용자 선택). 완료 = 유닛·medium 통과 + 리뷰 사이클 통과.
+- **계획 전체: `dev-docs/google-drive/stabilization-plan.md`** (작업 체크리스트도 거기 있다 — 세션에
+  todo 도구가 없었다). 리서치: `.claude/docs/research/google-drive-sync-stabilization.md`.
+- 운영 상태 (2026-09-29, `-w10`): 연결 1명 `connectedAt = 2026-09-14`(15일 생존 → 7일 만료 소멸 확인,
+  이전 프로젝트의 원래 목표는 닫혔다), 원장 8,273, 오류 1건(`source_unreadable`, 아래 F1의 경합).
+- Key files: `server/src/services/google-drive.service.ts`(openOriginal, files.create),
+  `server/src/utils/google-drive.ts`(classify/retry), `server/src/repositories/google-drive.repository.ts`
+  (streamPendingUploads, recordUpload), `server/src/services/queue.service.ts`(nightly),
+  `server/src/cores/storage.core.ts`(move order).
 
 ### Decisions
-- **도메인 구입 보류 결정은 끝났다.** 기존 `babystory.co.kr`의 서브도메인을 빌려 쓰는 것으로 해결했고,
-  공개 노출(funnel)은 여전히 하지 않는다 — GitHub Pages는 정적 문서 두 장뿐이고 immich는 노출되지 않는다.
-- **관리 화면의 Google Drive 설정 항목은 삭제했다** (wave8). 설정의 출처는 `IMMICH_GOOGLE_DRIVE_*`
-  환경변수와 저장된 설정 row뿐이고, `enabled` 플래그는 폐지했다. 자세한 내용과 row 정리 절차는 §8.
-- **M8의 `refreshToken` nullable(소프트 해제)은 버렸다.** CAS만 `connectionId`로 옮겼다 — §7 item 10.
-- **사진별 배지는 타임라인 쿼리에 조인하지 않는다.** 화면에 보이는 자산만 별도 엔드포인트로 묻는다.
+- **업로드는 multipart다**(googleapis-common이 `requestBody`가 있으면 `uploadType`을 덮어씀). 그래서
+  in-call retry는 소비된 스트림을 다시 보낸다 → `retry: false`, 재시도는 야간 backfill이 맡는다.
+- **BullMQ는 Drive 잡의 실패를 보지 못한다**(`JobService.onJobRun`이 삼킴) → BullMQ attempts/backoff·
+  핸들러 내 재큐잉(같은 jobId)은 쓸 수 없다.
+- **F1은 타이머가 아니라 `move_history`로 푼다** — 이동 행은 rename 전에 생기고 마지막에 지워진다.
+- **멈춤 감지는 전체 timeout이 아니라 진행 없음 120초 abort** — node-fetch timeout은 본문 전송 전체를 덮는다.
+- **재시도 상한은 비차단·비RateLimited 전 클래스에 건다**(unknown만이 아니라) — 진짜 없는 파일이 매일 밤 돈다.
+- 수용한 지연: 일시 실패는 **≤24h** 안에 복구(또는 수동 앨범 동기화로 즉시).
+- 이전 프로젝트의 결정(도메인, wave8 설정 화면 삭제, soft-disconnect 기각, 배지 비조인)은 §7·§8에 있다.
+
+### Verification plan
+최하위 설정 티어는 `verify-task`(`verify-unit` 없음). 위험 라운드 뒤와 마지막은 §3 절차(= "§3").
+
+| ID | 무엇을 검증하는가 | 명령 | 티어 | 실패해야 할 때 실패하는가 |
+|----|------------------|------|------|---------------------------|
+| V1a | 행 경로 불변 + move 행 → newPath로 읽어 업로드, 오류 행 없음 | service spec | task | move 조회 제거 → 스킵 |
+| V1b | move 행 없음 + 재조회 불변 → 종결 스킵 `source_unreadable` | service spec | task | 항상 newPath 재시도 → 실패 |
+| V1c | newPath도 ENOENT → 스킵, detail에 두 경로 | service spec | task | 옛 경로 누락 → 실패 |
+| V1d | storage.core가 rename 후 asset 행 갱신 | storage.core spec | task | 순서 뒤집기 → 실패 |
+| V2 | files.create `retry: false`, 5xx 비재시도·기록 | service spec | task | retryConfig 복원 → 실패 |
+| V3 | signal+onUploadProgress, 120s idle → abort → unknown + 스트림 파기, 진행 시 타이머 리셋 | service spec (fake timers) | task | 리셋 제거 → 진행 중 abort |
+| V4 | 403 사유별 분류(insufficientPermissions→unknown, rate/daily→RateLimited, quota) | utils spec | task | "모든 403=RateLimited" 복원 → 실패 |
+| V5 | nightly가 enabled일 때만 QueueAll 큐잉 + dedup id | queue.service spec | task | disabled에도 큐잉 → 실패 |
+| V6 | 상한 미만 **포함**, 이상 제외, 차단·RateLimited 무시, 수동 동기화 후 재포함 | medium | §3 | 조건 제거/오작성 → 실패 (조용한 "아무것도 안 큐잉" 방지) |
+| V7 | EACCES/EIO → 재시도 가능 `source_unreadable` 행 | service spec | task | 종결 스킵 매핑 → 실패 |
+| V8 | 이전 실패 후 성공 → 시도 횟수 로그 + 오류 행 삭제 | service spec | task | 로그 제거 → 실패 |
+| V9 | streamPendingUploads가 타 사용자·삭제 앨범 제외 | medium | §3 | 조건 한 번 제거 → 실패 |
+| V10 | files.create throw 시 스트림 파기 | service spec | task | finally 제거 → 실패 |
+| V11 | getStorage/getPickerConfig 취소 토큰 → grant 삭제 + Revoked | service spec | task | clearRevokedGrant 생략 → 실패 |
+- 검증하지 않는 것: 실 구글 API의 429/5xx/idle(모킹만), 실제 느린 업로드에서의 abort, 오래된 move 행이
+  다른 파일을 가리키는 경우(Drive 크기 검사만이 방어).
+- 검증할 수 없는 것: 야간 backfill이 운영에서 실제로 치유하는지 — 배포 후 며칠 관찰(오류 테이블 + F7 로그).
 
 ### Notes (지뢰)
 - **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다** — 배포 전 유일한 하드 게이트(§7).
@@ -705,14 +730,9 @@ SQL
 - **데스크탑 dev container가 호스트 2283을 점유**해 SSH 터널과 상호 배타적이다.
 
 ### Tasks
-1. ~~Jobs 큐 실행 → 폴더 검증~~ **완료 (2026-09-02).**
-2. ~~`source_unreadable` 2건~~ **완료.**
-3. ~~OAuth 앱 "In production" 전환~~ **완료 (2026-09-14).**
-4. ~~Wave 6 배포 전 redirect 정책 확정~~ **완료** — row의 `redirectUrl`이 채워져 있다.
-5. ~~wave8 배포~~ **완료 (2026-09-16, `-w8` 이미지).** 롤백용 `-w7b` 이미지와
-   `~/immich-app/docker-compose.yml.bak-w7b`가 랩탑에 남아 있다.
-6. **2026-09-21에 연결 생존을 확인한다** — `connectedAt`이 9/14 그대로이고 업로드가 이어지면
-   7일 만료가 사라졌다는 증거가 된다. 이 프로젝트의 원래 목표가 그때 닫힌다.
+라운드 R0~R4와 체크리스트는 `dev-docs/google-drive/stabilization-plan.md` "Task list".
+
+이전 프로젝트(연결 유지)에서 이월된 열린 항목 — 이 wave 범위 밖:
 7. **구글 로그인만으로 Drive 연결** (진행 중) — 로그인 동의에서 받은 refresh token을 첫 연결에 한해
    저장한다. 세 조건(구글 issuer / 로그인 clientId == Drive clientId / 로그인 스코프에 `drive.file`)을
    모두 만족할 때만 동작하고, 그 전까지는 코드가 있어도 아무 일도 하지 않는다. 켜려면 사용자가
