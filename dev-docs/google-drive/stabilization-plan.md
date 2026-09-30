@@ -105,8 +105,8 @@ No todo tool is available in the session that wrote this plan, so the list is tr
 Tick boxes as rounds land.
 
 - [x] 1. R0: D0 comment fixes → [x] verify:task → report R0 `be509702a` / review wave11a: NOT BLOCKED (M1, M2 folded into R1)
-- [x] 2. R1: F1 `move_history` fallback in `openOriginal` → [x] verify:task V1a–V1c (+ stale-row guard, second re-read; 3 mutations each went red)
-- [ ] 3. R1: F1p storage.core order pin → [x] verify:task V1d (swap went red) → **§3 (risk:high)** → report R1
+- [x] 2. R1: F1 `move_history` fallback in `openOriginal` → [x] verify:task V1a–V1f (3 mutations each went red)
+- [x] 3. R1: F1p mover order pin → [x] verify:task V1d (swap went red) → [x] §3 `3cbdc45a9` PASS (medium 65/65) → report wave11b / review: NOT BLOCKED
 
 R1 deviations from the plan, recorded rather than silent:
 - V1d lives in `storage-template.service.spec.ts`, not `storage.core.spec.ts` — the core spec
@@ -115,9 +115,26 @@ R1 deviations from the plan, recorded rather than silent:
   equals the path that failed (the plan's "stale move row" risk is now tested, not just noted).
 - The existing test "should not retry when the path has not changed" was renamed and its witness
   changed from 2 to 3 row reads + a move lookup — the contract changed, not the test to fit.
-- [ ] 4. R2: F4 `retry: false`, delete `shouldRetryDriveRequest` → [ ] verify:task V2
-- [ ] 5. R2: F2 idle abort → [ ] verify:task V3, V10
-- [ ] 6. R2: F5 403 classification → [ ] verify:task V4 → **§3 (risk:high)** → report R2
+
+wave11b review verdicts, fed back (all folded into the R2 commit, so R2's review covers them):
+- **M1 accepted, fixed:** the move-row branch now runs only when the first read failed with
+  ENOENT. On the cross-device copy fallback a non-ENOENT failure (EMFILE/EIO) can happen while the
+  copy is still being written; a partial `newPath` would have uploaded with a size check that
+  agrees with the truncated length. New scenario **V1g**. Reachability in prod (upload and library
+  on different filesystems) is unverified — fixed anyway, it is one condition.
+- **N1 accepted:** during immich's incomplete-move recovery the `oldPath` guard declines a
+  legitimate move (recovery rewrites `oldPath`). Cost: a retryable skip. Guard kept; comment no
+  longer overclaims "covers exactly that window".
+- N2 (docs drift), N4 (evidence header lacks file list): fixed below and in `run.sh`.
+- N3: the mutation table under-reported reds — accepted, no change needed.
+
+- [x] 4. R2: F4 `retry: false`, delete `shouldRetryDriveRequest` → [x] verify:task V2 (retry: true went red)
+- [x] 5. R2: F2 idle abort → [x] verify:task V3 (4 mutations red). V10 already existed ("close the file when the connection drops mid-upload") — T2's fd half is therefore not new work
+- [ ] 6. R2: F5 403 classification → [x] verify:task V4 (2 mutations red) → **§3 (risk:high)** → report R2
+
+R2 deviation: F2 got a second budget the plan did not have — `UPLOAD_RESPONSE_TIMEOUT_MS`
+(10 min) once the whole body is sent, because no progress events fire while Drive finalises the
+file and a 120 s idle limit would cut large uploads off right at the end.
 - [ ] 7. R3: F3 nightly queue + dedup id → [ ] verify:task V5
 - [ ] 8. R3: F3 cap predicate + `mise //:sql` → [ ] V6 (medium)
 - [ ] 9. R3: F6 EACCES/EIO + F7 attempt log → [ ] verify:task V7, V8 → **§3 (risk:high)** → report R3
@@ -126,8 +143,9 @@ R1 deviations from the plan, recorded rather than silent:
 ### Not verified in this wave
 - Real Google API behaviour under 429/5xx/idle — mocked only.
 - The F2 abort under a real slow upload.
-- A stale `move_history` row from an old aborted move pointing at a different file: F1 would
-  read it; the Drive size check is the only guard. Accepted, noted.
+- ~~A stale `move_history` row pointing at a different file: the size check is the only guard.~~
+  Superseded in R1: the `oldPath` guard rejects such a row, tested as V1e.
+- A real cross-device (EXDEV) move racing an upload — V1g reproduces it only by mock sequencing.
 
 ### Cannot be verified here
 - Whether the nightly backfill heals transient failures in production — needs a few days of

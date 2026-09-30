@@ -708,8 +708,9 @@ SQL
 | V1d | mover 순서: move 행 → rename → asset 행 → move 행 삭제 | storage-template.service spec (core spec엔 mock 하네스 없음) | task | 순서 뒤집기 → 실패 |
 | V1e | `oldPath`가 실패한 경로와 다른 move 행은 무시 | service spec | task | 가드 제거 → 실패 |
 | V1f | move 행 없음 + 두 번째 행 조회에서 새 경로 → 업로드 | service spec | task | 두 번째 조회 제거 → 실패 |
+| V1g | 첫 읽기가 ENOENT 아닌 오류(EMFILE)면 move 행을 따르지 않음 (EXDEV 복사 중 부분 파일 방지, wave11b M1) | service spec | task | ENOENT 가드 제거 → 실패 |
 | V2 | files.create `retry: false`, 5xx 비재시도·기록 | service spec | task | retryConfig 복원 → 실패 |
-| V3 | signal+onUploadProgress, 120s idle → abort → unknown + 스트림 파기, 진행 시 타이머 리셋 | service spec (fake timers) | task | 리셋 제거 → 진행 중 abort |
+| V3 | signal+onUploadProgress, 120s idle → abort → unknown + 스트림 파기, 진행 시 타이머 리셋, 본문 전송 완료 후엔 10분 응답 한도, 종료 후 타이머 0 | service spec (fake timers) | task | 리셋 제거·응답 한도 제거·finally clearTimeout 제거 → 각각 실패 |
 | V4 | 403 사유별 분류(insufficientPermissions→unknown, rate/daily→RateLimited, quota) | utils spec | task | "모든 403=RateLimited" 복원 → 실패 |
 | V5 | nightly가 enabled일 때만 QueueAll 큐잉 + dedup id | queue.service spec | task | disabled에도 큐잉 → 실패 |
 | V6 | 상한 미만 **포함**, 이상 제외, 차단·RateLimited 무시, 수동 동기화 후 재포함 | medium | §3 | 조건 제거/오작성 → 실패 (조용한 "아무것도 안 큐잉" 방지) |
@@ -718,8 +719,8 @@ SQL
 | V9 | streamPendingUploads가 타 사용자·삭제 앨범 제외 | medium | §3 | 조건 한 번 제거 → 실패 |
 | V10 | files.create throw 시 스트림 파기 | service spec | task | finally 제거 → 실패 |
 | V11 | getStorage/getPickerConfig 취소 토큰 → grant 삭제 + Revoked | service spec | task | clearRevokedGrant 생략 → 실패 |
-- 검증하지 않는 것: 실 구글 API의 429/5xx/idle(모킹만), 실제 느린 업로드에서의 abort, 오래된 move 행이
-  다른 파일을 가리키는 경우(Drive 크기 검사만이 방어).
+- 검증하지 않는 것: 실 구글 API의 429/5xx/idle(모킹만), 실제 느린 업로드에서의 abort, 실제 EXDEV 이동과의
+  경합(V1g는 mock 순서로만 재현). (오래된 move 행 문제는 R1의 `oldPath` 가드 + V1e로 검증 대상이 됐다.)
 - 검증할 수 없는 것: 야간 backfill이 운영에서 실제로 치유하는지 — 배포 후 며칠 관찰(오류 테이블 + F7 로그).
 
 ### Notes (지뢰)

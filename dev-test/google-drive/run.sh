@@ -128,6 +128,9 @@ FAILED=0
     [ -n "$(git -C "$REPO_ROOT" status --porcelain -- ':!dev-test/google-drive/results')" ] &&
       echo ' + UNCOMMITTED CHANGES'
   )"
+  # Which files, not just that there are some: a reviewer can then tell "docs and an unrelated
+  # lockfile" from "the code under test" without reconstructing the tree (wave11a/11b review N4).
+  git -C "$REPO_ROOT" status --porcelain -- ':!dev-test/google-drive/results' | sed 's/^/        /'
   echo
 } | tee "$OUT"
 
