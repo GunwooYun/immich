@@ -1,0 +1,52 @@
+Google Drive — unit test run
+date:   2026-09-30T22:16:54+09:00
+commit: be509702a (feat/google-drive-album-sync-v3.1.0) + UNCOMMITTED CHANGES
+
+── server (unit) ──────────────────────────────────────────────
+
+ RUN  v3.2.7 /home/gwyun/workspace/immich/server
+
+ ✓ |server:unit| src/utils/misc.spec.ts (26 tests) 9ms
+ ✓ |server:unit| src/utils/google-drive.spec.ts (37 tests) 11ms
+(node:24021) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24020) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24028) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24041) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24022) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24037) ExperimentalWarning: WASI is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ✓ |server:unit| src/services/server.service.spec.ts (16 tests) 314ms
+ ✓ |server:unit| src/services/queue.service.spec.ts (18 tests) 437ms
+ ✓ |server:unit| src/services/system-config.service.spec.ts (32 tests) 796ms
+ ✓ |server:unit| src/config.spec.ts (5 tests) 992ms
+   ✓ updateConfig with credentials from the environment > should not persist a cleared credential that the environment supplies  850ms
+ ✓ |server:unit| src/services/album.service.spec.ts (70 tests) 1181ms
+ ✓ |server:unit| src/services/google-drive.service.spec.ts (112 tests) 1714ms
+
+ Test Files  8 passed (8)
+      Tests  316 passed (316)
+   Start at  22:16:55
+   Duration  6.99s (transform 2.82s, setup 0ms, collect 29.75s, tests 5.45s, environment 2ms, prepare 925ms)
+
+
+── web (unit) ──────────────────────────────────────────────
+
+ RUN  v4.1.10 /home/gwyun/workspace/immich/web
+
+
+ Test Files  8 passed (8)
+      Tests  87 passed (87)
+   Start at  22:17:04
+   Duration  10.63s (transform 31.82s, setup 4.33s, import 37.58s, tests 1.73s, environment 3.40s)
+
+
+── web (svelte-check, baseline-gated) ──────────────────────────────────────────────
+no svelte-check regressions vs baseline (3 pre-existing files)
+
+════════════════════════════════════════════════════════════
+RESULT: PASS
