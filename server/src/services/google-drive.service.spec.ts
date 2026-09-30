@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { EventEmitter } from 'node:events';
 import {
   AlbumUserRole,
   AssetPathType,
@@ -23,6 +24,12 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
+/**
+ * A stand-in for the fs.ReadStream createReadStream returns: an EventEmitter (uploadAsset listens
+ * for the file stream's 'error', wave11c review M1) with a spy-able destroy.
+ */
+const fakeStream = (destroy = vi.fn()) => Object.assign(new EventEmitter(), { destroy });
+
 /** What node-fetch rejects with when the request's AbortSignal fires (it carries no HTTP status). */
 class FakeAbortError extends Error {
   override name = 'AbortError';
@@ -155,7 +162,7 @@ const arrangeReadyToUpload = (mocks: ServiceMocks, userId: string) => {
   mocks.googleDrive.hasUpload.mockResolvedValue(false);
   mocks.asset.getById.mockResolvedValue(getForAsset(asset));
   mocks.storage.createReadStream.mockResolvedValue({
-    stream: { destroy: vi.fn() } as never,
+    stream: fakeStream() as never,
     length: 1024,
     type: 'image/jpeg',
   });
@@ -466,7 +473,7 @@ describe(GoogleDriveService.name, () => {
         mocks.asset.getById.mockResolvedValueOnce(getForAsset(asset)).mockResolvedValueOnce(moved);
         mocks.storage.createReadStream
           .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-          .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/jpeg' });
+          .mockResolvedValueOnce({ stream: fakeStream() as never, length: 1024, type: 'image/jpeg' });
         driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
 
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
@@ -527,7 +534,7 @@ describe(GoogleDriveService.name, () => {
           });
           mocks.storage.createReadStream
             .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-            .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/heic' });
+            .mockResolvedValueOnce({ stream: fakeStream() as never, length: 1024, type: 'image/heic' });
           driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
 
           await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
@@ -567,9 +574,8 @@ describe(GoogleDriveService.name, () => {
             userId,
             asset.id,
             GoogleDriveUploadErrorClass.SourceUnreadable,
-            // The recorded detail names the path, not the errno — that is the existing contract of
-            // the source-unreadable skip. Splitting read errors by kind is wave11 R3 (F6).
-            expect.stringContaining(asset.originalPath),
+            // Path and errno (wave11 R3, F6): EMFILE here must be distinguishable from a missing file.
+            `Could not read ${asset.originalPath} [EMFILE]`,
           );
         });
 
@@ -633,7 +639,7 @@ describe(GoogleDriveService.name, () => {
           mocks.move.getByEntity.mockResolvedValue(void 0);
           mocks.storage.createReadStream
             .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
-            .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/heic' });
+            .mockResolvedValueOnce({ stream: fakeStream() as never, length: 1024, type: 'image/heic' });
           driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
 
           await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
@@ -738,6 +744,33 @@ describe(GoogleDriveService.name, () => {
         expect(driveFilesDelete).not.toHaveBeenCalled();
       });
 
+      it('should log a recovery when the upload succeeds after recorded failures', async () => {
+        // wave11 R3 (F7). Error rows are deleted on success, so this log line is the only trace
+        // that a photo struggled and healed — what the nightly retry is judged by after deploy.
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+        mocks.googleDrive.recordUpload.mockResolvedValue({ priorAttempts: 3 });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        expect(mocks.logger.log).toHaveBeenCalledWith(
+          `Uploaded asset ${asset.id} to Google Drive after 3 failed attempt(s)`,
+        );
+      });
+
+      it('should not log a recovery for a first-time success', async () => {
+        const userId = newUuid();
+        const asset = arrangeReadyToUpload(mocks, userId);
+        driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+        await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+        // Witness: the ledger write (which reports priorAttempts) did happen.
+        expect(mocks.googleDrive.recordUpload).toHaveBeenCalled();
+        expect(mocks.logger.log).not.toHaveBeenCalledWith(expect.stringContaining('failed attempt'));
+      });
+
       it('should record the connection that authorized the upload, not the one that exists after it', async () => {
         // The ledger row names a connection, and adoption claims rows by that name. A re-link
         // during a long transfer replaces the connection row, so reading it again at the end would
@@ -785,7 +818,7 @@ describe(GoogleDriveService.name, () => {
         const asset = arrangeReadyToUpload(mocks, userId);
         const destroy = vi.fn();
         mocks.storage.createReadStream.mockResolvedValue({
-          stream: { destroy } as never,
+          stream: fakeStream(destroy) as never,
           length: 1024,
           type: 'image/jpeg',
         });
@@ -874,7 +907,7 @@ describe(GoogleDriveService.name, () => {
           const asset = arrangeReadyToUpload(mocks, userId);
           const destroy = vi.fn();
           mocks.storage.createReadStream.mockResolvedValue({
-            stream: { destroy } as never,
+            stream: fakeStream(destroy) as never,
             length: 1024,
             type: 'image/jpeg',
           });
@@ -941,6 +974,66 @@ describe(GoogleDriveService.name, () => {
           await vi.advanceTimersByTimeAsync(300_000);
           await settled;
           expect(options.signal.aborted).toBe(true);
+        });
+
+        it('should turn a read error on the file stream into a recorded failure, not a crash', async () => {
+          // wave11c review M1. The stream's 'error' has no listener anywhere downstream; an
+          // unhandled one would throw out of EventEmitter.emit and take the process down. Here the
+          // emit itself must not throw, the request must be aborted, and the row must blame the file.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          const destroy = vi.fn();
+          const stream = fakeStream(destroy);
+          mocks.storage.createReadStream.mockResolvedValue({
+            stream: stream as never,
+            length: 1024,
+            type: 'image/jpeg',
+          });
+          hangUntilAborted();
+
+          const result = sut.uploadAsset(userId, asset.id);
+          const settled = expect(result).rejects.toThrow('aborted');
+          const { options } = await untilInFlight();
+
+          expect(() =>
+            stream.emit('error', Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' })),
+          ).not.toThrow();
+          await settled;
+
+          expect(options.signal.aborted).toBe(true);
+          expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            GoogleDriveUploadErrorClass.SourceUnreadable,
+            expect.stringContaining('Reading the original failed mid-upload [EIO]'),
+          );
+          // Not blamed on Drive as a stall, even though the request did end by abort.
+          expect(mocks.googleDrive.upsertError).not.toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            expect.anything(),
+            expect.stringContaining('Upload stalled'),
+          );
+          expect(destroy).toHaveBeenCalled();
+        });
+
+        it('should send a 5xx failure once and record it, not retry it in-request', async () => {
+          // wave11c review N3: the "not retried" half of V2 as behaviour, not just as an option.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          driveFilesCreate.mockRejectedValue(
+            Object.assign(new Error('Service Unavailable'), { response: { status: 503 } }),
+          );
+
+          await expect(sut.uploadAsset(userId, asset.id)).rejects.toThrow('Service Unavailable');
+
+          expect(driveFilesCreate).toHaveBeenCalledTimes(1);
+          expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            GoogleDriveUploadErrorClass.Unknown,
+            'Service Unavailable',
+          );
         });
 
         it('should not leave the watchdog armed after the upload settles', async () => {

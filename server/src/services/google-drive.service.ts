@@ -800,12 +800,16 @@ export class GoogleDriveService extends BaseService {
    * Not a whole-request timeout, deliberately: gaxios hands `timeout` to node-fetch, where it covers
    * the entire body send, so any value long enough for a 7 GB video (the largest in the production
    * ledger) is useless for catching a stalled small one. Progress is what distinguishes slow from
-   * stuck. And stuck is reachable: googleapis-common pipes the file through classic `.pipe()`, so a
-   * source-side error mid-flight unpipes without ending the request body and the request would
-   * otherwise wait forever, holding one of the queue's worker slots.
+   * stuck: a network path that stops accepting bytes, or a Drive endpoint that stops answering.
    *
-   * 120 s is well above the lag between socket writes and progress events (a stream high-water mark
-   * plus the socket buffer, a few hundred KB), so a slow-but-moving upload never trips it.
+   * (A source-side read error is a different failure and is NOT what this catches, despite what the
+   * first version of this comment said: nothing in googleapis-common, gaxios or node-fetch listens
+   * for the file stream's 'error', so unhandled it would crash the process rather than stall. See
+   * the listener attached in uploadAsset — wave11c review M1.)
+   *
+   * 120 s is well above the lag between our reads and the progress events that report them: the
+   * review measured roughly 10 MB buffered on loopback before progress stops, which even a slow
+   * uplink drains in far less than two minutes, so a slow-but-moving upload never trips it.
    */
   private static readonly UPLOAD_IDLE_TIMEOUT_MS = 120_000;
 
@@ -1321,7 +1325,12 @@ export class GoogleDriveService extends BaseService {
 
     // The stall watchdog (see UPLOAD_IDLE_TIMEOUT_MS). Re-armed on every progress event; once the
     // last byte is out it switches to the longer response budget. Aborting makes node-fetch destroy
-    // the request body, which is also what unsticks the pipe in the source-error case.
+    // the request body and reject.
+    //
+    // Known gap (wave11c review N1): the access-token refresh googleapis performs inside files.create
+    // runs under this timer's clock but does not honour the signal, so a token endpoint that hangs
+    // would hold the job past the budget. Accepted: it has not been observed, and binding it would
+    // mean refreshing the token ourselves ahead of the call.
     const stall = new AbortController();
     let stallTimer: NodeJS.Timeout | undefined;
     const armStallTimer = (ms: number) => {
@@ -1329,6 +1338,23 @@ export class GoogleDriveService extends BaseService {
       stallTimer = setTimeout(() => stall.abort(), ms);
     };
     armStallTimer(GoogleDriveService.UPLOAD_IDLE_TIMEOUT_MS);
+
+    // The file stream's own errors (wave11c review M1, pre-existing). createReadStream only stats
+    // and access-checks before returning; the real open and every read happen later, and their
+    // failures — EIO from a flaky disk, EMFILE at the lazy open, ENOENT if the file vanished between
+    // the stat and the open — arrive as an 'error' event. Nothing downstream listens: googleapis-common
+    // connects the stream with classic .pipe(), which does not forward source errors, and node-fetch
+    // only watches its own body. An EventEmitter 'error' with no listener throws, so without this the
+    // microservices process would die of an uncaught exception. Listening turns it into an ordinary
+    // failure: remember it, abort the request, and record it below as source_unreadable.
+    //
+    // Left attached after the upload (not removed in finally) on purpose: a late error from a
+    // stream we have already given up on would otherwise be exactly the unhandled case again.
+    let sourceError: unknown;
+    streamInfo.stream.on('error', (error) => {
+      sourceError ??= error;
+      stall.abort();
+    });
 
     try {
       const { data } = await drive.files.create(
@@ -1410,13 +1436,19 @@ export class GoogleDriveService extends BaseService {
         // row, and stamping the ledger with the new connection would hand a file that went to the
         // old account to the new one. Adoption matches on this value, so the stale id is the
         // correct one to record: the row simply stays unclaimed.
-        await this.googleDriveRepository.recordUpload(
+        const { priorAttempts } = await this.googleDriveRepository.recordUpload(
           userId,
           assetId,
           data.id,
           uploadAccountId,
           credentials.connectionId,
         );
+        // Log, not debug, and only for the recoveries: the default level hides debug, and these
+        // lines are the only record that a transient failure happened and healed (see
+        // recordUpload). Counting them after a deploy is how the nightly retry is judged.
+        if (priorAttempts > 0) {
+          this.logger.log(`Uploaded asset ${assetId} to Google Drive after ${priorAttempts} failed attempt(s)`);
+        }
       }
 
       this.logger.debug(`Successfully uploaded asset ${assetId} to Google Drive`);
@@ -1458,11 +1490,23 @@ export class GoogleDriveService extends BaseService {
       // A stall abort surfaces as a bare AbortError with no status, which classifies as Unknown —
       // right, since it says nothing about the account — but its message ("The user aborted a
       // request") would mislead whoever reads the detail. Say what actually happened.
-      const classification = classifyDriveError(error, { hasFolder: !!folderId });
+      //
+      // A source read error aborts the request too, so it is checked first: the abort is its
+      // consequence, and "stalled" would name the wrong culprit. The class is source_unreadable —
+      // the file, not Drive, failed — which the backfill retries up to the attempt cap.
+      const classification = sourceError
+        ? GoogleDriveUploadErrorClass.SourceUnreadable
+        : classifyDriveError(error, { hasFolder: !!folderId });
       const message = error instanceof Error ? error.message : String(error);
-      const detail = stall.signal.aborted
-        ? `Upload stalled: no progress from Google Drive within the timeout, aborted (${message})`
-        : message;
+      let detail = message;
+      if (sourceError) {
+        const code = (sourceError as NodeJS.ErrnoException).code;
+        // No path: after an openOriginal move fallback the file read is not asset.originalPath, and
+        // a detail naming the wrong file is worse than one naming none (the row carries the asset).
+        detail = `Reading the original failed mid-upload${code ? ` [${code}]` : ''} (${String(sourceError)})`;
+      } else if (stall.signal.aborted) {
+        detail = `Upload stalled: no progress from Google Drive within the timeout, aborted (${message})`;
+      }
       const { firstOfClass } = await this.googleDriveRepository.upsertError(userId, assetId, classification, detail);
       if (
         firstOfClass &&

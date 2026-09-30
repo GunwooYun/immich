@@ -1,5 +1,9 @@
 import { Kysely } from 'kysely';
-import { GoogleDriveUploadErrorClass } from 'src/enum';
+import {
+  GOOGLE_DRIVE_CAPPED_ERROR_CLASSES,
+  GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS,
+  GoogleDriveUploadErrorClass,
+} from 'src/enum';
 import { GoogleDriveRepository } from 'src/repositories/google-drive.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { DB } from 'src/schema';
@@ -123,6 +127,13 @@ const connectWithFolder = (ctx: any, userId: string, connectionId: string, folde
     .values({ userId, refreshToken: 'token', driveAccountId: 'account-x', connectionId, folderId })
     .execute();
 
+/** An error row with a chosen attempt count — the cap's input, written directly rather than bumped N times. */
+const failed = (ctx: any, userId: string, assetId: string, error: GoogleDriveUploadErrorClass, attempts: number) =>
+  ctx.database
+    .insertInto('google_drive_upload_error')
+    .values({ userId, assetId, error, detail: 'boom', attempts })
+    .execute();
+
 const readFolder = (ctx: any, userId: string) =>
   ctx.database
     .selectFrom('user_google_drive')
@@ -180,6 +191,157 @@ describe(`${GoogleDriveRepository.name} (medium)`, () => {
       await ctx.database.insertInto('google_drive_album').values({ userId: user.id, albumId: album.id }).execute();
 
       await expect(drain(sut.streamPendingUploads(user.id))).resolves.toEqual([]);
+    });
+
+    /**
+     * wave11 R3: the attempt cap the nightly backfill relies on. The failure this guards against is
+     * silent — a wrong predicate makes the nightly run queue *nothing*, and every "is excluded"
+     * assertion would still pass — so each test here also asserts what must still be streamed.
+     */
+    describe('attempt cap', () => {
+      it('should keep an asset below the cap and drop one at the cap', async () => {
+        const { ctx, sut } = setup();
+        const { user } = await ctx.newUser();
+        const { asset: below } = await ctx.newAsset({ ownerId: user.id });
+        const { asset: atCap } = await ctx.newAsset({ ownerId: user.id });
+        await connect(ctx, user.id, 'account-x');
+        await selectedAlbum(ctx, user.id, [below.id, atCap.id]);
+        await failed(
+          ctx,
+          user.id,
+          below.id,
+          GoogleDriveUploadErrorClass.Unknown,
+          GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS - 1,
+        );
+        await failed(ctx, user.id, atCap.id, GoogleDriveUploadErrorClass.Unknown, GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS);
+
+        await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: user.id, assetId: below.id }]);
+      });
+
+      it('should cap every capped class, and never RateLimited', async () => {
+        const { ctx, sut } = setup();
+        const { user } = await ctx.newUser();
+        const { asset: throttled } = await ctx.newAsset({ ownerId: user.id });
+        const capped = [];
+        for (const error of GOOGLE_DRIVE_CAPPED_ERROR_CLASSES) {
+          const { asset } = await ctx.newAsset({ ownerId: user.id });
+          await failed(ctx, user.id, asset.id, error, GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS);
+          capped.push(asset.id);
+        }
+        await connect(ctx, user.id, 'account-x');
+        await selectedAlbum(ctx, user.id, [throttled.id, ...capped]);
+        // Far past the cap: rate limiting clears by itself, so it must keep being retried.
+        await failed(ctx, user.id, throttled.id, GoogleDriveUploadErrorClass.RateLimited, 50);
+
+        await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: user.id, assetId: throttled.id }]);
+      });
+
+      it("should not let one user's capped failure hide the same asset from another user", async () => {
+        // A shared album selected by both: the owner's row is at the cap, the guest's asset is not
+        // failing at all. The cap must correlate on the selector, not just the asset.
+        const { ctx, sut } = setup();
+        const { owner, guest, asset, album } = await sharedAlbum(ctx);
+        await connect(ctx, owner.id, 'account-o');
+        await connect(ctx, guest.id, 'account-g');
+        await ctx.database
+          .insertInto('google_drive_album')
+          .values([
+            { userId: owner.id, albumId: album.id },
+            { userId: guest.id, albumId: album.id },
+          ])
+          .execute();
+        await failed(
+          ctx,
+          owner.id,
+          asset.id,
+          GoogleDriveUploadErrorClass.Unknown,
+          GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS,
+        );
+
+        await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: guest.id, assetId: asset.id }]);
+      });
+
+      it('should stream a capped asset again once its failure is cleared', async () => {
+        // "Retry failed" is the human's way back past the cap; it clears the row.
+        const { ctx, sut } = setup();
+        const { user } = await ctx.newUser();
+        const { asset } = await ctx.newAsset({ ownerId: user.id });
+        await connect(ctx, user.id, 'account-x');
+        await selectedAlbum(ctx, user.id, [asset.id]);
+        await failed(
+          ctx,
+          user.id,
+          asset.id,
+          GoogleDriveUploadErrorClass.SourceUnreadable,
+          GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS,
+        );
+        await expect(drain(sut.streamPendingUploads())).resolves.toEqual([]);
+
+        await sut.clearErrorsForAssets(user.id, [asset.id]);
+
+        await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: user.id, assetId: asset.id }]);
+      });
+    });
+
+    // wave11 R4 (T1, wave10c debt): the two predicates no medium test had pinned.
+    it("should not treat another user's ledger row as this user's upload", async () => {
+      // Both immich users connected to the SAME Google account (a family sharing one login). With
+      // different accounts the account-match predicate alone would hide the owner's row from the
+      // guest, and deleting the userId correlation changed nothing — this test's first version
+      // passed with it removed. The shared account leaves the userId join as the only thing
+      // standing between the guest and "already uploaded".
+      const { ctx, sut } = setup();
+      const { owner, guest, asset, album } = await sharedAlbum(ctx);
+      await connect(ctx, owner.id, 'account-shared');
+      await connect(ctx, guest.id, 'account-shared', CONNECTION_B);
+      await ctx.database
+        .insertInto('google_drive_album')
+        .values([
+          { userId: owner.id, albumId: album.id },
+          { userId: guest.id, albumId: album.id },
+        ])
+        .execute();
+      await ledger(ctx, owner.id, asset.id, 'account-shared', CONNECTION_A);
+
+      await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: guest.id, assetId: asset.id }]);
+    });
+
+    it('should not stream the assets of a soft-deleted album', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: kept } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: trashedAlbumAsset } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await selectedAlbum(ctx, user.id, [kept.id]);
+      const gone = await selectedAlbum(ctx, user.id, [trashedAlbumAsset.id]);
+      await ctx.database.updateTable('album').set({ deletedAt: new Date() }).where('id', '=', gone.id).execute();
+
+      await expect(drain(sut.streamPendingUploads())).resolves.toEqual([{ userId: user.id, assetId: kept.id }]);
+    });
+  });
+
+  describe('recordUpload', () => {
+    // wave11 R3 (F7): the prior attempt count comes from the row this success deletes.
+    it('should report the attempts of the error row it clears, and 0 when there was none', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset: struggled } = await ctx.newAsset({ ownerId: user.id });
+      const { asset: clean } = await ctx.newAsset({ ownerId: user.id });
+      await connect(ctx, user.id, 'account-x');
+      await selectedAlbum(ctx, user.id, [struggled.id, clean.id]);
+      await sut.upsertError(user.id, struggled.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+      await sut.upsertError(user.id, struggled.id, GoogleDriveUploadErrorClass.Unknown, 'boom');
+
+      await expect(sut.recordUpload(user.id, struggled.id, 'f1', 'account-x', CONNECTION_A)).resolves.toEqual({
+        priorAttempts: 2,
+      });
+      await expect(sut.recordUpload(user.id, clean.id, 'f2', 'account-x', CONNECTION_A)).resolves.toEqual({
+        priorAttempts: 0,
+      });
+      // And the row really went.
+      await expect(
+        ctx.database.selectFrom('google_drive_upload_error').selectAll().where('userId', '=', user.id).execute(),
+      ).resolves.toEqual([]);
     });
   });
 

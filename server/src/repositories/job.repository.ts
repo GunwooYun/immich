@@ -300,6 +300,12 @@ export class JobRepository {
       case JobName.FacialRecognitionQueueAll: {
         return { deduplication: { id: JobName.FacialRecognitionQueueAll } };
       }
+      case JobName.GoogleDriveUploadQueueAll: {
+        // One backfill at a time. The nightly run (wave11 R3) and an admin's manual "start" can
+        // land together; two concurrent walks of the same pending set would queue nothing extra
+        // (the per-asset jobIds collapse) but would pay for the whole stream twice.
+        return { deduplication: { id: JobName.GoogleDriveUploadQueueAll } };
+      }
       case JobName.VersionCheck: {
         return { deduplication: { id: JobName.VersionCheck } };
       }

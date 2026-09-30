@@ -314,6 +314,17 @@ where
       "google_drive_upload_error"."userId" = "google_drive_album"."userId"
       and "google_drive_upload_error"."error" in ($1, $2)
   )
+  and not exists (
+    select
+      1 as "one"
+    from
+      "google_drive_upload_error"
+    where
+      "google_drive_upload_error"."userId" = "google_drive_album"."userId"
+      and "google_drive_upload_error"."assetId" = "album_asset"."assetId"
+      and "google_drive_upload_error"."error" in ($3, $4, $5)
+      and "google_drive_upload_error"."attempts" >= $6
+  )
 
 -- GoogleDriveRepository.getUploadedAssetIds
 select

@@ -45,9 +45,17 @@ export class GoogleDriveSourceUnreadableError extends Error {
    * beside a `/data/library` one, so a detail naming only one of them would have hidden it.
    */
   describePaths(startedFrom: string): string {
-    return this.attemptedPath === startedFrom
-      ? `Could not read ${this.attemptedPath}`
-      : `Could not read ${this.attemptedPath} (moved from ${startedFrom})`;
+    const where =
+      this.attemptedPath === startedFrom
+        ? `Could not read ${this.attemptedPath}`
+        : `Could not read ${this.attemptedPath} (moved from ${startedFrom})`;
+    // The errno, when there is one (wave11 R3, F6). ENOENT and EACCES/EIO/EMFILE call for opposite
+    // responses — a file that is gone vs. one that is there but momentarily or permanently
+    // unreadable — and a detail naming only the path made them indistinguishable on the settings
+    // page and in any later diagnosis. The class stays source_unreadable either way: both are
+    // retried by the backfill until the attempt cap, which is right for both.
+    const code = (this.cause as NodeJS.ErrnoException | undefined)?.code;
+    return code ? `${where} [${code}]` : where;
   }
 }
 
@@ -145,10 +153,11 @@ export const classifyDriveError = (
   }
 
   // Every other 403 used to land in RateLimited too, on the theory that a real permission failure
-  // on our own uploads would be surprising under drive.file. That theory held no weight once
-  // RateLimited became a class the nightly backfill retries without an attempt cap (wave11 R3): a
-  // genuine `insufficientPermissions` / `forbidden` / `appNotAuthorizedToFile` would then be
-  // re-sent every night forever. Unknown is still non-blocking and still retried, just capped.
+  // on our own uploads would be surprising under drive.file. That theory stops holding once
+  // RateLimited is a class the nightly backfill retries without an attempt cap (wave11 R3, see
+  // GOOGLE_DRIVE_CAPPED_ERROR_CLASSES): a genuine `insufficientPermissions` / `forbidden` /
+  // `appNotAuthorizedToFile` would then be re-sent every night forever. Unknown is still
+  // non-blocking and still retried, just capped.
   return GoogleDriveUploadErrorClass.Unknown;
 };
 

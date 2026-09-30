@@ -312,6 +312,8 @@ export const getMocks = () => {
   // Failure-table defaults: the healthy state. Tests exercising failures override per-case.
   googleDriveMock.getBlockingError.mockResolvedValue(null);
   googleDriveMock.upsertError.mockResolvedValue({ firstOfClass: false });
+  // A first-time success: no error row existed to clear.
+  googleDriveMock.recordUpload.mockResolvedValue({ priorAttempts: 0 });
   googleDriveMock.getErrorSummary.mockResolvedValue({ failedCount: 0, blockedReason: null });
   googleDriveMock.hasErrorOfClass.mockResolvedValue(false);
   // Stamping an account id settles on that id by default. It returns what the row *holds* for the

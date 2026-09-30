@@ -1214,6 +1214,28 @@ export const GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES = [
   GoogleDriveUploadErrorClass.FolderMissing,
 ] as const;
 
+/**
+ * The per-asset classes the unattended backfill gives up on after
+ * GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS (wave11 R3). An allowlist, not "everything but": the classes
+ * left out are either account-level (blocking — handled per user), clear on their own (RateLimited),
+ * or cannot recur while they stand (Revoked deletes the connection the backfill joins on). A new
+ * class therefore starts uncapped, which errs toward retrying rather than silently giving up.
+ */
+export const GOOGLE_DRIVE_CAPPED_ERROR_CLASSES = [
+  GoogleDriveUploadErrorClass.Unknown,
+  GoogleDriveUploadErrorClass.SourceUnreadable,
+  GoogleDriveUploadErrorClass.SizeMismatch,
+] as const;
+
+/**
+ * How many recorded failures of a capped class an asset may have before the nightly backfill stops
+ * queueing it. Counted across every attempt (nightly, manual sync, add-to-album), so five is about
+ * five nights for an asset nobody touches. A human always gets it back: "retry failed" clears the
+ * row; a manual album sync or re-adding to an album queues it regardless (those paths filter on the
+ * ledger only, not this cap); and a success from any path deletes the row.
+ */
+export const GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS = 5;
+
 export enum ApiTag {
   Activities = 'Activities',
   Albums = 'Albums',

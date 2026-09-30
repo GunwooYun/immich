@@ -49,6 +49,36 @@ describe(QueueService.name, () => {
         { name: JobName.FacialRecognitionQueueAll, data: { force: false, nightly: true } },
       ]);
     });
+
+    // Fork (Google Drive, wave11 R3): the nightly backfill is the only automatic retry for failed
+    // uploads since in-request retries were turned off.
+    it('should queue the Google Drive backfill when the feature is usable', async () => {
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { clientId: 'client-id', clientSecret: 'client-secret', redirectUrl: 'https://example.test/cb' },
+      });
+
+      await sut.handleNightlyJobs();
+
+      const jobs = mocks.job.queueAll.mock.calls[0][0];
+      expect(jobs).toContainEqual({ name: JobName.GoogleDriveUploadQueueAll, data: { force: false } });
+    });
+
+    it('should not queue the Google Drive backfill when the feature is not usable', async () => {
+      // Credentials but no way to derive a redirect URL is "off" — the same rule the feature flag
+      // uses, so a half-configured instance does not wake a job every night for nothing.
+      mocks.systemMetadata.get.mockResolvedValue({
+        googleDrive: { clientId: 'client-id', clientSecret: 'client-secret', redirectUrl: '' },
+        server: { externalDomain: '' },
+      });
+
+      await sut.handleNightlyJobs();
+
+      const jobs = mocks.job.queueAll.mock.calls[0][0];
+      // Witness: the nightly run did happen with its usual jobs — the absence below is a decision,
+      // not a run that never reached queueAll.
+      expect(jobs).toContainEqual({ name: JobName.AssetDeleteCheck });
+      expect(jobs).not.toContainEqual(expect.objectContaining({ name: JobName.GoogleDriveUploadQueueAll }));
+    });
   });
 
   describe('getAllJobStatus', () => {

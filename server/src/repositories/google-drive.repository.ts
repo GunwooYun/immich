@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { Kysely, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators';
-import { AlbumUserRole, GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES, GoogleDriveUploadErrorClass } from 'src/enum';
+import {
+  AlbumUserRole,
+  GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES,
+  GOOGLE_DRIVE_CAPPED_ERROR_CLASSES,
+  GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS,
+  GoogleDriveUploadErrorClass,
+} from 'src/enum';
 import { DB } from 'src/schema';
 
 /**
@@ -619,6 +625,25 @@ export class GoogleDriveRepository {
             ),
           ),
         )
+        // …and, per asset, anything that has failed GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS times in a
+        // class that will not clear on its own (wave11 R3). This stream feeds the nightly backfill,
+        // and without a cap a file that is really gone or really unacceptable to Drive would be
+        // re-sent every night forever. Only capped classes count: RateLimited clears by itself, and
+        // blocking classes are handled per user above. The cap lives here rather than in the worker
+        // so capped assets never reach the queue at all. What gets one back is a human: "retry
+        // failed" clears the row, and manual sync / add-to-album queue on the ledger alone.
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom('google_drive_upload_error')
+                .select(sql`1`.as('one'))
+                .whereRef('google_drive_upload_error.userId', '=', 'google_drive_album.userId')
+                .whereRef('google_drive_upload_error.assetId', '=', 'album_asset.assetId')
+                .where('google_drive_upload_error.error', 'in', [...GOOGLE_DRIVE_CAPPED_ERROR_CLASSES])
+                .where('google_drive_upload_error.attempts', '>=', GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS),
+            ),
+          ),
+        )
         // The resume path re-queues one user's pending set right after their block is cleared —
         // same query, scoped. Undefined (the backfill) means everyone.
         .$if(userId !== undefined, (qb) => qb.where('google_drive_album.userId', '=', userId!))
@@ -743,7 +768,20 @@ export class GoogleDriveRepository {
    * throwing a duplicate-key error. That triple is the table's primary key (see
    * the GoogleDriveUploadTable schema definition), which is what makes this upsert possible.
    */
-  recordUpload(userId: string, assetId: string, driveFileId: string, driveAccountId: string, connectionId: string) {
+  /**
+   * Resolves to how many recorded failures the asset had before this success (0 if none) — read
+   * from the error row as it is deleted, so the count is exactly the row this success clears. The
+   * caller logs it (wave11 R3, F7): error rows vanish on success, so without this a photo that
+   * failed four nights and then went through would leave no trace that it had ever struggled, and
+   * "occasionally fails" could not be counted after the fact.
+   */
+  recordUpload(
+    userId: string,
+    assetId: string,
+    driveFileId: string,
+    driveAccountId: string,
+    connectionId: string,
+  ): Promise<{ priorAttempts: number }> {
     // One transaction for the ledger write *and* the error-row delete. These are the two halves
     // of "this asset is now safely in Drive", and doing them separately leaves a crash window
     // where an asset has both a success row and a failure row — the UI would show an uploaded
@@ -761,11 +799,13 @@ export class GoogleDriveRepository {
             .doUpdateSet({ driveFileId: (eb) => eb.ref('excluded.driveFileId') }),
         )
         .execute();
-      await trx
+      const cleared = await trx
         .deleteFrom('google_drive_upload_error')
         .where('userId', '=', userId)
         .where('assetId', '=', assetId)
-        .execute();
+        .returning('attempts')
+        .executeTakeFirst();
+      return { priorAttempts: cleared?.attempts ?? 0 };
     });
   }
 

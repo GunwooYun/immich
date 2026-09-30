@@ -29,7 +29,7 @@ import {
 import { ArgOf } from 'src/repositories/event.repository';
 import { BaseService } from 'src/services/base.service';
 import { ConcurrentQueueName, JobItem } from 'src/types';
-import { handlePromiseError } from 'src/utils/misc';
+import { handlePromiseError, isGoogleDriveEnabled } from 'src/utils/misc';
 
 const asNightlyTasksCron = (config: SystemConfig) => {
   const [hours, minutes] = config.nightlyTasks.startTime.split(':').map(Number);
@@ -294,6 +294,16 @@ export class QueueService extends BaseService {
 
     if (config.nightlyTasks.clusterNewFaces) {
       jobs.push({ name: JobName.FacialRecognitionQueueAll, data: { force: false, nightly: true } });
+    }
+
+    // Fork (Google Drive, wave11 R3): the unattended retry for failed uploads. Since R2 there is no
+    // in-request retry, so without this a transient failure would wait for someone to press sync.
+    // Gated on the feature being usable rather than on a new nightlyTasks flag: a flag would add a
+    // config key, DTO field, admin UI toggle and OpenAPI churn for a job that is already a no-op
+    // when nothing is pending — and a way to switch off the only automatic retry. The handler
+    // re-checks isEnabled itself; this gate just keeps a disabled instance's queue clean.
+    if (isGoogleDriveEnabled(config.googleDrive, config.server)) {
+      jobs.push({ name: JobName.GoogleDriveUploadQueueAll, data: { force: false } });
     }
 
     await this.jobRepository.queueAll(jobs);
