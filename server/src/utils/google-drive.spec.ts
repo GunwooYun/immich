@@ -6,7 +6,6 @@ import {
   GoogleDriveSizeMismatchError,
   hasGoogleDriveFileScope,
   isGoogleDriveLoginGrantEnabled,
-  shouldRetryDriveRequest,
 } from 'src/utils/google-drive';
 
 // Builders for the two error shapes googleapis actually produces. The nested one is the Drive
@@ -16,10 +15,6 @@ const nestedError = (status: number, reason?: string) => ({
   response: { status, data: { error: reason ? { errors: [{ reason }] } : {} } },
 });
 const flatError = (status: number, reason: string) => ({ status, errors: [{ reason }] });
-
-// Wraps an error the way gaxios presents it to shouldRetry: with the retry bookkeeping attached.
-const withRetryConfig = (error: object, attempt: number, retry = 5) =>
-  Object.assign(error, { config: { retryConfig: { currentRetryAttempt: attempt, retry } } });
 
 describe('getDriveErrorReason', () => {
   it('should read the nested Drive API shape', () => {
@@ -54,12 +49,33 @@ describe('classifyDriveError', () => {
     );
   });
 
-  it('should classify other 403s and 429s as rate-limited', () => {
-    expect(classifyDriveError(nestedError(403, 'userRateLimitExceeded'), withFolder)).toBe(
+  it('should classify the rate-limit reason codes and any 429 as rate-limited', () => {
+    for (const reason of [
+      'rateLimitExceeded',
+      'userRateLimitExceeded',
+      'dailyLimitExceeded',
+      'sharingRateLimitExceeded',
+    ]) {
+      expect(classifyDriveError(nestedError(403, reason), withFolder), reason).toBe(
+        GoogleDriveUploadErrorClass.RateLimited,
+      );
+    }
+    expect(classifyDriveError(flatError(403, 'userRateLimitExceeded'), withFolder)).toBe(
       GoogleDriveUploadErrorClass.RateLimited,
     );
-    expect(classifyDriveError(nestedError(403), withFolder)).toBe(GoogleDriveUploadErrorClass.RateLimited);
     expect(classifyDriveError(nestedError(429), withFolder)).toBe(GoogleDriveUploadErrorClass.RateLimited);
+  });
+
+  it('should classify a 403 that is not a rate limit as unknown, not rate-limited', () => {
+    // RateLimited is retried every night without an attempt cap; a genuine permission refusal
+    // filed there would be re-sent forever. Unknown is retried too, but capped (wave11 R2/R3).
+    for (const reason of ['insufficientPermissions', 'forbidden', 'appNotAuthorizedToFile']) {
+      expect(classifyDriveError(nestedError(403, reason), withFolder), reason).toBe(
+        GoogleDriveUploadErrorClass.Unknown,
+      );
+    }
+    // A 403 with no reason at all is not evidence of rate limiting either.
+    expect(classifyDriveError(nestedError(403), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
   });
 
   it('should classify a notFound 404 as the folder being gone — only when a folder is configured', () => {
@@ -87,9 +103,10 @@ describe('classifyDriveError', () => {
     expect(classifyDriveError(nestedError(403, 'numChildrenInNonRootLimitExceeded'), withFolder)).toBe(
       GoogleDriveUploadErrorClass.FolderMissing,
     );
-    // With no folder configured they fall back to retryable rather than blocking.
+    // With no folder configured they fall back to non-blocking (Unknown, retried with a cap)
+    // rather than blocking — and no longer to RateLimited, which is retried without one.
     expect(classifyDriveError(nestedError(403, 'insufficientFilePermissions'), noFolder)).toBe(
-      GoogleDriveUploadErrorClass.RateLimited,
+      GoogleDriveUploadErrorClass.Unknown,
     );
   });
 
@@ -102,33 +119,6 @@ describe('classifyDriveError', () => {
   it('should fall back to unknown', () => {
     expect(classifyDriveError(new Error('ECONNRESET'), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
     expect(classifyDriveError(nestedError(500), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
-  });
-});
-
-describe('shouldRetryDriveRequest', () => {
-  it('should retry transient statuses within the attempt budget', () => {
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(429), 0))).toBe(true);
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(503), 2))).toBe(true);
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(403, 'rateLimitExceeded'), 4))).toBe(true);
-  });
-
-  it('should stop once attempts are exhausted', () => {
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(429), 5))).toBe(false);
-  });
-
-  it('should fail a quota 403 immediately — retrying a full Drive is futile', () => {
-    // Without this, every job in a large backfill burns five retries (~14s of backoff) to
-    // rediscover the account is full.
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(403, 'storageQuotaExceeded'), 0))).toBe(false);
-  });
-
-  it('should fail a 404 immediately — the destination folder is gone', () => {
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(404), 0))).toBe(false);
-  });
-
-  it('should not retry non-retryable statuses or shapeless errors', () => {
-    expect(shouldRetryDriveRequest(withRetryConfig(nestedError(400), 0))).toBe(false);
-    expect(shouldRetryDriveRequest(withRetryConfig({}, 0))).toBe(false);
   });
 });
 

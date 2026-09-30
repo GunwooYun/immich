@@ -11,6 +11,14 @@ import { isGoogleDriveEnabled } from 'src/utils/misc';
 export class GoogleDriveSizeMismatchError extends Error {}
 
 /**
+ * Whether a filesystem error means "nothing is at this path" (ENOENT), as opposed to "something is
+ * there but cannot be read right now" (EACCES, EIO, EMFILE, …). The upload path treats the two very
+ * differently: only a missing source proves a move has finished with it.
+ */
+export const isFileMissing = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT';
+
+/**
  * Thrown when the original file could not be opened, carrying the path that was actually tried.
  *
  * The path matters because the upload path retries once against a re-read asset row: the first
@@ -88,6 +96,18 @@ const FOLDER_UNUSABLE_REASONS = new Set([
 ]);
 
 /**
+ * Drive's reason codes for "slow down", as opposed to "no". `dailyLimitExceeded` and
+ * `sharingRateLimitExceeded` are Drive's documented daily/sharing variants; a 429 is rate limiting
+ * regardless of reason. All of them clear on their own, which is what RateLimited promises.
+ */
+const RATE_LIMIT_REASONS = new Set([
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'dailyLimitExceeded',
+  'sharingRateLimitExceeded',
+]);
+
+/**
  * Maps a failed upload's error to the classification vocabulary of `google_drive_upload_error`.
  *
  * The distinctions that matter:
@@ -120,58 +140,16 @@ export const classifyDriveError = (
     return GoogleDriveUploadErrorClass.FolderMissing;
   }
 
-  const status = getStatus(error);
-  if (status === 429 || reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded' || status === 403) {
-    // A 403 that wasn't quota or a folder-permission problem is, at this point, one of Drive's
-    // rate-limit variants (a genuine permission failure on our own root uploads would be
-    // surprising with drive.file scope, and classifying it as retryable errs on the side of
-    // trying again rather than blocking).
+  if (getStatus(error) === 429 || (reason !== undefined && RATE_LIMIT_REASONS.has(reason))) {
     return GoogleDriveUploadErrorClass.RateLimited;
   }
 
+  // Every other 403 used to land in RateLimited too, on the theory that a real permission failure
+  // on our own uploads would be surprising under drive.file. That theory held no weight once
+  // RateLimited became a class the nightly backfill retries without an attempt cap (wave11 R3): a
+  // genuine `insufficientPermissions` / `forbidden` / `appNotAuthorizedToFile` would then be
+  // re-sent every night forever. Unknown is still non-blocking and still retried, just capped.
   return GoogleDriveUploadErrorClass.Unknown;
-};
-
-/**
- * Custom retry predicate for the Drive upload request.
- *
- * Supplying `shouldRetry` REPLACES gaxios's default logic entirely (gaxios uses it instead of,
- * not in addition to, the statusCodesToRetry check *and* the noResponseRetries handling) — so
- * this reimplements the attempt cap and the status ranges, minus the cases where an in-request
- * retry is futile or unsafe:
- *   - quota-exceeded 403: the account is full; five retries over ~14s cannot change that, and
- *     during a large backfill every queued job would burn that time before failing.
- *   - 404: either the destination folder is gone (futile) or the resumable session expired —
- *     and re-sending a partially-consumed, non-rewindable stream is the truncation hazard the
- *     size check exists to catch. Fail, record, retry fresh on the next trigger.
- *   - no HTTP status at all (ECONNRESET, DNS, TLS): same non-rewindable-body reasoning. Note
- *     this is a deliberate downgrade from gaxios's default no-response retries; such failures
- *     are recorded as `unknown` and *defer to the next manual sync or backfill* — there is no
- *     scheduled retry.
- * The attempt cap lives here now — gaxios no longer enforces it when a custom predicate is
- * supplied (pinned by a test). Backoff between attempts is gaxios's own (exponential,
- * multiplier 2 — verified in 6.7.1).
- */
-export const shouldRetryDriveRequest = (error: {
-  config?: { retryConfig?: { currentRetryAttempt?: number; retry?: number } };
-}): boolean => {
-  const retryConfig = error?.config?.retryConfig;
-  const attempt = retryConfig?.currentRetryAttempt ?? 0;
-  const maxRetries = retryConfig?.retry ?? 0;
-  if (attempt >= maxRetries) {
-    return false;
-  }
-
-  if (getDriveErrorReason(error) === 'storageQuotaExceeded') {
-    return false;
-  }
-
-  const status = getStatus(error);
-  if (status === undefined || status === 404) {
-    return false;
-  }
-
-  return status === 403 || status === 429 || (status >= 500 && status <= 599);
 };
 
 /**

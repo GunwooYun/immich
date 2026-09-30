@@ -23,6 +23,11 @@ import { newTestService, ServiceMocks } from 'test/utils';
  * truncated upload — only exists on the far side of a real network call. Everything else in this
  * file bails out well before `drive.files.create` is reached, so nothing else is affected.
  */
+/** What node-fetch rejects with when the request's AbortSignal fires (it carries no HTTP status). */
+class FakeAbortError extends Error {
+  override name = 'AbortError';
+}
+
 const {
   driveFilesCreate,
   driveFilesDelete,
@@ -533,6 +538,41 @@ describe(GoogleDriveService.name, () => {
           expect(mocks.googleDrive.recordUpload).toHaveBeenCalled();
         });
 
+        it('should not follow the move row when the first read failed for a reason other than ENOENT', async () => {
+          // wave11b review M1. On the cross-device copy fallback the source still exists while the
+          // copy is being written; a non-ENOENT failure then (EMFILE here) says nothing about the
+          // move being done, and opening newPath would upload a partial file whose length — taken
+          // at open — the size check would agree with.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.move.getByEntity.mockResolvedValue({
+            id: 'move-1',
+            entityId: asset.id,
+            pathType: AssetPathType.Original,
+            oldPath: asset.originalPath,
+            newPath: movedPath,
+          });
+          mocks.storage.createReadStream.mockRejectedValue(
+            Object.assign(new Error('EMFILE: too many open files'), { code: 'EMFILE' }),
+          );
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+          expect(mocks.move.getByEntity).not.toHaveBeenCalled();
+          expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+          // Witness that the fallback did run and chose not to follow the move row: both asset-row
+          // reads happened (gate + re-read + second re-read).
+          expect(mocks.asset.getById).toHaveBeenCalledTimes(3);
+          expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            GoogleDriveUploadErrorClass.SourceUnreadable,
+            // The recorded detail names the path, not the errno — that is the existing contract of
+            // the source-unreadable skip. Splitting read errors by kind is wave11 R3 (F6).
+            expect.stringContaining(asset.originalPath),
+          );
+        });
+
         it('should ignore a move row whose oldPath is not the path that failed', async () => {
           // A leftover row from an older, unrelated move would point at a different file, and the
           // Drive size check could not catch that — the other file's bytes arrive intact.
@@ -665,9 +705,9 @@ describe(GoogleDriveService.name, () => {
     });
 
     /**
-     * The upload body is a live fs.ReadStream and the request retries on 403/429/5xx. A stream that
-     * has already been partially consumed cannot rewind, so a retry can leave Drive holding a short
-     * file while still answering 200. That is the one failure the ledger cannot survive: record it
+     * The upload body is a live fs.ReadStream. If it ends early (the file changed under us, or —
+     * before wave11 R2 turned in-request retries off — a retry re-sent a consumed stream), Drive can
+     * hold a short file while still answering 200. That is the one failure the ledger cannot survive: record it
      * and every future run skips the asset, leaving a truncated photo in Drive forever with nothing
      * to indicate anything went wrong. Comparing byte counts turns it into an ordinary loud error.
      */
@@ -769,6 +809,153 @@ describe(GoogleDriveService.name, () => {
         expect(destroy).toHaveBeenCalled();
       });
 
+      /**
+       * wave11 R2. The multipart body is one fs.ReadStream piped before any response arrives, so an
+       * in-request retry can only re-send an exhausted stream; and a stalled request would hold a
+       * worker slot forever. Both are request options, so these tests read what files.create got
+       * and drive the stall watchdog with fake timers.
+       */
+      describe('request layer', () => {
+        type CreateOptions = {
+          retry?: unknown;
+          retryConfig?: unknown;
+          signal: AbortSignal;
+          onUploadProgress: (p: { bytesRead: number }) => void;
+        };
+        let pending: { options: CreateOptions; resolve: (value: unknown) => void } | undefined;
+
+        const hangUntilAborted = () =>
+          driveFilesCreate.mockImplementation(
+            (_params: unknown, options: CreateOptions) =>
+              new Promise((resolve, reject) => {
+                options.signal.addEventListener('abort', () =>
+                  reject(new FakeAbortError('The user aborted a request.')),
+                );
+                pending = { options, resolve };
+              }),
+          );
+        // uploadAsset awaits several mocked repository calls before it reaches files.create; with
+        // fake timers those still resolve as microtasks, so flush until the request is in flight.
+        const untilInFlight = async () => {
+          for (let index = 0; index < 50 && !pending; index++) {
+            await vi.advanceTimersByTimeAsync(0);
+          }
+          expect(pending, 'files.create was never reached').toBeDefined();
+          return pending!;
+        };
+
+        beforeEach(() => {
+          pending = undefined;
+          vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+          vi.useRealTimers();
+        });
+
+        it('should disable in-request retries and pass the stall watchdog', async () => {
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+          const options = driveFilesCreate.mock.calls[0][1] as CreateOptions;
+          expect(options.retry).toBe(false);
+          // The old retry policy must be gone, not merely overridden — gaxios reads retryConfig
+          // and would still retry on its own terms if it were present.
+          expect(options.retryConfig).toBeUndefined();
+          expect(options.signal).toBeInstanceOf(AbortSignal);
+          expect(options.onUploadProgress).toBeTypeOf('function');
+        });
+
+        it('should abort an upload that makes no progress, record it as Unknown, and close the file', async () => {
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          const destroy = vi.fn();
+          mocks.storage.createReadStream.mockResolvedValue({
+            stream: { destroy } as never,
+            length: 1024,
+            type: 'image/jpeg',
+          });
+          mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+          hangUntilAborted();
+
+          const result = sut.uploadAsset(userId, asset.id);
+          const settled = expect(result).rejects.toThrow('aborted');
+          const { options } = await untilInFlight();
+
+          // One tick short: nothing has happened yet.
+          await vi.advanceTimersByTimeAsync(119_999);
+          expect(options.signal.aborted).toBe(false);
+
+          await vi.advanceTimersByTimeAsync(1);
+          await settled;
+
+          expect(options.signal.aborted).toBe(true);
+          expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            GoogleDriveUploadErrorClass.Unknown,
+            expect.stringContaining('Upload stalled'),
+          );
+          expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
+          expect(destroy).toHaveBeenCalled();
+        });
+
+        it('should keep a slow upload alive for as long as bytes keep moving', async () => {
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          hangUntilAborted();
+
+          const result = sut.uploadAsset(userId, asset.id);
+          const { options, resolve } = await untilInFlight();
+
+          // Five minutes in total, but never two minutes without progress.
+          for (const bytesRead of [200, 400, 600, 800, 1000]) {
+            await vi.advanceTimersByTimeAsync(60_000);
+            options.onUploadProgress({ bytesRead });
+          }
+          expect(options.signal.aborted).toBe(false);
+
+          resolve({ data: { id: 'drive-file-id', size: '1024' } });
+          await expect(result).resolves.toBe('uploaded');
+        });
+
+        it('should give Drive the longer response budget once the whole body is sent', async () => {
+          // After the last byte no progress events fire while Drive finalises the file. The idle
+          // budget would cut that off; the response budget must apply instead, and still end.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.googleDrive.upsertError.mockResolvedValue({ firstOfClass: true });
+          hangUntilAborted();
+
+          const result = sut.uploadAsset(userId, asset.id);
+          const settled = expect(result).rejects.toThrow('aborted');
+          const { options } = await untilInFlight();
+
+          options.onUploadProgress({ bytesRead: 1024 });
+          await vi.advanceTimersByTimeAsync(300_000);
+          expect(options.signal.aborted).toBe(false);
+
+          await vi.advanceTimersByTimeAsync(300_000);
+          await settled;
+          expect(options.signal.aborted).toBe(true);
+        });
+
+        it('should not leave the watchdog armed after the upload settles', async () => {
+          // A timer surviving the job would abort nothing useful but keep the event loop busy and,
+          // worse, fire into a finished request's signal — cheap to rule out.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await sut.uploadAsset(userId, asset.id);
+
+          expect(vi.getTimerCount()).toBe(0);
+        });
+      });
+
       it('should stamp the ledger row with the account the file went to', async () => {
         // Without this the row lands in the '' bucket and a later account switch reads it as
         // "already uploaded" — the original bug, one level down.
@@ -823,8 +1010,8 @@ describe(GoogleDriveService.name, () => {
 
         // Not recording is the critical half — the ledger must never claim a partial file is done.
         expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
-        // But the *failure* is recorded, with the right classification, before the job dies —
-        // The job itself leaves no trace (JobService.onJobRun swallows the error and BullMQ
+        // But the *failure* is recorded, with the right classification, before the job ends. The
+        // job itself leaves no trace (JobService.onJobRun swallows the error and BullMQ
         // removes the completed job), so this row is the only durable record.
         expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
           userId,

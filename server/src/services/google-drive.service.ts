@@ -22,8 +22,8 @@ import {
   classifyDriveError,
   GoogleDriveSizeMismatchError,
   GoogleDriveSourceUnreadableError,
+  isFileMissing,
   queueGoogleDriveUploads,
-  shouldRetryDriveRequest,
 } from 'src/utils/google-drive';
 import { mimeTypes } from 'src/utils/mime-types';
 import { getGoogleDriveRedirectUrl, isGoogleDriveEnabled } from 'src/utils/misc';
@@ -794,6 +794,28 @@ export class GoogleDriveService extends BaseService {
   private static readonly FOLDER_NAME_FAILURE_COOLDOWN_MS = 3_600_000;
   private static readonly ACCOUNT_PROBE_TIMEOUT_MS = 10_000;
 
+  /**
+   * How long an upload may go without sending a single byte before it is aborted.
+   *
+   * Not a whole-request timeout, deliberately: gaxios hands `timeout` to node-fetch, where it covers
+   * the entire body send, so any value long enough for a 7 GB video (the largest in the production
+   * ledger) is useless for catching a stalled small one. Progress is what distinguishes slow from
+   * stuck. And stuck is reachable: googleapis-common pipes the file through classic `.pipe()`, so a
+   * source-side error mid-flight unpipes without ending the request body and the request would
+   * otherwise wait forever, holding one of the queue's worker slots.
+   *
+   * 120 s is well above the lag between socket writes and progress events (a stream high-water mark
+   * plus the socket buffer, a few hundred KB), so a slow-but-moving upload never trips it.
+   */
+  private static readonly UPLOAD_IDLE_TIMEOUT_MS = 120_000;
+
+  /**
+   * How long to wait for Drive's answer once the whole body has been sent. No progress events fire in
+   * that phase, so the idle timer above would cut off Drive while it finalises a large file. Generous,
+   * because giving up here costs a whole re-upload, and it still bounds the wait.
+   */
+  private static readonly UPLOAD_RESPONSE_TIMEOUT_MS = 600_000;
+
   private probeAllowed(key: string): boolean {
     const last = this.accountProbeAt.get(key);
     if (last && Date.now() - last < GoogleDriveService.ACCOUNT_PROBE_COOLDOWN_MS) {
@@ -1297,6 +1319,17 @@ export class GoogleDriveService extends BaseService {
       body: streamInfo.stream,
     };
 
+    // The stall watchdog (see UPLOAD_IDLE_TIMEOUT_MS). Re-armed on every progress event; once the
+    // last byte is out it switches to the longer response budget. Aborting makes node-fetch destroy
+    // the request body, which is also what unsticks the pipe in the source-error case.
+    const stall = new AbortController();
+    let stallTimer: NodeJS.Timeout | undefined;
+    const armStallTimer = (ms: number) => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => stall.abort(), ms);
+    };
+    armStallTimer(GoogleDriveService.UPLOAD_IDLE_TIMEOUT_MS);
+
     try {
       const { data } = await drive.files.create(
         {
@@ -1318,36 +1351,31 @@ export class GoogleDriveService extends BaseService {
           // there is no session to expire, and a retry cannot resume, only re-send the stream.
         },
         {
-          // Drive enforces per-user and per-project rate limits and answers with 403
-          // (rateLimitExceeded / userRateLimitExceeded) or 429 once you cross them — very reachable
-          // when a "queue all" run pushes a large backlog through several concurrent workers.
-          // gaxios retries with exponential backoff starting from retryDelay.
-          //
-          // 403 is not in gaxios's default retry set (it's usually a genuine permission failure),
-          // so it has to be listed explicitly. A 403 that is *actually* a permission problem will
-          // simply fail all attempts and surface as before, just a few seconds later.
-          retryConfig: {
-            retry: 5,
-            retryDelay: 1000,
-            // Replaces the old statusCodesToRetry ranges (supplying shouldRetry makes gaxios use
-            // it *instead of* them): same 403/429/5xx retries, except quota-exceeded 403s and
-            // folder-gone 404s fail immediately — retrying a full Drive five times per job only
-            // delays the failure ~14s and, across a large backfill, multiplies it by every queued
-            // job. See shouldRetryDriveRequest for the classification.
-            shouldRetry: shouldRetryDriveRequest,
-            onRetryAttempt: (error) =>
-              this.logger.warn(
-                `Retrying Google Drive upload for asset ${assetId} after ${error?.status ?? 'unknown'} response`,
-              ),
-          },
+          // No in-request retry, on purpose (wave11 R2). This used to retry 403/429/5xx five times,
+          // but gaxios re-issues the request with the same `opts.data`, and for a multipart upload
+          // that is the one fs.ReadStream, already piped into the first attempt before any response
+          // arrived. Every retry therefore re-sent an exhausted stream: at best a truncated body the
+          // size check below rejected, at worst a request that never ended. A per-attempt stream
+          // factory is not possible through this API. A failed upload is recorded instead, and the
+          // nightly backfill (and any manual sync) retries it from a fresh stream.
+          retry: false,
+          signal: stall.signal,
+          // With an unknown length the body's end cannot be recognised, so the idle budget stays in
+          // force throughout. That is harmless: the size check below rejects such an upload anyway.
+          onUploadProgress: ({ bytesRead }: { bytesRead: number }) =>
+            armStallTimer(
+              streamInfo.length !== undefined && bytesRead >= streamInfo.length
+                ? GoogleDriveService.UPLOAD_RESPONSE_TIMEOUT_MS
+                : GoogleDriveService.UPLOAD_IDLE_TIMEOUT_MS,
+            ),
         },
       );
 
       // Before trusting the 200, check Drive stored as many bytes as we sent.
       //
-      // The retry policy above is the reason this matters. `media.body` is a live fs.ReadStream,
-      // opened once, and a stream that has already been partially consumed cannot rewind. If a
-      // retry re-sends a body that is mid-flight, Drive can answer 200 for a file that is short or
+      // `media.body` is a live fs.ReadStream opened once. If it ends early — the file shrank or was
+      // replaced while we read it, or (before wave11 R2 turned in-request retries off) a retry
+      // re-sent an already-consumed stream — Drive can answer 200 for a file that is short or
       // empty. That failure is uniquely nasty here: the ledger would record the asset as uploaded,
       // every later run would skip it, and the user would be left with a truncated photo in Drive
       // and no indication anything went wrong — the ledger's entire purpose defeated by a silent
@@ -1423,16 +1451,19 @@ export class GoogleDriveService extends BaseService {
         return 'skipped';
       }
 
-      // Every genuine failure lands in the error table before the job dies. This has to happen
-      // here, pre-throw: the queue drops failed Drive jobs (removeOnFail, so the dedup jobId
-      // frees up for retries), which means this row is the only durable record of the failure.
+      // Every genuine failure lands in the error table before the job ends. This has to happen
+      // here, pre-throw: the thrown error is swallowed by JobService.onJobRun and the finished job
+      // is dropped from the queue, so this row is the only durable record of the failure.
+      //
+      // A stall abort surfaces as a bare AbortError with no status, which classifies as Unknown —
+      // right, since it says nothing about the account — but its message ("The user aborted a
+      // request") would mislead whoever reads the detail. Say what actually happened.
       const classification = classifyDriveError(error, { hasFolder: !!folderId });
-      const { firstOfClass } = await this.googleDriveRepository.upsertError(
-        userId,
-        assetId,
-        classification,
-        error instanceof Error ? error.message : String(error),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      const detail = stall.signal.aborted
+        ? `Upload stalled: no progress from Google Drive within the timeout, aborted (${message})`
+        : message;
+      const { firstOfClass } = await this.googleDriveRepository.upsertError(userId, assetId, classification, detail);
       if (
         firstOfClass &&
         (classification === GoogleDriveUploadErrorClass.QuotaExceeded ||
@@ -1443,9 +1474,10 @@ export class GoogleDriveService extends BaseService {
         await this.notifyUploadFailure(userId, classification);
       }
 
-      this.logger.error(`Failed to upload asset ${assetId} to Google Drive (${classification}): ${error}`);
+      this.logger.error(`Failed to upload asset ${assetId} to Google Drive (${classification}): ${detail}`);
       throw error;
     } finally {
+      clearTimeout(stallTimer);
       // createReadStream hands back a live fs.ReadStream holding an open file descriptor. On the
       // success path googleapis consumes the stream to completion, which closes it — but on any
       // failure the pipe is abandoned mid-flight and nothing closes the source. A persistent
@@ -1476,19 +1508,25 @@ export class GoogleDriveService extends BaseService {
    * failure left after the first fix (2026-09-23): created 00:48:19, failed 00:48:24, detail naming
    * only the `/data/upload` path — the re-read had agreed with the stale one.
    *
-   * So when the row has not moved, the move row is asked instead. It exists for the whole window
-   * (created before the rename, deleted after the row write) and names the destination, and it
-   * also covers a mover that died between rename and row write, which previously stayed broken
-   * until someone re-ran Storage Migration. If there is no move row, the asset is read once more:
-   * the mover may have finished both the row write and the delete between our two reads.
+   * So when the row has not moved, the move row is asked instead. It exists for the ordinary move
+   * window (created before the rename, deleted after the row write) and names the destination, and
+   * it also covers a mover that died between rename and row write — as long as its `oldPath` still
+   * names our path (see below). If there is no move row, the asset is read once more: the mover
+   * may have finished both the row write and the delete between our two reads.
    *
    * The move row is trusted only when its `oldPath` is the path we just failed on. A leftover row
    * from an unrelated, older aborted move could otherwise send us to a different file; the Drive
-   * size check would not catch that, since the other file's bytes would arrive intact.
+   * size check would not catch that, since the other file's bytes would arrive intact. The price:
+   * immich's incomplete-move recovery rewrites `oldPath` to wherever it found the file, so during a
+   * recovery pass the guard declines a legitimate move. That costs a retryable skip, not a wrong file.
    *
-   * Reading `newPath` mid-move is safe on both mover paths: after a rename the file is whole at
-   * the destination, and on the cross-device copy fallback the source is only unlinked (the only
-   * way we see ENOENT on it) after the copy has been verified.
+   * And the move row is consulted only when the first read failed with ENOENT (wave11b review M1).
+   * Reading `newPath` is safe only once the source is gone: a rename is atomic, and the cross-device
+   * copy fallback unlinks the source only after verifying the copy. Any other first-read error
+   * (EMFILE, EIO, EACCES) can happen while that copy is still being written, and a partial file
+   * opened then would upload intact-looking — its length is taken when we open it, so the size
+   * check would agree with the truncated bytes and the ledger would record them as done. The asset
+   * row reads stay unconditional: the mover writes the row only after the copy is complete.
    *
    * What this deliberately does not do is sleep and poll. Holding a queue worker to wait out
    * somebody else's job would trade a rare, self-healing skip for a guaranteed loss of throughput,
@@ -1501,7 +1539,7 @@ export class GoogleDriveService extends BaseService {
         mimeTypes.lookup(asset.originalFileName),
       );
     } catch (error) {
-      const movedTo = await this.findMovedOriginal(asset);
+      const movedTo = await this.findMovedOriginal(asset, { sourceMissing: isFileMissing(error) });
       if (!movedTo) {
         // Either the asset is gone (the ordinary trashed-mid-flight race, already a skip at gate 5)
         // or nothing moved and the file really is unreadable. Report the path we tried.
@@ -1541,12 +1579,13 @@ export class GoogleDriveService extends BaseService {
    * Where the original went, if it moved away from `asset.originalPath`; undefined if it did not
    * (or the asset is gone). Order matters: the asset row is the authority once the mover has
    * written it, the move row covers the window before that, and the second row read covers the
-   * mover finishing between the first two reads. See openOriginal for why each exists.
+   * mover finishing between the first two reads. See openOriginal for why each exists, and why
+   * the move row needs `sourceMissing`.
    */
-  private async findMovedOriginal(asset: {
-    id: string;
-    originalPath: string;
-  }): Promise<{ path: string; source: 'asset' | 'move_history' } | undefined> {
+  private async findMovedOriginal(
+    asset: { id: string; originalPath: string },
+    { sourceMissing }: { sourceMissing: boolean },
+  ): Promise<{ path: string; source: 'asset' | 'move_history' } | undefined> {
     const fresh = await this.assetRepository.getById(asset.id);
     if (!fresh) {
       return;
@@ -1555,9 +1594,11 @@ export class GoogleDriveService extends BaseService {
       return { path: fresh.originalPath, source: 'asset' };
     }
 
-    const move = await this.moveRepository.getByEntity(asset.id, AssetPathType.Original);
-    if (move && move.oldPath === asset.originalPath && move.newPath !== asset.originalPath) {
-      return { path: move.newPath, source: 'move_history' };
+    if (sourceMissing) {
+      const move = await this.moveRepository.getByEntity(asset.id, AssetPathType.Original);
+      if (move && move.oldPath === asset.originalPath && move.newPath !== asset.originalPath) {
+        return { path: move.newPath, source: 'move_history' };
+      }
     }
 
     const again = await this.assetRepository.getById(asset.id);
