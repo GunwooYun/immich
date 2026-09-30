@@ -130,15 +130,39 @@ wave11b review verdicts, fed back (all folded into the R2 commit, so R2's review
 
 - [x] 4. R2: F4 `retry: false`, delete `shouldRetryDriveRequest` → [x] verify:task V2 (retry: true went red)
 - [x] 5. R2: F2 idle abort → [x] verify:task V3 (4 mutations red). V10 already existed ("close the file when the connection drops mid-upload") — T2's fd half is therefore not new work
-- [ ] 6. R2: F5 403 classification → [x] verify:task V4 (2 mutations red) → **§3 (risk:high)** → report R2
+- [x] 6. R2: F5 403 classification → [x] verify:task V4 (2 mutations red) → [x] §3 `d34c7a5da` PASS → report wave11c / review: NOT BLOCKED
 
 R2 deviation: F2 got a second budget the plan did not have — `UPLOAD_RESPONSE_TIMEOUT_MS`
 (10 min) once the whole body is sent, because no progress events fire while Drive finalises the
 file and a 120 s idle limit would cut large uploads off right at the end.
-- [ ] 7. R3: F3 nightly queue + dedup id → [ ] verify:task V5
-- [ ] 8. R3: F3 cap predicate + `mise //:sql` → [ ] V6 (medium)
-- [ ] 9. R3: F6 EACCES/EIO + F7 attempt log → [ ] verify:task V7, V8 → **§3 (risk:high)** → report R3
-- [ ] 10. R4: T1 medium + T2 unit tests → [ ] V9–V11 → **§3 final** → report R4
+wave11c review verdicts (R2), fed back — all folded into the R3 commit `19948b1f5`:
+- The main ask was verified by the reviewer against the real libraries (a probe against a local
+  HTTP server): `signal`/`retry:false`/`onUploadProgress` reach node-fetch; progress is cumulative
+  and counts the media part only; abort rejects and destroys the body; a 503 is sent once.
+- **M1 accepted, fixed (pre-existing, serious):** no listener for the file stream's `'error'`
+  anywhere → an EIO mid-upload or EMFILE at the lazy open would crash the process. My R2 comment
+  claimed the watchdog covered this; it did not. New scenario **V12**.
+- N1 accepted as a known gap (token refresh not bound by the signal), documented in code.
+- N2, N4 comment fixes; N3 behavioural 5xx test added; N5 (FakeAbortError shape) no change.
+
+- [x] 7. R3: F3 nightly queue + dedup id → [x] verify:task V5 (2 mutations red). Dedup id has **no test** — `getJobOptions` is private and upstream has no harness for it
+- [x] 8. R3: F3 cap predicate + SQL regen → [x] V6 medium (5 mutations red, incl. off-by-one and inverted)
+- [x] 9. R3: F6 errno in detail + F7 attempt log → [x] V7, V8 (4 mutations red) → **§3 (risk:high)** → report R3
+- [ ] 10. R4: T2 revoked-path unit tests (V11) → **§3 final** → report R4. T1 (V9) landed early in R3's commit; T2's fd half already existed (V10)
+
+R3 deviations, recorded:
+- **F6 changed shape:** no new error class. Non-ENOENT read errors were already recorded as
+  `source_unreadable` and retried (non-blocking); what was missing was telling them apart, so
+  the errno now goes in the detail. V7 is re-worded to that.
+- **Cap escape hatch corrected:** the design review said manual sync clears error rows. It does
+  not (checked: `syncAlbum` → `queueGoogleDriveUploads` filters on the ledger only). It still
+  bypasses the cap, which is the property that matters; comments say what actually happens.
+- **Generated SQL partially applied:** `mise //:sql` reads `dist/` (was 9 days stale → rebuilt)
+  and runs against a dev DB missing recent migrations; methods whose first query failed lost their
+  second query from the output. Only the `streamPendingUploads` hunk was applied.
+- **T1's userId test was vacuous at first** (passed with the predicate removed, because the
+  account-match predicate also separated the users); rewritten with two users on one Google
+  account, now red when the predicate goes.
 
 ### Not verified in this wave
 - Real Google API behaviour under 429/5xx/idle — mocked only.

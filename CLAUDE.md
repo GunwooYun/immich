@@ -714,11 +714,12 @@ SQL
 | V4 | 403 사유별 분류(insufficientPermissions→unknown, rate/daily→RateLimited, quota) | utils spec | task | "모든 403=RateLimited" 복원 → 실패 |
 | V5 | nightly가 enabled일 때만 QueueAll 큐잉 + dedup id | queue.service spec | task | disabled에도 큐잉 → 실패 |
 | V6 | 상한 미만 **포함**, 이상 제외, 차단·RateLimited 무시, 수동 동기화 후 재포함 | medium | §3 | 조건 제거/오작성 → 실패 (조용한 "아무것도 안 큐잉" 방지) |
-| V7 | EACCES/EIO → 재시도 가능 `source_unreadable` 행 | service spec | task | 종결 스킵 매핑 → 실패 |
+| V7 | `source_unreadable` detail에 errno(`[EMFILE]` 등) 포함 — 새 클래스 없이 구분 (R3에서 계획 변경) | service spec | task | errno 제거 → 실패 |
 | V8 | 이전 실패 후 성공 → 시도 횟수 로그 + 오류 행 삭제 | service spec | task | 로그 제거 → 실패 |
 | V9 | streamPendingUploads가 타 사용자·삭제 앨범 제외 | medium | §3 | 조건 한 번 제거 → 실패 |
 | V10 | files.create throw 시 스트림 파기 | service spec | task | finally 제거 → 실패 |
 | V11 | getStorage/getPickerConfig 취소 토큰 → grant 삭제 + Revoked | service spec | task | clearRevokedGrant 생략 → 실패 |
+| V12 | 업로드 중 파일 스트림 'error'(EIO) → 프로세스 크래시 없이 abort + `source_unreadable` 기록 (wave11c M1) | service spec | task | 리스너 제거 → 실패 |
 - 검증하지 않는 것: 실 구글 API의 429/5xx/idle(모킹만), 실제 느린 업로드에서의 abort, 실제 EXDEV 이동과의
   경합(V1g는 mock 순서로만 재현). (오래된 move 행 문제는 R1의 `oldPath` 가드 + V1e로 검증 대상이 됐다.)
 - 검증할 수 없는 것: 야간 backfill이 운영에서 실제로 치유하는지 — 배포 후 며칠 관찰(오류 테이블 + F7 로그).
