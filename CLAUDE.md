@@ -705,7 +705,9 @@ SQL
 | V1a | 행 경로 불변 + move 행 → newPath로 읽어 업로드, 오류 행 없음 | service spec | task | move 조회 제거 → 스킵 |
 | V1b | move 행 없음 + 재조회 불변 → 종결 스킵 `source_unreadable` | service spec | task | 항상 newPath 재시도 → 실패 |
 | V1c | newPath도 ENOENT → 스킵, detail에 두 경로 | service spec | task | 옛 경로 누락 → 실패 |
-| V1d | storage.core가 rename 후 asset 행 갱신 | storage.core spec | task | 순서 뒤집기 → 실패 |
+| V1d | mover 순서: move 행 → rename → asset 행 → move 행 삭제 | storage-template.service spec (core spec엔 mock 하네스 없음) | task | 순서 뒤집기 → 실패 |
+| V1e | `oldPath`가 실패한 경로와 다른 move 행은 무시 | service spec | task | 가드 제거 → 실패 |
+| V1f | move 행 없음 + 두 번째 행 조회에서 새 경로 → 업로드 | service spec | task | 두 번째 조회 제거 → 실패 |
 | V2 | files.create `retry: false`, 5xx 비재시도·기록 | service spec | task | retryConfig 복원 → 실패 |
 | V3 | signal+onUploadProgress, 120s idle → abort → unknown + 스트림 파기, 진행 시 타이머 리셋 | service spec (fake timers) | task | 리셋 제거 → 진행 중 abort |
 | V4 | 403 사유별 분류(insufficientPermissions→unknown, rate/daily→RateLimited, quota) | utils spec | task | "모든 403=RateLimited" 복원 → 실패 |

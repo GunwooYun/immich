@@ -104,9 +104,17 @@ noted in the review report.
 No todo tool is available in the session that wrote this plan, so the list is tracked here.
 Tick boxes as rounds land.
 
-- [ ] 1. R0: D0 comment fixes → [ ] verify:task (tsc + eslint on touched files) → report R0 (cites `0172d69d1`, `df8628ba0`)
-- [ ] 2. R1: F1 `move_history` fallback in `openOriginal` → [ ] verify:task V1a–V1c
-- [ ] 3. R1: F1p storage.core order pin → [ ] verify:task V1d → **§3 (risk:high)** → report R1
+- [x] 1. R0: D0 comment fixes → [x] verify:task → report R0 `be509702a` / review wave11a: NOT BLOCKED (M1, M2 folded into R1)
+- [x] 2. R1: F1 `move_history` fallback in `openOriginal` → [x] verify:task V1a–V1c (+ stale-row guard, second re-read; 3 mutations each went red)
+- [ ] 3. R1: F1p storage.core order pin → [x] verify:task V1d (swap went red) → **§3 (risk:high)** → report R1
+
+R1 deviations from the plan, recorded rather than silent:
+- V1d lives in `storage-template.service.spec.ts`, not `storage.core.spec.ts` — the core spec
+  has no mock harness; the template service drives `moveFile` through `newTestService`.
+- Added a guard the design review did not propose: the move row is used only if its `oldPath`
+  equals the path that failed (the plan's "stale move row" risk is now tested, not just noted).
+- The existing test "should not retry when the path has not changed" was renamed and its witness
+  changed from 2 to 3 row reads + a move lookup — the contract changed, not the test to fit.
 - [ ] 4. R2: F4 `retry: false`, delete `shouldRetryDriveRequest` → [ ] verify:task V2
 - [ ] 5. R2: F2 idle abort → [ ] verify:task V3, V10
 - [ ] 6. R2: F5 403 classification → [ ] verify:task V4 → **§3 (risk:high)** → report R2
