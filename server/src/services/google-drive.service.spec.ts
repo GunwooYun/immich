@@ -712,7 +712,8 @@ describe(GoogleDriveService.name, () => {
         // Not recording is the critical half — the ledger must never claim a partial file is done.
         expect(mocks.googleDrive.recordUpload).not.toHaveBeenCalled();
         // But the *failure* is recorded, with the right classification, before the job dies —
-        // removeOnFail drops the job the moment it fails, so this row is the only durable trace.
+        // The job itself leaves no trace (JobService.onJobRun swallows the error and BullMQ
+        // removes the completed job), so this row is the only durable record.
         expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
           userId,
           asset.id,
@@ -781,9 +782,10 @@ describe(GoogleDriveService.name, () => {
         expect(mocks.notification.create).toHaveBeenCalledTimes(1);
       });
 
-      it('should record a bare 404 (expired resumable session) as unknown, not an account block', async () => {
-        // The review's one real correctness risk: a transient session 404 must not masquerade as
-        // "the folder is gone" and freeze every upload for the user.
+      it('should record a bare 404 (no folder reason code) as unknown, not an account block', async () => {
+        // A 404 that does not name the folder must not masquerade as "the folder is gone" and
+        // freeze every upload for the user. (Originally motivated by expired resumable sessions,
+        // which cannot occur on the multipart path — the rule stands regardless.)
         const userId = newUuid();
         const asset = arrangeReadyToUpload(mocks, userId);
         mocks.googleDrive.getCredentials.mockResolvedValue({

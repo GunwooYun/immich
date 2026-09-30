@@ -70,10 +70,11 @@ describe('classifyDriveError', () => {
     expect(classifyDriveError(nestedError(404, 'notFound'), noFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
   });
 
-  it('should NOT block the account for a bare 404 (expired resumable session)', () => {
-    // The Wave 1 review's one real correctness risk: resumable uploads answer 404 for an
-    // expired/invalid session URI — transient, nothing to do with the folder. Blocking the whole
-    // account off that would be a false positive with the worst blast radius this system has.
+  it('should NOT block the account for a bare 404 (no folder reason code)', () => {
+    // A 404 without a folder reason code does not prove the folder is gone, and blocking the
+    // whole account off it would be a false positive with the worst blast radius this system has.
+    // (The Wave 1 review's example was an expired resumable session; uploads are multipart, so
+    // that case cannot arise, but the rule does not depend on it.)
     expect(classifyDriveError(nestedError(404), withFolder)).toBe(GoogleDriveUploadErrorClass.Unknown);
   });
 

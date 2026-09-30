@@ -273,20 +273,18 @@ export class JobRepository {
         // create a file. The user ends up with two copies in Drive and the ledger only remembers
         // the second one, leaving the first orphaned and untracked forever.
         //
-        // `removeOnFail` overrides the global default (`removeOnFail: false`, see
-        // config.repository.ts) and is load-bearing rather than cosmetic. BullMQ refuses to enqueue
-        // a job whose id already exists *in any state*, and a retained failed job counts. Combined
-        // with the jobId above, one genuine failure — a full Drive, a destination folder deleted
-        // out from under us, an unreadable file — would poison that (user, asset) pair forever:
-        // re-adding the asset to an album, pressing "Sync album", and the admin "queue all"
-        // backfill all compute the same id and are handed back the dead job instead of running.
-        // Nothing would retry until an operator manually cleared failed jobs, which quietly breaks
-        // the recovery story the whole design leans on.
+        // `removeOnFail` is defensive, not load-bearing — an earlier version of this comment said
+        // otherwise. The worry was real in BullMQ terms: it refuses to enqueue a job whose id
+        // already exists *in any state*, so a retained failed job would poison this (user, asset)
+        // pair for every later sync or backfill. But a Drive job never reaches the failed state:
+        // `JobService.onJobRun` catches every handler error, emits `JobError`, and returns, so
+        // BullMQ sees a completed job and `removeOnComplete: true` (config.repository.ts) frees the
+        // id. Kept because it costs nothing and would matter the day onJobRun starts rethrowing.
         //
-        // Dropping failed jobs does cost the failure count in the admin Jobs panel. That's an
-        // acceptable trade: every failure is already logged server-side with the asset id, and a
-        // persistent problem resurfaces on the next backfill rather than sitting silently
-        // un-retryable.
+        // The same fact rules out BullMQ `attempts`/`backoff` as a retry mechanism for these jobs,
+        // and means a handler cannot re-queue its own (user, asset) id while it is still active —
+        // the add is silently refused. Retries come from the next sync or backfill instead; the
+        // durable record of a failure is `google_drive_upload_error`, not the Jobs panel.
         return { jobId: `${item.data.userId}/${item.data.assetId}`, removeOnFail: true };
       }
       case JobName.PersonGenerateThumbnail: {

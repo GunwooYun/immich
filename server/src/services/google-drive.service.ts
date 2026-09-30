@@ -1304,10 +1304,14 @@ export class GoogleDriveService extends BaseService {
           // `id` goes in the ledger; `size` is what lets us prove the upload actually arrived
           // intact before we record it as done — see the check below.
           fields: 'id,size',
-          // Resumable rather than the default simple/multipart upload. Google caps simple uploads
-          // at 5 MB, which plenty of photos and essentially every video exceed; resumable also lets
-          // the transfer survive a mid-flight network blip instead of restarting from zero.
-          uploadType: 'resumable',
+          // This is a MULTIPART upload, whatever `uploadType` says. An earlier version passed
+          // `uploadType: 'resumable'` believing it bought a session URI and mid-flight resume, but
+          // googleapis-common (apirequest.js, `createAPIRequestAsync`) overwrites `uploadType` with
+          // 'multipart' whenever `requestBody` accompanies `media.body`, and streams the body in one
+          // request. The option was therefore removed as dead, not changed: behaviour is identical.
+          // The 5 MB cap that motivated it applies to `uploadType=media`, not multipart — 8,000+
+          // production uploads including videos went through this path. Consequences that matter:
+          // there is no session to expire, and a retry cannot resume, only re-send the stream.
         },
         {
           // Drive enforces per-user and per-project rate limits and answers with 403

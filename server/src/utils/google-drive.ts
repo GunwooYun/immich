@@ -95,10 +95,11 @@ const FOLDER_UNUSABLE_REASONS = new Set([
  *     this wrong either retries a full Drive forever or gives up on a transient throttle.
  *   - folder problems are gated on BOTH a precise reason code AND a folder actually being
  *     configured (`hasFolder`). FolderMissing blocks the whole account, so a false positive here
- *     is the worst call this function can make — and a *bare* 404 is reachable without the folder
- *     being gone at all: resumable uploads go to a session URI, and Google answers 404 for an
- *     expired/invalid session (the Wave 1 review caught this). Those fall through to Unknown:
- *     non-blocking, picked up by the next sync. With no folder configured, uploads target the
+ *     is the worst call this function can make — so a *bare* 404 (no folder reason code) never
+ *     blocks. The Wave 1 review's original example of a folder-unrelated 404, an expired
+ *     resumable session, turned out not to apply (uploads are multipart, see uploadAsset), but
+ *     the rule stands: without the precise reason code a 404 does not prove the folder is gone.
+ *     Those fall through to Unknown: non-blocking, picked up by the next sync. With no folder configured, uploads target the
  *     Drive root and no 404 can mean "folder gone" — also Unknown.
  */
 export const classifyDriveError = (
