@@ -29,8 +29,10 @@ Error rows are deleted on success, so past transient failures leave no trace in 
    "resumable session expired 404" case in `utils/google-drive.ts` cannot occur.
 2. **BullMQ never sees a failed Drive job.** `job.service.ts:86-98` `onJobRun` catches every
    error, emits `JobError`, and does not rethrow, so every job completes and
-   `removeOnComplete: true` (`config.repository.ts:289`) frees the jobId. `removeOnFail: true`
-   (`job.repository.ts:290`) and its comment are inert. Consequences: BullMQ `attempts`/`backoff`
+   `removeOnComplete: true` (`config.repository.ts:289`) frees the jobId. ~~`removeOnFail: true`
+   and its comment are inert.~~ **Corrected by the wave11a review (M1):** jobs *can* still fail
+   via BullMQ stall detection (worker dies mid-upload) or a rejecting `JobError` listener, so
+   `removeOnFail` stays load-bearing for those rare paths. Consequences: BullMQ `attempts`/`backoff`
    can't be used; a re-queue from inside the handler with the same jobId is silently refused.
 
 ## Changes (revised)

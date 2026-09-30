@@ -99,7 +99,8 @@ const FOLDER_UNUSABLE_REASONS = new Set([
  *     blocks. The Wave 1 review's original example of a folder-unrelated 404, an expired
  *     resumable session, turned out not to apply (uploads are multipart, see uploadAsset), but
  *     the rule stands: without the precise reason code a 404 does not prove the folder is gone.
- *     Those fall through to Unknown: non-blocking, picked up by the next sync. With no folder configured, uploads target the
+ *     Those fall through to Unknown: non-blocking, picked up by the next sync. With no folder
+ *     configured, uploads target the
  *     Drive root and no 404 can mean "folder gone" — also Unknown.
  */
 export const classifyDriveError = (

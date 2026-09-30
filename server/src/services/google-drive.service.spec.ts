@@ -1,5 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
-import { AlbumUserRole, GoogleDriveUploadErrorClass, JobName, JobStatus, SystemMetadataKey } from 'src/enum';
+import {
+  AlbumUserRole,
+  AssetPathType,
+  GoogleDriveUploadErrorClass,
+  JobName,
+  JobStatus,
+  SystemMetadataKey,
+} from 'src/enum';
 import { GoogleDriveService } from 'src/services/google-drive.service';
 import { AlbumFactory } from 'test/factories/album.factory';
 import { AssetFactory } from 'test/factories/asset.factory';
@@ -469,27 +476,132 @@ describe(GoogleDriveService.name, () => {
         expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
       });
 
-      it('should not retry when the path has not changed', async () => {
-        // An unchanged path means the file is genuinely gone, and asking the filesystem the same
-        // question twice would buy nothing. This also pins that the retry is keyed on the path
-        // moving rather than on the read simply having failed.
+      it('should not retry when neither the row nor a move row says the file moved', async () => {
+        // No signal that the file moved means it is genuinely gone, and asking the filesystem the
+        // same question twice would buy nothing. This also pins that the retry is keyed on a move
+        // being evidenced rather than on the read simply having failed.
         const userId = newUuid();
         const asset = arrangeReadyToUpload(mocks, userId);
+        mocks.move.getByEntity.mockResolvedValue(void 0);
         mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
         await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
 
         expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
-        // Witness: the row *was* re-read and the retry declined on its answer. Without this the
-        // test also passes when the retry is deleted outright, which is a different behaviour
-        // reading as the same green tick.
-        expect(mocks.asset.getById).toHaveBeenCalledTimes(2);
+        // Witnesses: every signal *was* consulted and the retry declined on their answers — the
+        // gate's read, the re-read, the move row, and the second re-read. Without these the test
+        // also passes when the fallback is deleted outright, which is a different behaviour reading
+        // as the same green tick.
+        expect(mocks.move.getByEntity).toHaveBeenCalledWith(asset.id, AssetPathType.Original);
+        expect(mocks.asset.getById).toHaveBeenCalledTimes(3);
         expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
           userId,
           asset.id,
           GoogleDriveUploadErrorClass.SourceUnreadable,
           expect.stringContaining(asset.originalPath),
         );
+      });
+
+      /**
+       * The window the row re-read cannot see (the 2026-09-23 production failure): the mover has
+       * renamed the file but not yet written the new path, so the row still agrees with the stale
+       * path. The move row, created before the rename and deleted after the row write, names it.
+       */
+      describe('mid-move, before the mover writes the asset row', () => {
+        const movedPath = '/data/library/admin/2026/moved.heic';
+
+        it('should read the move row destination and upload without recording a failure', async () => {
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.move.getByEntity.mockResolvedValue({
+            id: 'move-1',
+            entityId: asset.id,
+            pathType: AssetPathType.Original,
+            oldPath: asset.originalPath,
+            newPath: movedPath,
+          });
+          mocks.storage.createReadStream
+            .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+            .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/heic' });
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+          expect(mocks.move.getByEntity).toHaveBeenCalledWith(asset.id, AssetPathType.Original);
+          expect(mocks.storage.createReadStream).toHaveBeenLastCalledWith(movedPath, expect.anything());
+          expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+          expect(mocks.googleDrive.recordUpload).toHaveBeenCalled();
+        });
+
+        it('should ignore a move row whose oldPath is not the path that failed', async () => {
+          // A leftover row from an older, unrelated move would point at a different file, and the
+          // Drive size check could not catch that — the other file's bytes arrive intact.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.move.getByEntity.mockResolvedValue({
+            id: 'move-1',
+            entityId: asset.id,
+            pathType: AssetPathType.Original,
+            oldPath: '/data/upload/somewhere/else.heic',
+            newPath: movedPath,
+          });
+          mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+          // Consulted, then rejected: one read only, and the recorded detail names the original path.
+          expect(mocks.move.getByEntity).toHaveBeenCalled();
+          expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+          expect(mocks.storage.createReadStream).not.toHaveBeenCalledWith(movedPath, expect.anything());
+          expect(mocks.googleDrive.upsertError).toHaveBeenCalledWith(
+            userId,
+            asset.id,
+            GoogleDriveUploadErrorClass.SourceUnreadable,
+            expect.stringContaining(asset.originalPath),
+          );
+        });
+
+        it('should name both paths when the move row destination is unreadable too', async () => {
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.move.getByEntity.mockResolvedValue({
+            id: 'move-1',
+            entityId: asset.id,
+            pathType: AssetPathType.Original,
+            oldPath: asset.originalPath,
+            newPath: movedPath,
+          });
+          mocks.storage.createReadStream.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
+
+          expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(2);
+          const detail = (mocks.googleDrive.upsertError.mock.calls.at(-1) as string[])[3];
+          expect(detail).toContain(movedPath);
+          expect(detail).toContain(asset.originalPath);
+        });
+
+        it('should find the new path on a second row read when the mover finished in between', async () => {
+          // The mover can write the row and delete the move row between our re-read and our move
+          // lookup; then neither of those saw the move, but a second row read does.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.asset.getById
+            .mockResolvedValueOnce(getForAsset(asset))
+            .mockResolvedValueOnce(getForAsset(asset))
+            .mockResolvedValueOnce({ ...getForAsset(asset), originalPath: movedPath });
+          mocks.move.getByEntity.mockResolvedValue(void 0);
+          mocks.storage.createReadStream
+            .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+            .mockResolvedValueOnce({ stream: { destroy: vi.fn() } as never, length: 1024, type: 'image/heic' });
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+          expect(mocks.asset.getById).toHaveBeenCalledTimes(3);
+          expect(mocks.storage.createReadStream).toHaveBeenLastCalledWith(movedPath, expect.anything());
+          expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+        });
       });
 
       it('should report the path it actually failed on, not the stale one', async () => {

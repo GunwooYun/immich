@@ -273,18 +273,25 @@ export class JobRepository {
         // create a file. The user ends up with two copies in Drive and the ledger only remembers
         // the second one, leaving the first orphaned and untracked forever.
         //
-        // `removeOnFail` is defensive, not load-bearing — an earlier version of this comment said
-        // otherwise. The worry was real in BullMQ terms: it refuses to enqueue a job whose id
+        // `removeOnFail` overrides the global default (`removeOnFail: false`, see
+        // config.repository.ts) and is load-bearing. BullMQ refuses to enqueue a job whose id
         // already exists *in any state*, so a retained failed job would poison this (user, asset)
-        // pair for every later sync or backfill. But a Drive job never reaches the failed state:
-        // `JobService.onJobRun` catches every handler error, emits `JobError`, and returns, so
-        // BullMQ sees a completed job and `removeOnComplete: true` (config.repository.ts) frees the
-        // id. Kept because it costs nothing and would matter the day onJobRun starts rethrowing.
+        // pair for every later sync or backfill.
         //
-        // The same fact rules out BullMQ `attempts`/`backoff` as a retry mechanism for these jobs,
-        // and means a handler cannot re-queue its own (user, asset) id while it is still active —
-        // the add is silently refused. Retries come from the next sync or backfill instead; the
-        // durable record of a failure is `google_drive_upload_error`, not the Jobs panel.
+        // How a Drive job actually reaches the failed state is narrower than it looks — wave11 R0
+        // got this wrong in the other direction and its review corrected it. An ordinary upload
+        // error does NOT: `JobService.onJobRun` catches handler errors, emits `JobError` and
+        // returns, so BullMQ completes the job and `removeOnComplete` frees the id. What does fail
+        // the job is (a) BullMQ stall detection — a worker that dies or blocks mid-upload past the
+        // lock duration, e.g. a server restart — and (b) a `JobError` listener that itself rejects,
+        // since that happens inside onJobRun's catch and nothing catches it again
+        // (`EventRepository.onEvent` awaits handlers bare). Both are rare, and both would
+        // otherwise leave the pair stuck.
+        //
+        // The ordinary-error path also rules out BullMQ `attempts`/`backoff` as a retry mechanism
+        // for these jobs, and means a handler cannot re-queue its own (user, asset) id while it is
+        // still active — the add is silently refused. Retries come from the next sync or backfill
+        // instead; the durable record of a failure is `google_drive_upload_error`, not the Jobs panel.
         return { jobId: `${item.data.userId}/${item.data.assetId}`, removeOnFail: true };
       }
       case JobName.PersonGenerateThumbnail: {

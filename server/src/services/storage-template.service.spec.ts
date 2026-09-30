@@ -237,6 +237,40 @@ describe(StorageTemplateService.name, () => {
       });
     });
 
+    // Fork-owned (Google Drive, wave11 R1). GoogleDriveService.openOriginal relies on this exact
+    // order to find an original that is mid-move: the move_history row exists before the rename
+    // and is deleted only after the asset row names the new path, so for the whole window where
+    // the row is stale the move row is not. If upstream reorders these steps, that fallback stops
+    // covering the window silently — this test is here to make the reorder loud instead.
+    it('should create the move row, rename, update the asset row, then delete the move row — in that order', async () => {
+      const user = UserFactory.create();
+      const asset = AssetFactory.from().owner(user).exif().build();
+      sut.onConfigInit({ newConfig: defaults });
+
+      mocks.user.get.mockResolvedValue(user);
+      mocks.assetJob.getForStorageTemplateJob.mockResolvedValueOnce(getForStorageTemplate(asset));
+      mocks.move.create.mockResolvedValueOnce({
+        id: 'move-1',
+        entityId: asset.id,
+        pathType: AssetPathType.Original,
+        oldPath: asset.originalPath,
+        newPath: '/data/library/user/2026/new.jpg',
+      });
+
+      expect(await sut.handleMigrationSingle({ id: asset.id })).toBe(JobStatus.Success);
+
+      const order = [
+        mocks.move.create.mock.invocationCallOrder[0],
+        mocks.storage.rename.mock.invocationCallOrder[0],
+        mocks.asset.update.mock.invocationCallOrder[0],
+        mocks.move.delete.mock.invocationCallOrder[0],
+      ];
+      // Every step happened (an undefined would make the sort check meaningless)...
+      expect(order.every((n) => typeof n === 'number')).toBe(true);
+      // ...and in this order.
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+    });
+
     it('should use handlebar else condition for album', async () => {
       const user = UserFactory.create();
       const asset = AssetFactory.from().owner(user).exif().build();

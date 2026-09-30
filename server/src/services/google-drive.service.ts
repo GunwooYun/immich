@@ -4,6 +4,7 @@ import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { OnEvent, OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
+  AssetPathType,
   GOOGLE_DRIVE_BLOCKING_ERROR_CLASSES,
   GoogleDriveUploadErrorClass,
   JobName,
@@ -1309,8 +1310,11 @@ export class GoogleDriveService extends BaseService {
           // googleapis-common (apirequest.js, `createAPIRequestAsync`) overwrites `uploadType` with
           // 'multipart' whenever `requestBody` accompanies `media.body`, and streams the body in one
           // request. The option was therefore removed as dead, not changed: behaviour is identical.
-          // The 5 MB cap that motivated it applies to `uploadType=media`, not multipart — 8,000+
-          // production uploads including videos went through this path. Consequences that matter:
+          // Google's docs describe multipart as the choice for files of 5 MB or less, which is what
+          // motivated 'resumable' — but that is guidance, not an enforced cap on this path: the
+          // production ledger (2026-09-30) holds 983 uploads over 5 MB, the largest 7.2 GB, all sent
+          // through this exact call. If Google ever enforces it, uploads of large files will fail
+          // loudly (a non-2xx or a size mismatch), not silently. Consequences that matter:
           // there is no session to expire, and a retry cannot resume, only re-send the stream.
         },
         {
@@ -1465,21 +1469,26 @@ export class GoogleDriveService extends BaseService {
    * asset row was created, and both named a `/data/upload/...` path that no longer existed while
    * the file sat perfectly readable in the library.
    *
-   * Re-reading the row is the whole fix, though not for the reason it first looked like: the mover
-   * renames the file and *then* writes the new path in a separate statement, so the two are not
-   * atomic. Two windows survive. The ordinary one is a single UPDATE round trip, and losing it
-   * costs a skip that the next sync repairs. The other is a mover that dies between the rename and
-   * the write — there the row keeps the old path indefinitely, the re-read returns the same value,
-   * and no retry happens. That is deliberate: an unconditional second attempt on an unchanged path
-   * asks the filesystem the same question twice and cannot succeed.
+   * Re-reading the row is not enough on its own, because the mover (`StorageCore.moveFile`) is not
+   * atomic: it inserts a `move_history` row naming `oldPath → newPath`, renames the file, *then*
+   * writes the new path to the asset row, and deletes the move row last. Between the rename and
+   * the row write the re-read still returns the old path. That is exactly the one production
+   * failure left after the first fix (2026-09-23): created 00:48:19, failed 00:48:24, detail naming
+   * only the `/data/upload` path — the re-read had agreed with the stale one.
    *
-   * Nor does a manual sync repair it — that re-reads the same stale row and fails identically. What
-   * repairs it is immich's own incomplete-move recovery in `storage.core.ts`, i.e. re-running
-   * Storage Migration, after which the row names the file again and the next sync succeeds. This
-   * comment has now been wrong twice about this window; the distinction that matters is that a
-   * stale *path* is not a missing *file*, and only the mover can tell them apart.
+   * So when the row has not moved, the move row is asked instead. It exists for the whole window
+   * (created before the rename, deleted after the row write) and names the destination, and it
+   * also covers a mover that died between rename and row write, which previously stayed broken
+   * until someone re-ran Storage Migration. If there is no move row, the asset is read once more:
+   * the mover may have finished both the row write and the delete between our two reads.
    *
-   * Only one extra attempt, and only when the path actually changed.
+   * The move row is trusted only when its `oldPath` is the path we just failed on. A leftover row
+   * from an unrelated, older aborted move could otherwise send us to a different file; the Drive
+   * size check would not catch that, since the other file's bytes would arrive intact.
+   *
+   * Reading `newPath` mid-move is safe on both mover paths: after a rename the file is whole at
+   * the destination, and on the cross-device copy fallback the source is only unlinked (the only
+   * way we see ENOENT on it) after the copy has been verified.
    *
    * What this deliberately does not do is sleep and poll. Holding a queue worker to wait out
    * somebody else's job would trade a rare, self-healing skip for a guaranteed loss of throughput,
@@ -1492,8 +1501,8 @@ export class GoogleDriveService extends BaseService {
         mimeTypes.lookup(asset.originalFileName),
       );
     } catch (error) {
-      const fresh = await this.assetRepository.getById(asset.id);
-      if (!fresh || fresh.originalPath === asset.originalPath) {
+      const movedTo = await this.findMovedOriginal(asset);
+      if (!movedTo) {
         // Either the asset is gone (the ordinary trashed-mid-flight race, already a skip at gate 5)
         // or nothing moved and the file really is unreadable. Report the path we tried.
         throw new GoogleDriveSourceUnreadableError(
@@ -1506,26 +1515,54 @@ export class GoogleDriveService extends BaseService {
       }
 
       // Log, not debug. The default level hides debug, so the one production-observable sign that
-      // this fix ever fired would have been invisible on the machine it was written for.
+      // this fix ever fired would have been invisible on the machine it was written for. `source`
+      // says which signal found the file, so a later look at the logs can tell whether the
+      // move-row fallback is what is actually doing the work.
       this.logger.log(
-        `Original for asset ${asset.id} moved from ${asset.originalPath} while the upload was queued; retrying at ${fresh.originalPath}`,
+        `Original for asset ${asset.id} moved from ${asset.originalPath} while the upload was queued; retrying at ${movedTo.path} (found via ${movedTo.source})`,
       );
 
       try {
-        return await this.storageRepository.createReadStream(
-          fresh.originalPath,
-          mimeTypes.lookup(fresh.originalFileName),
-        );
+        return await this.storageRepository.createReadStream(movedTo.path, mimeTypes.lookup(asset.originalFileName));
       } catch (retryError) {
         // Both paths in the message. The recorded detail is the entire diagnostic — this race was
         // identified purely from a /data/upload path sitting beside a /data/library one — and
         // naming only the second would erase exactly the comparison that made it legible.
         throw new GoogleDriveSourceUnreadableError(
-          `Could not read ${fresh.originalPath} (moved from ${asset.originalPath}): ${retryError}`,
-          fresh.originalPath,
+          `Could not read ${movedTo.path} (moved from ${asset.originalPath}): ${retryError}`,
+          movedTo.path,
           { cause: retryError },
         );
       }
+    }
+  }
+
+  /**
+   * Where the original went, if it moved away from `asset.originalPath`; undefined if it did not
+   * (or the asset is gone). Order matters: the asset row is the authority once the mover has
+   * written it, the move row covers the window before that, and the second row read covers the
+   * mover finishing between the first two reads. See openOriginal for why each exists.
+   */
+  private async findMovedOriginal(asset: {
+    id: string;
+    originalPath: string;
+  }): Promise<{ path: string; source: 'asset' | 'move_history' } | undefined> {
+    const fresh = await this.assetRepository.getById(asset.id);
+    if (!fresh) {
+      return;
+    }
+    if (fresh.originalPath !== asset.originalPath) {
+      return { path: fresh.originalPath, source: 'asset' };
+    }
+
+    const move = await this.moveRepository.getByEntity(asset.id, AssetPathType.Original);
+    if (move && move.oldPath === asset.originalPath && move.newPath !== asset.originalPath) {
+      return { path: move.newPath, source: 'move_history' };
+    }
+
+    const again = await this.assetRepository.getById(asset.id);
+    if (again && again.originalPath !== asset.originalPath) {
+      return { path: again.originalPath, source: 'asset' };
     }
   }
 
