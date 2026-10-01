@@ -1233,6 +1233,13 @@ export const GOOGLE_DRIVE_CAPPED_ERROR_CLASSES = [
  * five nights for an asset nobody touches. A human always gets it back: "retry failed" clears the
  * row; a manual album sync or re-adding to an album queues it regardless (those paths filter on the
  * ledger only, not this cap); and a success from any path deletes the row.
+ *
+ * `attempts` counts every recorded failure of the asset, whatever its class at the time — upsertError
+ * bumps it across class changes. So four RateLimited nights followed by one Unknown reach the cap
+ * at once (wave11d review N1). That is kept on purpose rather than resetting the count when the
+ * class changes: `attempts` is shown on the settings page as "how many times this asset has been
+ * tried", and resetting it would make that number lie. The cap reads as "five tries, and the last
+ * one was not a rate limit" — a reasonable point to stop and wait for a human.
  */
 export const GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS = 5;
 

@@ -676,6 +676,9 @@ describe(GoogleDriveService.name, () => {
         const detail = lastCall[3];
         expect(detail).toContain('/data/library/admin/2026/moved.jpg');
         expect(detail).toContain(asset.originalPath);
+        // The errno rides on the "moved from" form too (wave11d review N4), so a person can tell
+        // a file missing at the new path from one present but unreadable there.
+        expect(detail).toMatch(/\(moved from .*\) \[ENOENT\]$/);
       });
 
       it('should not retry when the asset disappeared during the window', async () => {
