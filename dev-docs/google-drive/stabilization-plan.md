@@ -189,6 +189,15 @@ R3 deviations, recorded:
   the "moved from" form; N3 (sourceError precedence could mask a coincident Drive error) recorded,
   not changed — it needs an independent disk error at the same moment; N5 below.
 
+### wave11e / wave11f reviews — both NOT BLOCKED (closing)
+- wave11e: N1 decision (count across classes) judged defensible; doc/comment drift fixed in
+  `be9eb7110`.
+- wave11f (comment-only round): verified the `.ts` diff is comment-only. Nits: N2 fixed (CLAUDE.md
+  "≥ 5"); **N1 left as is** — `table.ts`'s `attempts` comment names the nightly backfill as the
+  cap's consumer, while `streamPendingUploads` also feeds admin queue-all and resume. True but
+  narrow; not worth another source-file round on its own. Fold it into the next code change that
+  touches that file. N3 (report table omitted the review file) — no action.
+
 ### Cannot be verified here
 - Whether the nightly backfill heals transient failures in production — needs a few days of
   observation after deploy (error table + F7 log lines). Human step after deploy.
