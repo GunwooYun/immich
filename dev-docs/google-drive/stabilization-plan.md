@@ -45,7 +45,7 @@ Error rows are deleted on success, so past transient failures leave no trace in 
 | F4 | `retry: false` on `files.create`; delete `shouldRetryDriveRequest` + its tests (dead). Retry is the nightly backfill (F3) | gaxios re-sends the same consumed stream on retry (`gaxios.js:150-157`); a stream factory is impossible through this API |
 | F2 | Inactivity abort, not a whole-request timeout: `AbortController` passed as `signal`, timer reset by `onUploadProgress`, `UPLOAD_IDLE_TIMEOUT_MS = 120 s`. Abort → `unknown`, recorded, stream destroyed | node-fetch `timeout` covers the whole body send (useless for 4 GB videos); a source error mid-pipe can hang the request forever with `finally` never running |
 | F5 | Only rate-limit reasons (+ `dailyLimitExceeded`, `sharingRateLimitExceeded`) → `RateLimited`; other 403s → `unknown` | `utils/google-drive.ts:122` |
-| F3 | Nightly: `handleNightlyJobs` queues `GoogleDriveUploadQueueAll` iff `isGoogleDriveEnabled`; add a `deduplication` id like `FacialRecognitionQueueAll`. Attempt cap in `streamPendingUploads`: exclude assets with an error row `attempts >= CAP` for all **non-blocking, non-RateLimited** classes. Escape hatches: success deletes the row; manual album sync clears rows. `mise //:sql` | no existing cron; `queue.service.ts:267-300` |
+| F3 | Nightly: `handleNightlyJobs` queues `GoogleDriveUploadQueueAll` iff `isGoogleDriveEnabled`; add a `deduplication` id like `FacialRecognitionQueueAll`. Attempt cap in `streamPendingUploads`: exclude assets with an error row `attempts >= CAP` for all **non-blocking, non-RateLimited** classes. Escape hatches: success deletes the row; "retry failed" clears rows; manual sync / add-to-album bypass the cap (they do **not** clear rows — corrected in R3). `mise //:sql` | no existing cron; `queue.service.ts:267-300` |
 | F6 | EACCES/EIO → recorded retryable `source_unreadable` (ENOENT keeps F1 logic) | deferred item in `failure-handling-plan.md` |
 | F7 | `recordUpload` returns prior `attempts` on delete; log `uploaded after N failed attempt(s)` | observability gap above |
 | T1 | Medium: `streamPendingUploads` excludes other users' assets and deleted albums | wave10c debt |
@@ -88,7 +88,7 @@ the CLAUDE.md §3 procedure (`./dev-test/google-drive/run.sh --medium`, server v
 | V3 | `files.create` gets `signal` + `onUploadProgress`; idle 120 s → abort → `unknown` row + stream destroyed; progress resets the timer | service spec, fake timers | task | Remove timer reset → progressing upload aborts, test fails |
 | V4 | 403 `insufficientPermissions` → `unknown`; `rateLimitExceeded`/`userRateLimitExceeded`/`dailyLimitExceeded` → `RateLimited`; `storageQuotaExceeded` → quota | `utils/google-drive.spec.ts` | task | Restore "any 403 = RateLimited" → first case fails |
 | V5 | `handleNightlyJobs` queues `GoogleDriveUploadQueueAll` iff enabled; carries dedup id | `queue.service.spec.ts` | task | Disabled config still pushes → fails |
-| V6 | Cap: asset below cap **is** returned; at/over cap excluded; blocking classes and RateLimited ignore the cap; after manual sync clears the row the asset is re-included | medium spec on `streamPendingUploads` | §3 | Drop cap predicate → capped asset returned; wrong predicate → below-cap asset missing (guards the silent "queues nothing" failure) |
+| V6 | Cap: asset below cap **is** returned; at/over cap excluded; blocking classes and RateLimited ignore the cap; once "retry failed" clears the row the asset is re-included | medium spec on `streamPendingUploads` | §3 | Drop cap predicate → capped asset returned; wrong predicate → below-cap asset missing (guards the silent "queues nothing" failure) |
 | V7 | EACCES/EIO → retryable `source_unreadable` row | service spec | task | Map EACCES to terminal skip path → fails |
 | V8 | Success after prior failure logs attempt count and deletes the error row | service spec | task | Remove log → fails |
 | V9 | `streamPendingUploads` excludes other users' assets and deleted albums | medium spec | §3 | Remove `userId` / `deletedAt` predicate once → fails |
@@ -148,7 +148,13 @@ wave11c review verdicts (R2), fed back — all folded into the R3 commit `19948b
 - [x] 7. R3: F3 nightly queue + dedup id → [x] verify:task V5 (2 mutations red). Dedup id has **no test** — `getJobOptions` is private and upstream has no harness for it
 - [x] 8. R3: F3 cap predicate + SQL regen → [x] V6 medium (5 mutations red, incl. off-by-one and inverted)
 - [x] 9. R3: F6 errno in detail + F7 attempt log → [x] V7, V8 (4 mutations red) → **§3 (risk:high)** → report R3
-- [ ] 10. R4: T2 revoked-path unit tests (V11) → **§3 final** → report R4. T1 (V9) landed early in R3's commit; T2's fd half already existed (V10)
+- [x] 10. R4: T2 revoked-path unit tests (V11) — **no code needed.** The research's "gap" was
+  wrong: `getStorage` ("report a revoked grant as disconnected…") and `getPickerConfig` ("clear a
+  revoked grant instead of only refusing", plus the non-invalid_grant negative) already exist, and
+  replacing each `clearRevokedGrant` call with a no-op turns its test red (checked 2026-10-01).
+  The plan's wording "records `Revoked`" was also wrong for these paths: the error table is keyed
+  (user, asset) with an asset FK, so a path with no asset cannot write the marker. V11 is re-worded.
+  T1 (V9) landed early in R3's commit; T2's fd half already existed (V10).
 
 R3 deviations, recorded:
 - **F6 changed shape:** no new error class. Non-ENOENT read errors were already recorded as
@@ -171,6 +177,22 @@ R3 deviations, recorded:
   Superseded in R1: the `oldPath` guard rejects such a row, tested as V1e.
 - A real cross-device (EXDEV) move racing an upload — V1g reproduces it only by mock sequencing.
 
+### wave11d review verdicts (R3) — NOT BLOCKED, fed back in the closing commit
+- The generated-SQL decision was verified: the reviewer ran `sync-sql.js` against a fully migrated
+  throwaway Postgres and got **zero diff** — the applied hunk is byte-identical, the two dropped
+  hunks were environment artifacts. A real-googleapis probe confirmed the stream-error listener
+  (EIO mid-pipe → abort in 1 ms; lazy-open ENOENT; no uncaught exception).
+- **N1 kept as intended, documented** (`GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS` doc): `attempts`
+  counts failures across class changes, so RateLimited nights count toward the cap. Resetting it on
+  a class change was rejected: the settings page shows it as "how many times this was tried".
+- N2 doc drift (manual sync "clears" rows) fixed here and in CLAUDE.md; N4 errno assertion added on
+  the "moved from" form; N3 (sourceError precedence could mask a coincident Drive error) recorded,
+  not changed — it needs an independent disk error at the same moment; N5 below.
+
 ### Cannot be verified here
 - Whether the nightly backfill heals transient failures in production — needs a few days of
   observation after deploy (error table + F7 log lines). Human step after deploy.
+- **Reading the pending count after deploy (wave11d N5):** `countPendingUploads` still includes
+  capped assets (as it includes blocked ones), so for a user with a capped asset the progress card
+  never reaches 0. A non-zero pending number that stops shrinking is therefore not by itself a
+  stuck queue — check the failure list for rows at 5 attempts first.
