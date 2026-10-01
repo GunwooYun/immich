@@ -47,9 +47,12 @@ export class GoogleDriveUploadErrorTable {
   @Column({ nullable: true })
   detail!: string | null;
 
-  // How many times this (user, asset) pair has failed. Purely informational: there is no retry
-  // cap (a known, accepted long-tail — see the failure-handling plan §4), but surfacing the count
-  // lets a human spot the asset that has failed 40 times and deal with it.
+  // How many times this (user, asset) pair has failed, across every class it has held. Shown on the
+  // settings page, and — since wave11 R3 — also the input to the unattended retry cap: the nightly
+  // backfill stops queueing an asset once this reaches GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS in a
+  // capped class (see that constant in enum.ts for why the count is not reset on a class change).
+  // Earlier this comment said there was no cap; that was the failure-handling plan §4's accepted
+  // long-tail, which the nightly retry made too costly to keep.
   @Column({ type: 'integer', default: 1 })
   attempts!: number;
 

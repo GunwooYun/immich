@@ -501,6 +501,9 @@ web/src/**/*.spec.ts             웹 유닛
   7. 아래 게이트 쿼리로 사용자별 `drive_account` / `unstamped`를 본다.
   8. **진행 카드의 대기 수를 한 번 본다.** `''` 매칭이 회귀했다면 여기에 6,996 근처 숫자가 뜬다.
      중복은 나지 않지만(gate 2가 받는다) 큐가 이미 한 일로 찬다 — 보이면 롤백 판단 재료다.
+     **wave11 이후:** 대기 수에는 재시도 상한(5회)에 걸린 사진도 남는다(차단된 사용자의 대기가 남는 것과
+     같은 이유). 그래서 0이 안 되고 멈춘 작은 숫자는 그 자체로 막힌 큐가 아니다 — 실패 목록에서
+     5 attempts 행을 먼저 본다.
 
   *운영 습관*
   9. **연결 해제·재연결은 업로드가 도는 중에 하지 않는다.** Jobs 화면에서 대기 0을 확인한 뒤에.
@@ -713,7 +716,7 @@ SQL
 | V3 | signal+onUploadProgress, 120s idle → abort → unknown + 스트림 파기, 진행 시 타이머 리셋, 본문 전송 완료 후엔 10분 응답 한도, 종료 후 타이머 0 | service spec (fake timers) | task | 리셋 제거·응답 한도 제거·finally clearTimeout 제거 → 각각 실패 |
 | V4 | 403 사유별 분류(insufficientPermissions→unknown, rate/daily→RateLimited, quota) | utils spec | task | "모든 403=RateLimited" 복원 → 실패 |
 | V5 | nightly가 enabled일 때만 QueueAll 큐잉 + dedup id | queue.service spec | task | disabled에도 큐잉 → 실패 |
-| V6 | 상한 미만 **포함**, 이상 제외, 차단·RateLimited 무시, 다른 사용자 행과 무관, "실패 재시도"로 행이 지워지면 재포함 (수동 동기화는 행을 지우지 않고 상한을 우회할 뿐) | medium | §3 | 조건 제거·off-by-one·반전·상관 제거 → 실패 (조용한 "아무것도 안 큐잉" 방지) |
+| V6 | 상한 미만 **포함**, 이상 제외, RateLimited는 상한 무시(차단 클래스는 사용자 단위 조건이 먼저 걸러 이 경로로는 관측 불가), 다른 사용자 행과 무관, "실패 재시도"로 행이 지워지면 재포함 (수동 동기화는 행을 지우지 않고 상한을 우회할 뿐) | medium | §3 | 조건 제거·off-by-one·반전·상관 제거 → 실패 (조용한 "아무것도 안 큐잉" 방지) |
 | V7 | `source_unreadable` detail에 errno(`[EMFILE]` 등) 포함 — 새 클래스 없이 구분 (R3에서 계획 변경) | service spec | task | errno 제거 → 실패 |
 | V8 | 이전 실패 후 성공 → 시도 횟수 로그 + 오류 행 삭제 | service spec | task | 로그 제거 → 실패 |
 | V9 | streamPendingUploads가 타 사용자·삭제 앨범 제외 | medium | §3 | 조건 한 번 제거 → 실패 |

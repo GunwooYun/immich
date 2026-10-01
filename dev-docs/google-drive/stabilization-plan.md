@@ -88,12 +88,12 @@ the CLAUDE.md §3 procedure (`./dev-test/google-drive/run.sh --medium`, server v
 | V3 | `files.create` gets `signal` + `onUploadProgress`; idle 120 s → abort → `unknown` row + stream destroyed; progress resets the timer | service spec, fake timers | task | Remove timer reset → progressing upload aborts, test fails |
 | V4 | 403 `insufficientPermissions` → `unknown`; `rateLimitExceeded`/`userRateLimitExceeded`/`dailyLimitExceeded` → `RateLimited`; `storageQuotaExceeded` → quota | `utils/google-drive.spec.ts` | task | Restore "any 403 = RateLimited" → first case fails |
 | V5 | `handleNightlyJobs` queues `GoogleDriveUploadQueueAll` iff enabled; carries dedup id | `queue.service.spec.ts` | task | Disabled config still pushes → fails |
-| V6 | Cap: asset below cap **is** returned; at/over cap excluded; blocking classes and RateLimited ignore the cap; once "retry failed" clears the row the asset is re-included | medium spec on `streamPendingUploads` | §3 | Drop cap predicate → capped asset returned; wrong predicate → below-cap asset missing (guards the silent "queues nothing" failure) |
+| V6 | Cap: asset below cap **is** returned; at/over cap excluded; RateLimited ignores the cap (blocking classes are excluded per user before the cap applies, so "ignores the cap" is not observable for them through this query — wave11e N4); once "retry failed" clears the row the asset is re-included | medium spec on `streamPendingUploads` | §3 | Drop cap predicate → capped asset returned; wrong predicate → below-cap asset missing (guards the silent "queues nothing" failure) |
 | V7 | EACCES/EIO → retryable `source_unreadable` row | service spec | task | Map EACCES to terminal skip path → fails |
 | V8 | Success after prior failure logs attempt count and deletes the error row | service spec | task | Remove log → fails |
 | V9 | `streamPendingUploads` excludes other users' assets and deleted albums | medium spec | §3 | Remove `userId` / `deletedAt` predicate once → fails |
 | V10 | Upload stream destroyed when `files.create` throws | service spec | task | Remove `finally` destroy → spy not called |
-| V11 | Revoked token on `getStorage`/`getPickerConfig` clears grant, records `Revoked` | service spec | task | Skip clearRevokedGrant → fails |
+| V11 | Revoked token on `getStorage`/`getPickerConfig` clears the grant (no `Revoked` row: these paths have no asset, and the error table is keyed on one — re-worded in R4) | service spec (pre-existing tests) | task | Skip clearRevokedGrant → fails |
 | VF | Whole feature + regressions | §3 | §3 | — |
 
 Every new test is broken once on purpose (the "fails when it should" column) and the red run is

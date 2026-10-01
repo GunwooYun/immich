@@ -154,6 +154,10 @@ Phase 1이 나머지의 전제라 먼저. 1+2가 한 덩어리(마이그레이�
    **다만 이건 해결이 아니라 알려진 잔여 문제로 기록해 둔다**: unknown 실패 자산은 ledger에도
    못 들어가고 터미널도 아니어서 백필마다 영원히 재시도된다 — quota에서 없애려는 것과 같은
    종류의 조용한 낭비가 작은 규모로 남는 것. 2인 서버에선 감수, 규모가 커지면 상한 도입.
+   **→ 대체됨 (wave11 R3, 2026-10-01):** 야간 백필이 생기면서 "매일 밤 영원히 재시도"가 되어
+   상한을 도입했다 — `GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS = 5`, 대상 클래스는
+   `GOOGLE_DRIVE_CAPPED_ERROR_CLASSES`(unknown·source_unreadable·size_mismatch). 근거와 탈출 경로는
+   `stabilization-plan.md`.
 3. **알림 채널** — 인앱만 할지 이메일(immich SMTP 설정이 있으면)까지 갈지. 제안: 인앱만
    먼저. 이 서버의 사용자 2명은 어차피 UI를 본다.
 
