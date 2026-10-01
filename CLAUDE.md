@@ -417,6 +417,7 @@ cd server && npx sql-tools -u "postgres://postgres:<pw>@localhost:5432/immich" m
 | dev DB에서 `corrupted migrations` | 이 개발 DB만 v3.1.0 병합 전 순서로 마이그레이션이 적용돼 있음. immich 런타임과 같은 `allowUnorderedMigrations: true`로 실행. **운영 DB는 정상 순서라 무관** |
 | 테스트가 통과하는데 아무것도 검증 안 함 | 기본 설정에서 기능이 **꺼져** 있어 첫 관문에서 빠져나간 것. "안 했다"를 단언하는 테스트는 **의도한 이유로 통과하는지** 반드시 확인 (예: ledger 조회가 실제로 일어났는지 함께 단언) |
 | 병합 커밋에 생성물이 누락됨 | 충돌 해결로 `git add` 한 **뒤에** 재생성을 돌려서 스테이징본이 낡음. 재생성은 `git add` **전에** |
+| `mise //:sql`이 바꾼 적 없는 쿼리를 지우거나, 방금 바꾼 쿼리를 반영하지 않음 | 두 가지가 겹쳐 있었다(2026-10-01). ① 생성기는 소스가 아니라 **`dist/bin/sync-sql.js`**를 실행한다 → `rm -rf server/dist && nest build` 후 재생성. ② 생성기가 붙는 데스크탑 dev DB(`localhost:5432/immich`)가 마이그레이션이 덜 돼 있으면, 메서드의 첫 쿼리가 실패해 **두 번째 쿼리가 생성물에서 빠진다**(로그에 `column ... does not exist`). `sql-tools migrations run`은 이 DB에서 `corrupted migrations`로 거부되므로(위 행), `allowUnorderedMigrations: true`로 sql-tools의 `Migrator`를 직접 부른다 — CLI는 이 옵션을 받지 않는다. 그 뒤 `migrations generate`가 "No changes detected", 재생성 diff가 0이면 정상. 로그의 FK 위반(가짜 UUID INSERT)은 무해 |
 
 ### 5. 테스트 배치
 

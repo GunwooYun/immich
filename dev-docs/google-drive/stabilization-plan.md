@@ -177,6 +177,16 @@ R3 deviations, recorded:
   Superseded in R1: the `oldPath` guard rejects such a row, tested as V1e.
 - A real cross-device (EXDEV) move racing an upload — V1g reproduces it only by mock sequencing.
 
+- **A stall abort in the response phase can leave a duplicate.** [inferred, untested] Once the
+  whole body is sent we wait up to `UPLOAD_RESPONSE_TIMEOUT_MS` (10 min). If Drive has already
+  created the file but its answer arrives later than that, we abort, the ledger never records it,
+  and the next retry uploads the photo again — one duplicate file in Drive. Accepted: a >10 min
+  response is rare, and the only cure (asking Drive for `appProperties.immichAssetId` before
+  re-uploading) is the reconciliation the fileMetadata comment already anticipates. Raised by the
+  user's question on 2026-10-01; it was missing from this list until then. An abort *during* the
+  body send should not create a file (a multipart request that never completes) — also inferred,
+  not checked against Google's documentation.
+
 ### wave11d review verdicts (R3) — NOT BLOCKED, fed back in the closing commit
 - The generated-SQL decision was verified: the reviewer ran `sync-sql.js` against a fully migrated
   throwaway Postgres and got **zero diff** — the applied hunk is byte-identical, the two dropped
