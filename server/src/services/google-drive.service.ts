@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { drive_v3, google } from 'googleapis';
+import { Readable } from 'node:stream';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { OnEvent, OnJob } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
@@ -1578,10 +1579,7 @@ export class GoogleDriveService extends BaseService {
    */
   private async openOriginal(asset: { id: string; originalPath: string; originalFileName: string }) {
     try {
-      return await this.storageRepository.createReadStream(
-        asset.originalPath,
-        mimeTypes.lookup(asset.originalFileName),
-      );
+      return await this.openAndWait(asset.originalPath, asset.originalFileName);
     } catch (error) {
       const movedTo = await this.findMovedOriginal(asset, { sourceMissing: isFileMissing(error) });
       if (!movedTo) {
@@ -1605,7 +1603,7 @@ export class GoogleDriveService extends BaseService {
       );
 
       try {
-        return await this.storageRepository.createReadStream(movedTo.path, mimeTypes.lookup(asset.originalFileName));
+        return await this.openAndWait(movedTo.path, asset.originalFileName);
       } catch (retryError) {
         // Both paths in the message. The recorded detail is the entire diagnostic — this race was
         // identified purely from a /data/upload path sitting beside a /data/library one — and
@@ -1617,6 +1615,41 @@ export class GoogleDriveService extends BaseService {
         );
       }
     }
+  }
+
+  /**
+   * Opens a read stream and resolves only once the file is actually open (wave11g, isolated
+   * review F2).
+   *
+   * `storageRepository.createReadStream` stats and access-checks the path, then returns an
+   * fs.ReadStream whose real open happens later, asynchronously. A move landing between the access
+   * check and that open — the same race openOriginal exists for, just a few milliseconds later —
+   * used to surface as an 'error' event after we had already handed the stream to googleapis, so it
+   * bypassed the move fallback entirely: recorded as a "mid-upload" failure for a file that never
+   * sent a byte, and charged against the attempt cap. Waiting for 'ready' turns an open failure into
+   * a throw here, inside openOriginal's try, where the fallback can see it.
+   *
+   * `pending` is fs.ReadStream's own "not opened yet" flag. Anything that is not pending (an
+   * already-open stream, or a stand-in without the flag) is returned as is.
+   */
+  private async openAndWait(path: string, fileName: string) {
+    const opened = await this.storageRepository.createReadStream(path, mimeTypes.lookup(fileName));
+    const stream = opened.stream as Readable & { pending?: boolean };
+    if (stream.pending === true) {
+      await new Promise<void>((resolve, reject) => {
+        const onReady = () => {
+          stream.off('error', onError);
+          resolve();
+        };
+        const onError = (error: unknown) => {
+          stream.off('ready', onReady);
+          reject(error);
+        };
+        stream.once('ready', onReady);
+        stream.once('error', onError);
+      });
+    }
+    return opened;
   }
 
   /**

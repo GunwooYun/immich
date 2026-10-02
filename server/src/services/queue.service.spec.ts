@@ -33,6 +33,11 @@ describe(QueueService.name, () => {
 
   describe('handleNightlyJobs', () => {
     it('should run the scheduled jobs', async () => {
+      // Fork: pin Google Drive off. Its config defaults come from IMMICH_GOOGLE_DRIVE_* in
+      // process.env, so without this the exact list below would gain the Drive backfill in any
+      // shell that exports them — the test would depend on who runs it (wave11g, isolated review F1).
+      mocks.systemMetadata.get.mockResolvedValue({ googleDrive: { clientId: '', clientSecret: '', redirectUrl: '' } });
+
       await sut.handleNightlyJobs();
 
       expect(mocks.job.queueAll).toHaveBeenCalledWith([

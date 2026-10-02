@@ -528,8 +528,14 @@ export class GoogleDriveRepository {
    * ledger, minus soft-deleted albums and assets. Two different notions of "pending" between the
    * progress display and the thing that actually queues work would be worse than none.
    *
-   * Blocked users are *not* excluded here, unlike the stream: an account paused on quota still
-   * has that work outstanding, and reporting it as zero would suggest it had somehow been done.
+   * Two deliberate divergences from the stream, both for the same reason — the work is still
+   * outstanding, and reporting it as done would be a lie:
+   *   - blocked users are *not* excluded: an account paused on quota still has that work to do;
+   *   - assets past the unattended attempt cap (wave11 R3) are *not* excluded either: the nightly
+   *     backfill has stopped trying them, but they are not in Drive. They show up in the failure
+   *     list, which is where a human acts on them.
+   * Do not copy either of the stream's exclusions in here to "keep the predicates identical" — the
+   * card would quietly stop counting photos that never arrived.
    */
   @GenerateSql({ params: [DummyValue.UUID] })
   async countPendingUploads(userId: string): Promise<number> {
@@ -698,8 +704,10 @@ export class GoogleDriveRepository {
    * this a second enforcement point for "no uploads from an album you can no longer open", now at
    * execution time.
    *
-   * The album-level predicate must stay identical to `countPendingUploads`/`streamPendingUploads`,
-   * or the three disagree about what "pending" means. That is why `album` is joined and
+   * The album-level predicate (selection ⋈ live membership ⋈ live album) must stay identical to
+   * `countPendingUploads`/`streamPendingUploads`, or the three disagree about what "pending" means.
+   * That is the album-level part only: the stream's per-user block and per-asset attempt cap are
+   * queueing decisions, not part of "pending" (see countPendingUploads). That is why `album` is joined and
    * `album.deletedAt is null` is filtered here too: `UserAdminService#delete` soft-deletes every
    * album a departing user owned (`albumRepository.softDeleteAll`) without cascading to
    * `album_asset`, `album_user`, or `google_drive_album`. A guest's selection row and membership

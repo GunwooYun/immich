@@ -545,6 +545,66 @@ describe(GoogleDriveService.name, () => {
           expect(mocks.googleDrive.recordUpload).toHaveBeenCalled();
         });
 
+        it('should treat an ENOENT at the lazy open like any other move, not as a mid-upload failure', async () => {
+          // wave11g (isolated review F2). createReadStream's stat/access passed, but the file moved
+          // before the stream's own open: the error arrives as an event. It must still reach the
+          // move fallback, and nothing may be handed to Drive before the file is really open.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          mocks.move.getByEntity.mockResolvedValue({
+            id: 'move-1',
+            entityId: asset.id,
+            pathType: AssetPathType.Original,
+            oldPath: asset.originalPath,
+            newPath: movedPath,
+          });
+          const notYetOpen = Object.assign(fakeStream(), { pending: true });
+          mocks.storage.createReadStream
+            .mockImplementationOnce(() => {
+              setImmediate(() =>
+                notYetOpen.emit('error', Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })),
+              );
+              return Promise.resolve({ stream: notYetOpen as never, length: 1024, type: 'image/heic' });
+            })
+            .mockResolvedValueOnce({ stream: fakeStream() as never, length: 1024, type: 'image/heic' });
+          // driveFilesCreate is a hoisted module mock shared across the file; clear its call log so
+          // the count below is about this test only.
+          driveFilesCreate.mockClear();
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+          expect(mocks.storage.createReadStream).toHaveBeenLastCalledWith(movedPath, expect.anything());
+          expect(mocks.googleDrive.upsertError).not.toHaveBeenCalled();
+          // The unopened stream never reached Drive: only the second (moved) one did.
+          expect(driveFilesCreate).toHaveBeenCalledTimes(1);
+          expect((driveFilesCreate.mock.calls[0][0] as { media: { body: unknown } }).media.body).not.toBe(notYetOpen);
+        });
+
+        it('should wait for a pending stream to open before uploading it', async () => {
+          // The ordinary case of the same change: a stream that opens fine is used as is, after 'ready'.
+          const userId = newUuid();
+          const asset = arrangeReadyToUpload(mocks, userId);
+          const opening = Object.assign(fakeStream(), { pending: true });
+          mocks.storage.createReadStream.mockImplementationOnce(() => {
+            setImmediate(() => {
+              opening.pending = false;
+              opening.emit('ready');
+            });
+            return Promise.resolve({ stream: opening as never, length: 1024, type: 'image/jpeg' });
+          });
+          driveFilesCreate.mockClear();
+          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+
+          await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
+
+          expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
+          expect((driveFilesCreate.mock.calls[0][0] as { media: { body: unknown } }).media.body).toBe(opening);
+          // No listener left behind by the wait (only the service's own 'error' listener remains).
+          expect(opening.listenerCount('ready')).toBe(0);
+          expect(opening.listenerCount('error')).toBe(1);
+        });
+
         it('should not follow the move row when the first read failed for a reason other than ENOENT', async () => {
           // wave11b review M1. On the cross-device copy fallback the source still exists while the
           // copy is being written; a non-ENOENT failure then (EMFILE here) says nothing about the
