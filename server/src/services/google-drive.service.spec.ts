@@ -230,6 +230,11 @@ describe(GoogleDriveService.name, () => {
     // earlier describes happened to do" — the same accidental coupling the medium suite had.
     driveFilesGet.mockReset();
     driveAboutGet.mockReset();
+    // files.create too: mockClear() keeps a queued mockImplementationOnce, so a test that fails
+    // before reaching files.create used to hand its once-implementation to the next test that did
+    // (wave11g isolated review F2 / wave11h review N3). Reset, not cleared — every test that
+    // uploads states its own Drive answer.
+    driveFilesCreate.mockReset();
     oauth2GetAccessToken.mockReset();
     oauth2GetAccessToken.mockReturnValue({ token: 'access-token' });
   });
