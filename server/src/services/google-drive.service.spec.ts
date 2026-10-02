@@ -594,10 +594,19 @@ describe(GoogleDriveService.name, () => {
             return Promise.resolve({ stream: opening as never, length: 1024, type: 'image/jpeg' });
           });
           driveFilesCreate.mockClear();
-          driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
+          // Record whether the stream was still opening at the moment it was handed to Drive. This
+          // is the assertion about *waiting*; the first version of this test only checked listener
+          // cleanup and stayed green with the wait removed (wave11g review N1).
+          let pendingWhenHandedOver: boolean | undefined;
+          // Once, not a standing implementation: this mock is shared by the whole file.
+          driveFilesCreate.mockImplementationOnce((params: { media: { body: { pending?: boolean } } }) => {
+            pendingWhenHandedOver = params.media.body.pending;
+            return Promise.resolve({ data: { id: 'drive-file-id', size: '1024' } });
+          });
 
           await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
 
+          expect(pendingWhenHandedOver).toBe(false);
           expect(mocks.storage.createReadStream).toHaveBeenCalledTimes(1);
           expect((driveFilesCreate.mock.calls[0][0] as { media: { body: unknown } }).media.body).toBe(opening);
           // No listener left behind by the wait (only the service's own 'error' listener remains).

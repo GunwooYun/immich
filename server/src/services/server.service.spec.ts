@@ -142,8 +142,10 @@ describe(ServerService.name, () => {
         oauth: false,
         oauthAutoLaunch: false,
         ocr: true,
-        // Off by default: the feature needs both an explicit opt-in and a complete OAuth client,
-        // and the default config has neither (see isGoogleDriveEnabled).
+        // Off by default: the feature needs a complete OAuth client and a redirect URL, and the
+        // default config has neither — test/vitest.config.mjs pins the IMMICH_GOOGLE_DRIVE_* env
+        // empty so that stays true whoever runs it (see isGoogleDriveEnabled; the explicit
+        // `enabled` opt-in this used to mention was abolished in wave8).
         googleDrive: false,
         passwordLogin: true,
         search: true,
