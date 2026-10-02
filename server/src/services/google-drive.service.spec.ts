@@ -572,9 +572,6 @@ describe(GoogleDriveService.name, () => {
               return Promise.resolve({ stream: notYetOpen as never, length: 1024, type: 'image/heic' });
             })
             .mockResolvedValueOnce({ stream: fakeStream() as never, length: 1024, type: 'image/heic' });
-          // driveFilesCreate is a hoisted module mock shared across the file; clear its call log so
-          // the count below is about this test only.
-          driveFilesCreate.mockClear();
           driveFilesCreate.mockResolvedValue({ data: { id: 'drive-file-id', size: '1024' } });
 
           await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('uploaded');
@@ -598,7 +595,6 @@ describe(GoogleDriveService.name, () => {
             });
             return Promise.resolve({ stream: opening as never, length: 1024, type: 'image/jpeg' });
           });
-          driveFilesCreate.mockClear();
           // Record whether the stream was still opening at the moment it was handed to Drive. This
           // is the assertion about *waiting*; the first version of this test only checked listener
           // cleanup and stayed green with the wait removed (wave11g review N1).
@@ -796,7 +792,7 @@ describe(GoogleDriveService.name, () => {
      */
     describe('upload verification', () => {
       beforeEach(() => {
-        driveFilesCreate.mockReset();
+        // driveFilesCreate is reset by the file-level beforeEach.
         driveFilesDelete.mockReset();
         driveFilesDelete.mockResolvedValue({});
       });
