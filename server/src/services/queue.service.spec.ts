@@ -33,6 +33,9 @@ describe(QueueService.name, () => {
 
   describe('handleNightlyJobs', () => {
     it('should run the scheduled jobs', async () => {
+      // This exact list holds only while Google Drive is off. Its defaults come from
+      // IMMICH_GOOGLE_DRIVE_* in process.env, which test/vitest.config.mjs pins empty for every
+      // unit spec — that is what keeps this list independent of the shell running it (wave11g).
       await sut.handleNightlyJobs();
 
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
