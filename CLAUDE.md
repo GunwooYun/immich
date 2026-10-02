@@ -609,10 +609,10 @@ SQL
   평소 사용은 LAN 주소 그대로다. **모바일 앱 엔드포인트는 바꾸지 않는다** — serve는 기존 2283 위에
   HTTPS 입구를 *추가*하는 것이지 대체가 아니다.
 
-  **자격증명은 지금 전부 저장된 설정 row에서 온다.** 랩탑 `~/immich-app/.env`, 컨테이너 환경,
-  compose 파일 어디에도 `IMMICH_GOOGLE_DRIVE_*` 변수는 **하나도 없다**(2026-09-16 이름만 확인).
-  env로 옮기려면 네 값(`_CLIENT_ID` / `_CLIENT_SECRET` / `_API_KEY` / `_REDIRECT_URL`)을 사용자가
-  직접 `.env`에 넣어야 한다(**값은 절대 커밋·출력하지 않는다** — §1). redirect URL은 External
+  **자격증명은 이제 랩탑 `~/immich-app/.env`에서 온다(2026-10-02 전환).** 네 값(`_CLIENT_ID` /
+  `_CLIENT_SECRET` / `_API_KEY` / `_REDIRECT_URL`)이 `.env`에 있고 compose의 `env_file`로 컨테이너에
+  들어간다. 설정 row에는 `googleDrive` 키가 더 이상 없다(§8). **값은 절대 커밋·출력하지 않는다** — §1.
+  확인은 길이·해시로만 한다. redirect URL은 External
   Domain에서 파생되는 것이 기본이고, 이 배포처럼 그럴 수 없을 때만 따로 지정한다. 자세한 내용은 `dev-docs/google-drive/wave6-plan.md`.
 
 - **SSH 터널은 이제 개발용 폴백이다.** 두 경우에 아직 쓴다: ① dev container에서 `localhost:2283`
@@ -661,10 +661,11 @@ SQL
   기술된다. `enabled` 플래그도 폐지했다 — 자격증명이 있고 redirect URL을 얻을 수 있으면 켜진 것이다.
   끄려면 `IMMICH_GOOGLE_DRIVE_CLIENT_ID`를 비우고 재시작한다.
 - **⚠ 단, 저장된 설정 row가 env를 이긴다.** `buildConfig`가 partial을 defaults **위에** 덮으므로,
-  row에 `googleDrive.clientId`가 들어 있으면 env를 비워도 꺼지지 않는다. **운영 row에는 다섯 키가
-  모두 들어 있다**(2026-09-14 확인: clientId·clientSecret·apiKey·redirectUrl·enabled). 즉 이 인스턴스는
-  아직 env로 기술되지 않는다.
-  **정리 방법** (wave8b 리뷰 C1이 조건을 바로잡음):
+  row에 `googleDrive.clientId`가 들어 있으면 env를 비워도 꺼지지 않는다. **운영 row는 2026-10-02에
+  정리됐다** — 다섯 키(clientId·clientSecret·apiKey·redirectUrl·폐지된 enabled)가 모두 빠지고, 이 인스턴스는
+  이제 env로만 기술된다. 그 뒤 관리 화면에서 설정을 저장해도 env와 같은 값은 row에 다시 들어가지 않는다.
+  **정리 방법** (wave8b 리뷰 C1이 조건을 바로잡음. 2026-10-02에 실제로 밟은 순서이고, 2단계는 API 대신
+  컨테이너 env와 row의 **md5 비교**로 했다 — API 키가 필요 없고 값이 화면에 나오지 않는다):
   1. 네 키(clientId·clientSecret·apiKey·redirectUrl) **전부**를 env에 row와 같은 값으로 넣고 재시작한다.
   2. `GET /api/system-config/defaults`(관리자 API 키, `systemConfig.read` 권한)로 env 값이 defaults에
      들어왔는지 **확인한다**. ⚠ 이 응답은 `clientSecret`을 **평문으로** 돌려준다 — 절대 그대로
@@ -676,7 +677,9 @@ SQL
   `updateConfig`는 defaults와 같은 값을 저장에서 빼므로, 네 키가 모두 같을 때만 googleDrive partial이
   통째로 사라진다. **하나라도 다르면 그 키만 row에 남아** 계속 env를 이긴다. 폐지된 `enabled`는
   스키마가 모르는 키라 이 저장에서 함께 떨어진다. DB를 직접 손댈 필요가 없다.
-  **정리하지 않아도 배포는 안전하다** — row가 모든 값을 공급하므로 기능은 그대로 켜져 있다.
+  1단계에서 값을 화면에 내지 않고 옮기는 방법: 랩탑에서 psql 출력을 `.env`에 바로 덧붙인다
+  (`docker exec -i immich_postgres psql … -At >> .env <<'SQL' … SQL` — heredoc은 **psql 줄에** 붙어야 한다.
+  줄 끝의 다른 명령에 붙으면 psql이 키보드 입력을 기다리며 멈춘다. 2026-10-02에 실제로 그랬다).
 
 - **Drive는 최종 저장소가 아니라 Pixel로 가는 경유지다.** 따라서 Drive에서 파일이 사라지는
   것은 정상 운영이고, 원장(ledger)이 "이미 올렸음"을 기억하는 것이 옳다.
@@ -758,9 +761,8 @@ SQL
 
 ### Notes (지뢰)
 - **`redirectUrl`과 `externalDomain`이 둘 다 비면 기능이 조용히 꺼진다** — 배포 전 유일한 하드 게이트(§7).
-- **운영 row에는 아직 다섯 키가 남아 있고 env를 이긴다.** 랩탑 `.env`·컨테이너 env·compose 어디에도
-  `IMMICH_GOOGLE_DRIVE_*`는 없다(2026-09-16 이름만 확인). 그래서 로그에 폐지된 `enabled` 키 때문에
-  `Unknown keys found` 경고가 매 기동 뜬다 — 무해하고, §8의 정리 절차를 밟으면 사라진다.
+- **Drive 설정은 이제 랩탑 `.env`에만 있다**(2026-10-02, §8). `.env`를 잃거나 그 네 줄을 지우면 기능이
+  조용히 꺼진다 — 백업 `.env.bak-*`가 랩탑에 있다. `Unknown keys found` 경고는 row 정리 후 사라졌다.
 - **재연결하면 폴더를 다시 골라야 한다**(권한 취소 시 행 전체가 삭제되므로). In production 전환으로
   빈도는 "매주"에서 "사용자가 직접 취소할 때"로 떨어졌다.
 - **데스크탑 dev container가 호스트 2283을 점유**해 SSH 터널과 상호 배타적이다.
@@ -773,5 +775,6 @@ SQL
    저장한다. 세 조건(구글 issuer / 로그인 clientId == Drive clientId / 로그인 스코프에 `drive.file`)을
    모두 만족할 때만 동작하고, 그 전까지는 코드가 있어도 아무 일도 하지 않는다. 켜려면 사용자가
    Google 콘솔에 redirect URI를 추가하고 관리 화면 OAuth를 설정해야 한다(autoRegister는 꺼 둘 것).
-8. (선택) 설정 row 정리 → env 기술로 전환. 네 값을 사용자가 직접 `.env`에 넣어야 한다(§8).
+8. ~~(선택) 설정 row 정리 → env 기술로 전환~~ **완료 (2026-10-02).** 사용자가 실행, Claude가 길이·md5로
+   확인. row의 `googleDrive` 키 전부 제거, 기능·연결 유지.
 9. (선택) dev container를 다른 호스트 포트로 옮겨 터널과 공존.
