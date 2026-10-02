@@ -1228,11 +1228,13 @@ export const GOOGLE_DRIVE_CAPPED_ERROR_CLASSES = [
 ] as const;
 
 /**
- * How many recorded failures of a capped class an asset may have before the nightly backfill stops
- * queueing it. Counted across every attempt (nightly, manual sync, add-to-album), so five is about
- * five nights for an asset nobody touches. A human always gets it back: "retry failed" clears the
- * row; a manual album sync or re-adding to an album queues it regardless (those paths filter on the
- * ledger only, not this cap); and a success from any path deletes the row.
+ * How many recorded failures of a capped class an asset may have before the pending stream
+ * (`streamPendingUploads`: nightly backfill, admin "queue all", resume, retry) stops yielding it.
+ * Counted across every attempt, whatever path made it, so five is about five nights for an asset
+ * nobody touches. A human always gets it back: "retry failed" clears the row; a manual album sync,
+ * selecting an album for backup, or adding to an album queues it regardless (those paths go
+ * through `queueGoogleDriveUploads`, which filters on the ledger only, not this cap); and a success
+ * from any path deletes the row.
  *
  * `attempts` counts every recorded failure of the asset, whatever its class at the time — upsertError
  * bumps it across class changes. So four RateLimited nights followed by one Unknown reach the cap
