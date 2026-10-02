@@ -52,8 +52,8 @@ export class GoogleDriveUploadErrorTable {
   // stream (`streamPendingUploads`, which feeds the nightly backfill, the admin "queue all" job and
   // the user's resume/retry) stops yielding an asset once this reaches
   // GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS in a capped class. Manual album sync, selecting an album
-  // for backup and add-to-album do not go through that stream, so they still queue it. See the constant in enum.ts for why the
-  // count is not reset on a class change.
+  // for backup and add-to-album do not go through that stream, so they still queue it. See the
+  // constant in enum.ts for why the count is not reset on a class change.
   // Earlier this comment said there was no cap; that was the failure-handling plan §4's accepted
   // long-tail, which the nightly retry made too costly to keep.
   @Column({ type: 'integer', default: 1 })
