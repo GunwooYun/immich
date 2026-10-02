@@ -48,9 +48,12 @@ export class GoogleDriveUploadErrorTable {
   detail!: string | null;
 
   // How many times this (user, asset) pair has failed, across every class it has held. Shown on the
-  // settings page, and — since wave11 R3 — also the input to the unattended retry cap: the nightly
-  // backfill stops queueing an asset once this reaches GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS in a
-  // capped class (see that constant in enum.ts for why the count is not reset on a class change).
+  // settings page, and — since wave11 R3 — also the input to the unattended retry cap: the pending
+  // stream (`streamPendingUploads`, which feeds the nightly backfill, the admin "queue all" job and
+  // the user's resume/retry) stops yielding an asset once this reaches
+  // GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS in a capped class. Manual album sync, selecting an album
+  // for backup and add-to-album do not go through that stream, so they still queue it. See the
+  // constant in enum.ts for why the count is not reset on a class change.
   // Earlier this comment said there was no cap; that was the failure-handling plan §4's accepted
   // long-tail, which the nightly retry made too costly to keep.
   @Column({ type: 'integer', default: 1 })

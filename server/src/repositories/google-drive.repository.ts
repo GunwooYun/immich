@@ -632,12 +632,13 @@ export class GoogleDriveRepository {
           ),
         )
         // …and, per asset, anything that has failed GOOGLE_DRIVE_MAX_UNATTENDED_ATTEMPTS times in a
-        // class that will not clear on its own (wave11 R3). This stream feeds the nightly backfill,
-        // and without a cap a file that is really gone or really unacceptable to Drive would be
-        // re-sent every night forever. Only capped classes count: RateLimited clears by itself, and
-        // blocking classes are handled per user above. The cap lives here rather than in the worker
-        // so capped assets never reach the queue at all. What gets one back is a human: "retry
-        // failed" clears the row, and manual sync / add-to-album queue on the ledger alone.
+        // class that will not clear on its own (wave11 R3). This stream feeds the nightly backfill
+        // (and the admin "queue all", resume and retry paths), and without a cap a file that is
+        // really gone or really unacceptable to Drive would be re-sent every night forever. Only
+        // capped classes count: RateLimited clears by itself, and blocking classes are handled per
+        // user above. The cap lives here rather than in the worker so capped assets never reach the
+        // queue at all. What gets one back is a human: "retry failed" clears the row, and manual
+        // sync, selecting an album for backup and add-to-album queue on the ledger alone.
         .where(({ not, exists, selectFrom }) =>
           not(
             exists(
