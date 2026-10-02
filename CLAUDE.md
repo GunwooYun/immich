@@ -471,13 +471,25 @@ web/src/**/*.spec.ts             웹 유닛
   **사용자가 실행**한다 — Claude는 명령과 확인 순서를 준비하고, 끝난 뒤 읽기 조회로 결과를 본다.
   이미지 빌드(`docker build`)는 데스크탑에서 도는 것이라 Claude가 해도 된다):
   ```bash
-  docker build -f server/Dockerfile -t immich-server:3.1.0-gdrive .
-  ssh 랩탑 'pg_dumpall | gzip > ~/immich-backups/immich-db.$(date +%F-%H%M).sql.gz'   # 먼저 백업
-  docker save immich-server:3.1.0-gdrive | gzip -1 | ssh 랩탑 'gunzip | docker load'  # 약 2분
-  ssh 랩탑 'cd ~/immich-app && docker compose up -d'
+  # 태그 = <wave>-<커밋 7자리>. 태그만 보고 무슨 코드인지 알 수 있어야 하고, 같은 이름이 랩탑에 이미 있으면
+  # 이전 이미지가 이름을 잃는다 — 2026-10-02 랩탑에 9/24 빌드의 '-w11'이 compose 미사용으로 남아 있었다.
+  TAG=immich-server:3.1.0-gdrive-<wave>-$(git rev-parse --short=7 HEAD)
+  docker build -f server/Dockerfile -t "$TAG" .
+  ssh gwyun@192.168.50.211 "docker image inspect $TAG >/dev/null 2>&1 && echo 'TAG EXISTS — stop'"  # 비어야 한다
+
+  # 백업. 랩탑 호스트에는 pg_dumpall이 없다 — postgres 컨테이너 안에서 실행한다. 무결성까지 확인.
+  ssh gwyun@192.168.50.211 'set -o pipefail; F=~/immich-backups/immich-db.$(date +%Y%m%d-%H%M%S).sql.gz; docker exec immich_postgres pg_dumpall -U postgres | gzip > "$F" && gunzip -t "$F" && ls -la ~/immich-backups | tail -2 && echo BACKUP-OK'
+  #   멈출 조건: BACKUP-OK 없음, 또는 직전 백업보다 눈에 띄게 작음 (2026-10-02 기준 약 65MB)
+
+  docker save "$TAG" | gzip -1 | ssh gwyun@192.168.50.211 'gunzip | docker load'   # 약 2분, "Loaded image: $TAG"
+
+  # compose는 image: 한 줄만 바꾼다. 이전 파일을 남겨 두면 그것이 롤백이다.
+  ssh gwyun@192.168.50.211 "cd ~/immich-app && cp docker-compose.yml docker-compose.yml.bak-<이전wave> && sed -i 's#image: immich-server:[^ ]*#image: $TAG#' docker-compose.yml && grep -n 'image:.*immich-server' docker-compose.yml && docker compose up -d"
+  # 롤백: ssh … "cd ~/immich-app && cp docker-compose.yml.bak-<이전wave> docker-compose.yml && docker compose up -d"
   ```
   compose에서 우리가 바꾸는 것은 `immich-server`의 `image:` **한 줄뿐**이다. 나머지 3개
-  컨테이너(postgres/redis/ML)는 공식 이미지를 그대로 쓴다.
+  컨테이너(postgres/redis/ML)는 공식 이미지를 그대로 쓴다. 재시작 전에 원장의 `max("uploadedAt")`로
+  업로드가 진행 중이 아닌지 본다(끊긴 업로드는 다음 야간 재시도가 받지만, 비어 있을 때가 깔끔하다).
 
   **⚠ 계정 스코프 원장(`driveAccountId`)이 들어간 뒤로는 배포 직후 순서가 중요하다.** 기존
   원장 행은 `''`(계정 미상)이고, 아직 식별되지 않은 연결도 `''`로 읽혀 서로 매칭된다 — 그래서
@@ -696,6 +708,10 @@ SQL
   todo 도구가 없었다). 리서치: `.claude/docs/research/google-drive-sync-stabilization.md`.
 - 운영 상태 (2026-09-29, `-w10`): 연결 1명 `connectedAt = 2026-09-14`(15일 생존 → 7일 만료 소멸 확인,
   이전 프로젝트의 원래 목표는 닫혔다), 원장 8,273, 오류 1건(`source_unreadable`, 아래 F1의 경합).
+- **배포됨 (2026-10-02 19:00 KST): `immich-server:3.1.0-gdrive-w11-0f39f3a`** (= `0f39f3a9d`, wave11 +
+  wave11g). 배포 직후: healthy, `googleDrive: true`, 연결 유지, 원장 8,338, 새 마이그레이션 없음.
+  롤백: `-w10` 이미지와 `~/immich-app/docker-compose.yml.bak-w10`, DB 백업 `immich-db.20261002-185632.sql.gz`.
+  이번 배포는 사용자 지시로 Claude가 실행한 §1의 일회성 예외(규칙 재검토는 사용자 결정 대기).
 - Key files: `server/src/services/google-drive.service.ts`(openOriginal, files.create),
   `server/src/utils/google-drive.ts`(classify/retry), `server/src/repositories/google-drive.repository.ts`
   (streamPendingUploads, recordUpload), `server/src/services/queue.service.ts`(nightly),
