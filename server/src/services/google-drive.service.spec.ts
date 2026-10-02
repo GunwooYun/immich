@@ -1584,11 +1584,8 @@ describe(GoogleDriveService.name, () => {
   });
 
   describe('getStorage', () => {
-    beforeEach(() => {
-      // No cache clearing needed: it's an instance field, and newTestService builds a fresh
-      // service per test.
-      driveAboutGet.mockReset();
-    });
+    // No cache clearing needed: it's an instance field, and newTestService builds a fresh service
+    // per test. driveAboutGet is reset by the file-level beforeEach.
 
     it('should convert Google string byte counts to numbers', async () => {
       // Google returns these as strings because they can exceed 2^53 on large accounts; every
@@ -2714,9 +2711,6 @@ describe(GoogleDriveService.name, () => {
       const userId = newUuid();
       const asset = arrangeReadyToUpload(mocks, userId);
       mocks.asset.getById.mockResolvedValue({ ...getForAsset(asset), deletedAt: new Date() });
-      // driveFilesCreate is hoisted at module scope, so it carries calls from earlier tests in
-      // this file; the assertion below is about this test only.
-      driveFilesCreate.mockClear();
 
       await expect(sut.uploadAsset(userId, asset.id)).resolves.toBe('skipped');
 
